@@ -1,0 +1,28 @@
+{
+  "name": "uni-smiles-kiosk-agent",
+  "version": "1.0.0",
+  "description": "Background Kiosk Agent service for Uni-Smiles Photobooth hardware reporting, command handling, and local maintenance control.",
+  "main": "src/agent.js",
+  "scripts": {
+    "start": "node src/agent.js",
+    "dev": "node --watch src/agent.js",
+    "test": "node --test test/*.test.js",
+    "lint": "node --check src/agent.js && node --check src/wsClient.js && node --check src/hardware.js && node --check src/imageDownloader.js && node --check src/macosPrinterAdapter.js && node --check src/windowsPrinterAdapter.js && node --check src/printerAdapterFactory.js",
+    "daemon:start": "pm2 start ecosystem.config.js",
+    "daemon:stop": "pm2 stop uni-smiles-kiosk-agent",
+    "daemon:restart": "pm2 restart uni-smiles-kiosk-agent",
+    "daemon:logs": "pm2 logs uni-smiles-kiosk-agent",
+    "daemon:status": "pm2 status",
+    "daemon:boot": "pm2 startup && pm2 save"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "socket.io-client": "^4.8.3",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

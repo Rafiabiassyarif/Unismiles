@@ -1,0 +1,204 @@
+{
+  "users": [
+    {
+      "id": "1",
+      "name": "Uni Inside Owner",
+      "email": "superadmin@gmail.com",
+      "role": "Super Admin",
+      "partner": "All Partners",
+      "serviceMode": "Platform Owner",
+      "assignedKiosks": ["All Kiosks"],
+      "status": "Active",
+      "lastActive": "Today"
+    },
+    {
+      "id": "2",
+      "name": "Uni Inside Operator",
+      "email": "operator@uniinside.com",
+      "role": "Super Admin",
+      "partner": "All Partners",
+      "serviceMode": "Managed Support",
+      "assignedKiosks": ["All Kiosks"],
+      "status": "Active",
+      "lastActive": "Today"
+    },
+    {
+      "id": "3",
+      "name": "Admin Kafe Senja",
+      "email": "admin@gmail.com",
+      "role": "Admin Mitra",
+      "partner": "Kafe Senja",
+      "serviceMode": "Self-managed",
+      "assignedKiosks": ["Kiosk Senja 01"],
+      "status": "Active",
+      "lastActive": "Yesterday"
+    },
+    {
+      "id": "4",
+      "name": "Admin Wedding Expo",
+      "email": "event@weddingexpo.com",
+      "role": "Admin Mitra",
+      "partner": "Wedding Expo 2026",
+      "serviceMode": "Managed by Uni Inside",
+      "assignedKiosks": ["Kiosk Event 01", "Kiosk Event 02"],
+      "status": "Active",
+      "lastActive": "2 days ago"
+    },
+    {
+      "id": "5",
+      "name": "Report Viewer",
+      "email": "viewer@client.com",
+      "role": "Viewer",
+      "partner": "Kafe Senja",
+      "serviceMode": "View Only",
+      "assignedKiosks": ["Kiosk Senja 01"],
+      "status": "Inactive",
+      "lastActive": "Last week"
+    }
+  ],
+  "kiosks": [
+    {
+      "id": "dummy-kiosk-1",
+      "name": "Kios-K GIAT",
+      "location": "TULT",
+      "status": "online",
+      "health": {
+        "printerInk": 85,
+        "storage": 45,
+        "camera": "good"
+      },
+      "config": {
+        "brightness": 80,
+        "volume": 50,
+        "maintenanceMode": false
+      },
+      "createdAt": "2026-05-21T08:00:00.000Z"
+    },
+    {
+      "id": "dummy-kiosk-2",
+      "name": "Kios-K FIT",
+      "location": "Telkom University",
+      "status": "idle",
+      "health": {
+        "printerInk": 92,
+        "storage": 12,
+        "camera": "good"
+      },
+      "config": {
+        "brightness": 80,
+        "volume": 50,
+        "maintenanceMode": false
+      },
+      "createdAt": "2026-05-21T08:00:00.000Z"
+    },
+    {
+      "id": "dummy-kiosk-3",
+      "name": "Kios-K Heritage",
+      "location": "Braga",
+      "status": "offline",
+      "health": {
+        "printerInk": 0,
+        "storage": 88,
+        "camera": "bad"
+      },
+      "config": {
+        "brightness": 80,
+        "volume": 50,
+        "maintenanceMode": false
+      },
+      "createdAt": "2026-05-21T08:00:00.000Z"
+    }
+  ],
+  "templates": [
+    {
+      "id": "temp-1",
+      "name": "Gold Birthday Frame",
+      "category": "Birthday",
+      "imageUrl": "https://picsum.photos/seed/bdayframe/300/450",
+      "status": "active",
+      "usageCount": 142
+    },
+    {
+      "id": "temp-2",
+      "name": "Toy Story Playroom",
+      "category": "Kids",
+      "imageUrl": "https://picsum.photos/seed/toystory/300/450",
+      "status": "active",
+      "usageCount": 98
+    },
+    {
+      "id": "temp-3",
+      "name": "Graduation Class of 2026",
+      "category": "Graduation",
+      "imageUrl": "https://picsum.photos/seed/graduation/300/450",
+      "status": "active",
+      "usageCount": 215
+    }
+  ],
+  "sessions": [
+    {
+      "id": "#US-8821",
+      "timestamp": "2026-04-01T10:15:00",
+      "template": "Gold Birthday Frame",
+      "photos": ["https://picsum.photos/seed/8821/200/300"],
+      "amount": 35000,
+      "status": "Success"
+    },
+    {
+      "id": "#US-8822",
+      "timestamp": "2026-04-01T11:20:00",
+      "template": "Toy Story Playroom",
+      "photos": ["https://picsum.photos/seed/8822/200/300"],
+      "amount": 25000,
+      "status": "Success"
+    },
+    {
+      "id": "#US-8823",
+      "timestamp": "2026-04-01T13:45:00",
+      "template": "Graduation Class of 2026",
+      "photos": ["https://picsum.photos/seed/8823/200/300"],
+      "amount": 35000,
+      "status": "Failed (Paper Jam)"
+    },
+    {
+      "id": "#US-8824",
+      "timestamp": "2026-04-01T15:10:00",
+      "template": "Gold Birthday Frame",
+      "photos": ["https://picsum.photos/seed/8824/200/300"],
+      "amount": 35000,
+      "status": "Success"
+    },
+    {
+      "id": "#US-8825",
+      "timestamp": "2026-04-01T16:30:00",
+      "template": "Toy Story Playroom",
+      "photos": ["https://picsum.photos/seed/8825/200/300"],
+      "amount": 25000,
+      "status": "Success"
+    },
+    {
+      "id": "#US-8826",
+      "timestamp": "2026-04-02T09:15:00",
+      "template": "Graduation Class of 2026",
+      "photos": ["https://picsum.photos/seed/8826/200/300"],
+      "amount": 30000,
+      "status": "Success"
+    },
+    {
+      "id": "#US-8827",
+      "timestamp": "2026-04-02T11:40:00",
+      "template": "Gold Birthday Frame",
+      "photos": ["https://picsum.photos/seed/8827/200/300"],
+      "amount": 30000,
+      "status": "Success"
+    },
+    {
+      "id": "#US-8828",
+      "timestamp": "2026-04-02T14:20:00",
+      "template": "Toy Story Playroom",
+      "photos": ["https://picsum.photos/seed/8828/200/300"],
+      "amount": 0,
+      "status": "Failed (Paper Jam)"
+    }
+  ]
+}

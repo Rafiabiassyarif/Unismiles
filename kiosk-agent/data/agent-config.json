@@ -1,0 +1,5 @@
+{
+  "backendUrl": "http://localhost:8000",
+  "deviceId": "KSK-12345",
+  "deviceToken": "kiosk_9f307a6b77be665f1d44cdcf24488f53"
+}

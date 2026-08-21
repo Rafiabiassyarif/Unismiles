@@ -1,0 +1,13 @@
+{
+  "deviceId": "KIOSK-001",
+  "name": "Uni-Smiles Kiosk Station",
+  "reportedState": {
+    "brightness": 80,
+    "volume": 100,
+    "maintenanceMode": false,
+    "resolution": "1080x1920",
+    "paperSize": "4x6",
+    "paperStatus": "NORMAL",
+    "printsRemaining": 100
+  }
+}

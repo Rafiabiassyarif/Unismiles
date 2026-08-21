@@ -1,0 +1,501 @@
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+
+/**
+ * apiService.ts
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Layer komunikasi Frontend Kiosk ↔ Backend API Server (Uni-Smiles v2.0)
+ *
+ * Autentikasi: x-api-key header (API Key kiosk dari .env)
+ * Base URL   : VITE_API_BASE_URL dari .env (default: http://localhost:8000)
+ *
+ * Cara pakai API Key:
+ *   1. Super Admin login ke Admin Dashboard
+ *   2. Buka Kiosk Management → Register Kiosk
+ *   3. Copy API Key yang di-generate
+ *   4. Paste ke .env: VITE_KIOSK_API_KEY=<api_key>
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+const getDefaultApiBaseUrl = (): string => 'http://localhost:8000';
+
+const normalizeApiBaseUrl = (value: unknown): string => {
+  const rawUrl = String(value || '').trim().replace(/\/+$/, '');
+  const baseUrl = rawUrl.replace(/\/api\/v1(?:\/kiosk)?$/i, '').replace(/\/+$/, '');
+  return baseUrl && !/example\.com|:5001(?:\/|$)|\/download(?:\/|$)/i.test(baseUrl)
+    ? baseUrl
+    : getDefaultApiBaseUrl();
+};
+
+export const isUsableKioskApiKey = (value: unknown): boolean => {
+  const apiKey = String(value || '').trim();
+  return Boolean(apiKey)
+    && !/^<[^>]+>$/.test(apiKey)
+    && !/(API_KEY_KIOSK_DARI_ADMIN|YOUR[_ -]?API[_ -]?KEY|CHANGE[_ -]?ME|REPLACE[_ -]?ME|PLACEHOLDER)/i.test(apiKey);
+};
+
+export const getApiConfig = () => {
+  const stored = localStorage.getItem('pb_config');
+  const registeredKioskApiKey = localStorage.getItem('unismiles_kiosk_api_key')?.trim() || '';
+  let parsed: any = {};
+  if (stored) {
+    try { parsed = JSON.parse(stored); } catch (_) { parsed = {}; }
+  }
+  const rawUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL || parsed.backendUrl);
+  const apiKey = [import.meta.env.VITE_KIOSK_API_KEY, registeredKioskApiKey, parsed.apiKey]
+    .find(isUsableKioskApiKey) || '';
+  return {
+    baseUrl: rawUrl,
+    backendUrl: `${rawUrl}/api/v1/kiosk`,
+    apiKey,
+    kioskId: import.meta.env.VITE_KIOSK_ID || parsed.kioskId || 'K-001'
+  };
+};
+
+const readBooleanEnv = (value: unknown, fallback: boolean): boolean => {
+  if (typeof value !== 'string') return fallback;
+  return !['false', '0', 'off', 'no'].includes(value.trim().toLowerCase());
+};
+
+/** Feature flags are build-time settings; the kiosk API key is not involved. */
+export const isAutoPrintEnabled = (): boolean => readBooleanEnv(
+  import.meta.env.VITE_AUTO_PRINT_ENABLED ?? import.meta.env.AUTO_PRINT_ENABLED,
+  true
+);
+
+export const isManualPrintFallbackEnabled = (): boolean => readBooleanEnv(
+  import.meta.env.VITE_MANUAL_PRINT_FALLBACK_ENABLED,
+  true
+);
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+export interface ApiResponse<T = any> {
+  success: boolean;
+  message?: string;
+  data?: T;
+  session_code?: string;
+  amount?: number;
+  price?: number;
+  url?: string;
+  download_url?: string;
+  transaction_code?: string;
+}
+
+export interface SessionData {
+  id: string;
+  kiosk_id: string;
+  frame_template_id?: number | null;
+  /** Harga yang dihitung backend untuk sesi ini, jika endpoint menyediakannya. */
+  amount?: number | null;
+  status: 'active' | 'completed' | 'abandoned';
+}
+
+export interface PhotoData {
+  id?: number;
+  session_id?: string;
+  filename?: string;
+  url: string;
+}
+
+export interface CompleteSessionResult {
+  success: true;
+  downloadUrl: string;
+  message?: string;
+}
+
+export interface TransactionPayload {
+  transaction_code: string;
+  amount: number;
+  payment_method: 'QRIS' | 'Cash' | string;
+  status: 'completed' | 'failed' | 'pending';
+}
+
+export interface GesturePayload {
+  session_id: string;
+  gesture_type: string;
+  confidence_score: number;
+  action_triggered: string;
+}
+
+export interface PrintLogPayload {
+  kiosk_id: string;
+  session_id: string;
+  status: 'success' | 'failed';
+  paper_stock_left?: number;
+}
+
+export type PrintJobStatus = 'queued' | 'printing' | 'success' | 'failed';
+
+export interface PrintJobData {
+  job_id: string;
+  session_code: string;
+  status: PrintJobStatus;
+  copies: number;
+}
+
+export interface QueuePrintPayload {
+  image_url: string;
+  copies: number;
+  paper_size: '4R' | string;
+  orientation: 'portrait' | 'landscape';
+  idempotency_key: string;
+}
+
+/** Error from a kiosk API request, retaining only safe status information. */
+export class KioskApiError extends Error {
+  status?: number;
+
+  constructor(message: string, status?: number) {
+    super(message);
+    this.name = 'KioskApiError';
+    this.status = status;
+  }
+}
+
+const toKioskApiError = (error: any, fallbackMessage: string): KioskApiError => {
+  const status = error?.response?.status;
+  const responseData = error?.response?.data;
+  const message = responseData?.message
+    || responseData?.error
+    || responseData?.detail
+    || (typeof responseData === 'string' ? responseData : '')
+    || fallbackMessage;
+  return new KioskApiError(message, status);
+};
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+export const apiClient = axios.create();
+
+apiClient.interceptors.request.use((config) => {
+  const appConfig = getApiConfig();
+  config.baseURL = appConfig.backendUrl;
+  config.headers['x-api-key'] = appConfig.apiKey;
+  return config;
+});
+
+const request = async <T>(config: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
+  const { apiKey } = getApiConfig();
+  if (!isUsableKioskApiKey(apiKey)) {
+    throw new KioskApiError('API key kiosk belum diisi. Masukkan API key asli dari Admin.', 401);
+  }
+
+  try {
+    return await apiClient.request<T>(config);
+  } catch (error: any) {
+    if (error instanceof KioskApiError) throw error;
+    throw toKioskApiError(error, 'Backend utama tidak dapat diakses.');
+  }
+};
+
+// ─── Connection ──────────────────────────────────────────────────────────────
+
+export const checkBackendConnection = async (): Promise<void> => {
+  const response = await request<ApiResponse>({ method: 'GET', url: '/connection' });
+  if (response.data.success === false) {
+    throw new KioskApiError(response.data.message || 'Kiosk ditolak oleh backend.', response.status);
+  }
+};
+
+/** Backward-compatible admin settings check; it now targets the main connection endpoint. */
+export const checkBackendHealth = async (url: string, currentApiKey: string): Promise<boolean> => {
+  const origin = normalizeApiBaseUrl(url);
+  const apiKey = currentApiKey.trim();
+  if (!isUsableKioskApiKey(apiKey)) return false;
+
+  try {
+    const response = await axios.get(`${origin}/api/v1/kiosk/connection`, {
+      headers: { 'x-api-key': apiKey }
+    });
+    return response.status >= 200 && response.status < 300 && response.data?.success !== false;
+  } catch (error) {
+    console.error('❌ Backend utama tidak dapat dijangkau / API key tidak valid:', error);
+    return false;
+  }
+};
+
+// ─── Session ──────────────────────────────────────────────────────────────────
+
+/**
+ * Mulai sesi photobooth baru.
+ * Dipanggil saat pengguna memilih frame dan memulai sesi.
+ *
+ * @param kioskId    - ID kiosk ini (contoh: "KSK-TLKM-01")
+ * @param frameTemplateId - ID frame template yang dipilih (opsional)
+ * @returns SessionData jika berhasil, null jika gagal
+ */
+export const startSession = async (
+  kioskId: string,
+  frameTemplateId: number
+): Promise<SessionData> => {
+  if (!Number.isInteger(frameTemplateId) || frameTemplateId <= 0) {
+    throw new KioskApiError('Template frame tidak memiliki ID backend yang valid.');
+  }
+
+  const response = await request<ApiResponse>({
+    method: 'POST',
+    url: '/sessions/start',
+    data: { frame_template_id: Number(frameTemplateId) }
+  });
+  const data = response.data;
+  const sessionCode = data.session_code || (data.data as any)?.session_code;
+  if (!data.success || !sessionCode) {
+    throw new KioskApiError(data.message || 'Sesi gagal dibuat.', response.status);
+  }
+
+  const amount = Number(data.amount ?? data.price ?? (data.data as any)?.amount ?? (data.data as any)?.price);
+  return {
+    id: sessionCode,
+    kiosk_id: kioskId,
+    frame_template_id: frameTemplateId,
+    amount: Number.isFinite(amount) && amount > 0 ? amount : null,
+    status: 'active'
+  };
+};
+
+/**
+ * Selesaikan sesi dan catat transaksi.
+ * Dipanggil setelah pembayaran QRIS dikonfirmasi.
+ *
+ * @param sessionId   - ID sesi yang aktif
+ */
+export const completeSession = async (
+  sessionId: string
+): Promise<CompleteSessionResult> => {
+  const response = await request<ApiResponse>({
+    method: 'PUT',
+    url: `/sessions/${encodeURIComponent(sessionId)}/complete`
+  });
+  const data = response.data;
+  const downloadUrl = data.download_url || (data.data as any)?.download_url;
+  if (!data.success || !downloadUrl) {
+    throw new KioskApiError(data.message || 'Sesi gagal diselesaikan atau download URL tidak tersedia.', response.status);
+  }
+  const absoluteDownloadUrl = /^https?:\/\//i.test(downloadUrl)
+    ? downloadUrl
+    : `${getApiConfig().baseUrl}${downloadUrl.startsWith('/') ? '' : '/'}${downloadUrl}`;
+  return { success: true, downloadUrl: absoluteDownloadUrl, message: data.message };
+};
+
+// ─── Photo ────────────────────────────────────────────────────────────────────
+
+/**
+ * Upload foto hasil photobooth ke backend.
+ * Backend menyimpan file ke folder uploads/ dan URL-nya ke database.
+ * Saat hosting: URL akan menjadi URL CDN.
+ *
+ * @param photoBlob  - File/Blob foto (PNG/JPG)
+ * @param sessionId  - ID sesi aktif
+ * @param filename   - Nama file (opsional, default: timestamp.png)
+ * @returns URL foto jika berhasil, null jika gagal
+ */
+export const uploadPhoto = async (
+  photoBlob: Blob,
+  sessionId: string,
+  filename?: string
+): Promise<string> => {
+  const finalName = filename || `photo-${Date.now()}.png`;
+  const formData = new FormData();
+  formData.append('photo', photoBlob, finalName);
+
+  const response = await request<ApiResponse<PhotoData>>({
+    method: 'POST',
+    url: `/sessions/${encodeURIComponent(sessionId)}/photos`,
+    data: formData
+  });
+  const data = response.data;
+  const photoData = (data.data || data) as PhotoData;
+  const photoUrl = photoData.url;
+  if (!data.success || !photoUrl) {
+    throw new KioskApiError(data.message || 'Upload foto gagal.', response.status);
+  }
+
+  const absoluteUrl = /^https?:\/\//i.test(photoUrl)
+    ? photoUrl
+    : `${getApiConfig().baseUrl}${photoUrl.startsWith('/') ? '' : '/'}${photoUrl}`;
+  console.log(`📸 Foto terupload: ${absoluteUrl}`);
+  return absoluteUrl;
+};
+
+/** Queue a final, already-uploaded image for the kiosk printer. */
+export const queuePrintJob = async (
+  sessionCode: string,
+  payload: QueuePrintPayload
+): Promise<PrintJobData> => {
+  try {
+    const res = await apiClient.post<ApiResponse<PrintJobData>>(
+      `/sessions/${encodeURIComponent(sessionCode)}/print`,
+      payload,
+      { validateStatus: status => status === 200 || status === 202 }
+    );
+    const data = res.data;
+    const job = data?.data;
+    if (!data?.success || !job?.job_id || !job.status) {
+      throw new KioskApiError(data?.message || 'Print job tidak dapat dibuat.', res.status);
+    }
+    return job;
+  } catch (error: any) {
+    if (error instanceof KioskApiError) throw error;
+    throw toKioskApiError(error, 'Backend print tidak dapat diakses.');
+  }
+};
+
+/* 
+const getPrintErrorMessage = (status?: number): string => {
+  switch (status) {
+    case 404: return 'Sesi, job print, atau gambar final tidak ditemukan.';
+    case 409: return 'Permintaan print ditolak karena konflik sesi. Silakan coba lagi.';
+    case 500: return 'Server print sedang bermasalah. Silakan coba lagi.';
+    case 503: return 'Kiosk Agent sedang offline. Pastikan aplikasi Kiosk Agent berjalan.';
+    default: return 'Print gagal. Periksa koneksi kiosk dan kondisi printer, lalu coba lagi.';
+  }
+};
+*/
+
+/** Read the current status of a queued kiosk print job. */
+export const getPrintJobStatus = async (jobId: string): Promise<PrintJobData> => {
+  try {
+    const res = await apiClient.get<ApiResponse<PrintJobData>>(
+      `/print-jobs/${encodeURIComponent(jobId)}`
+    );
+    const data = res.data;
+    const job = data?.data;
+    if (!data?.success || !job?.job_id || !job.status) {
+      throw new KioskApiError(data?.message || 'Status print tidak valid.', res.status);
+    }
+    return job;
+  } catch (error: any) {
+    if (error instanceof KioskApiError) throw error;
+    throw toKioskApiError(error, 'Status print tidak dapat diperiksa.');
+  }
+};
+
+export const getPhotosBySession = async (sessionId: string): Promise<PhotoData[]> => {
+  return []; // Not used in V1 kiosk API docs directly for kiosk display, but kept for compat
+};
+
+export const fetchTemplates = async (): Promise<any[]> => {
+  const response = await request<ApiResponse<any[]>>({
+    method: 'GET',
+    url: '/templates',
+    headers: { 'Cache-Control': 'no-store, no-cache', Pragma: 'no-cache' },
+    params: { _t: Date.now() }
+  });
+  const templates = response.data.data;
+  if (!response.data.success || !Array.isArray(templates) || templates.length === 0) {
+    throw new KioskApiError(response.data.message || 'Template backend kosong atau tidak dapat dibaca.', response.status);
+  }
+  return templates;
+};
+
+export const fetchPaymentProfile = async (): Promise<string | null> => {
+  const response = await request<ApiResponse<any[]>>({ method: 'GET', url: '/payments' });
+  const payment = response.data.data?.[0];
+  if (!response.data.success || !payment) {
+    throw new KioskApiError(response.data.message || 'Profil pembayaran tidak tersedia.', response.status);
+  }
+  const paymentData = typeof payment.payment_data === 'string'
+    ? JSON.parse(payment.payment_data)
+    : payment.payment_data;
+  const qrisPath = paymentData?.qris_image_url;
+  if (!qrisPath) throw new KioskApiError('QRIS belum dikonfigurasi di backend.', response.status);
+  return /^https?:\/\//i.test(qrisPath)
+    ? qrisPath
+    : `${getApiConfig().baseUrl}${qrisPath.startsWith('/') ? '' : '/'}${qrisPath}`;
+};
+
+export const verifyPayment = async (sessionId: string): Promise<boolean> => {
+  const response = await request<ApiResponse>({
+    method: 'POST',
+    url: `/sessions/${encodeURIComponent(sessionId)}/payment`
+  });
+  if (!response.data.success) {
+    throw new KioskApiError(response.data.message || 'Pembayaran ditolak backend.', response.status);
+  }
+  return true;
+};
+
+// ─── Email ────────────────────────────────────────────────────────────────────
+
+/**
+ * Kirim digital copy foto ke email pelanggan.
+ * Backend akan mengirim email dengan link download foto.
+ *
+ * @param sessionId - ID sesi
+ * @param email     - Alamat email pelanggan
+ */
+export const sendPhotoByEmail = async (
+  sessionId: string,
+  email: string
+): Promise<{ success: boolean; message?: string }> => {
+  const response = await request<ApiResponse>({
+    method: 'POST',
+    url: `/sessions/${encodeURIComponent(sessionId)}/send-email`,
+    data: { email }
+  });
+  if (!response.data.success) {
+    throw new KioskApiError(response.data.message || 'Gagal mengirim email.', response.status);
+  }
+  console.log(`📧 Email terkirim ke ${email}`);
+  return { success: true, message: response.data.message };
+};
+
+// ─── Analytics ────────────────────────────────────────────────────────────────
+
+/**
+ * Log gesture yang dideteksi oleh sistem kamera kiosk.
+ * Digunakan untuk AI gesture control (contoh: V-sign = ambil foto).
+ */
+export const logGesture = async (payload: GesturePayload): Promise<boolean> => {
+  try {
+    const res = await apiClient.post<ApiResponse>('/gestures', payload);
+    return res.data.success;
+  } catch (error: any) {
+    console.error('Error saat logGesture:', error?.response?.data || error);
+    return false;
+  }
+};
+
+/**
+ * Catat log print dari kiosk.
+ * Digunakan untuk monitoring stok kertas dan status printer.
+ */
+export const recordPrintLog = async (payload: PrintLogPayload): Promise<boolean> => {
+  try {
+    const res = await apiClient.post<ApiResponse>('/prints', payload);
+    return res.data.success;
+  } catch (error: any) {
+    console.error('Error saat recordPrintLog:', error?.response?.data || error);
+    return false;
+  }
+};
+
+// ─── Frame Templates & Filters (Read-only dari backend) ───────────────────────
+
+/**
+ * Ambil semua frame templates dari backend.
+ * Dipanggil saat startup kiosk untuk sync data terbaru dari admin.
+ */
+export const getFrameTemplates = async () => {
+  try {
+    const res = await apiClient.get('/templates');
+    return res.data.success ? res.data.data : [];
+  } catch (error: any) {
+    console.error('Error saat getFrameTemplates:', error?.response?.data || error);
+    return [];
+  }
+};
+
+/**
+ * Ambil semua filter aktif dari backend.
+ * Dipanggil saat startup kiosk untuk sync filter terbaru dari admin.
+ */
+export const getFilters = async () => {
+  try {
+    const res = await apiClient.get('/filters');
+    return res.data.success ? res.data.data : [];
+  } catch (error: any) {
+    console.error('Error saat getFilters:', error?.response?.data || error);
+    return [];
+  }
+};

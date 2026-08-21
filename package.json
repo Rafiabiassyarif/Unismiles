@@ -1,0 +1,13 @@
+{
+  "name": "unismiles-root",
+  "version": "1.0.0",
+  "description": "Root workspace to run all UniSmiles projects concurrently",
+  "scripts": {
+    "start": "npm run dev",
+    "install-all": "npm install --prefix unismiles-backend && npm install --prefix unismiles-admin && npm install --prefix unismiles-photobooth && npm install --prefix kiosk-agent",
+    "agents": "node --watch multi-agent.js",
+    "dev": "npx concurrently -k -n \"backend,admin,booth,agents\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgYellow.bold\" \"npm run dev --prefix unismiles-backend\" \"npm run dev --prefix unismiles-admin\" \"npm run dev --prefix unismiles-photobooth\" \"node --watch multi-agent.js\"",
+    "dev:apps": "npx concurrently -k -n \"booth,admin\" -c \"bgGreen.bold,bgMagenta.bold\" \"npm run dev --prefix unismiles-photobooth\" \"npm run dev --prefix unismiles-admin\"",
+    "dev:web": "npx concurrently -k -n \"backend,admin,booth\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold\" \"npm run dev --prefix unismiles-backend\" \"npm run dev --prefix unismiles-admin\" \"npm run dev --prefix unismiles-photobooth\""
+  }
+}
