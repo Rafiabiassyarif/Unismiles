@@ -15,6 +15,17 @@ const cleanupService = {
       }
     });
     console.log('[Cleanup] Auto-delete cron job scheduled (runs daily at 02:00 AM)');
+
+    // Run every 5 minutes to clean up visual payment evidence files
+    cron.schedule('*/5 * * * *', async () => {
+      console.log('[Cleanup] Starting visual payment evidence cleanup...');
+      try {
+        await this.runEvidenceCleanup();
+      } catch (err) {
+        console.error('[Cleanup] Error during visual evidence cleanup:', err);
+      }
+    });
+    console.log('[Cleanup] Visual payment evidence cleanup cron job scheduled (runs every 5 minutes)');
   },
 
   async runCleanup() {
@@ -90,6 +101,40 @@ const cleanupService = {
     } catch (err) {
       console.error('[Cleanup] Exception in runCleanup:', err);
       throw err;
+    }
+  },
+
+  async runEvidenceCleanup() {
+    try {
+      const [attempts] = await pool.query(
+        "SELECT id, evidence_private_path FROM payment_verification_attempts WHERE evidence_delete_at < NOW() AND evidence_private_path IS NOT NULL"
+      );
+
+      if (attempts.length === 0) return;
+
+      console.log(`[Cleanup] Found ${attempts.length} expired visual payment proof files to delete.`);
+
+      for (const attempt of attempts) {
+        if (attempt.evidence_private_path) {
+          const filename = path.basename(attempt.evidence_private_path);
+          const filePath = path.join(__dirname, '../private_uploads', filename);
+          if (fs.existsSync(filePath)) {
+            try {
+              fs.unlinkSync(filePath);
+              console.log(`[Cleanup] Deleted file: ${filePath}`);
+            } catch (e) {
+              console.error(`[Cleanup] Failed to delete file ${filePath}:`, e.message);
+            }
+          }
+        }
+
+        await pool.query(
+          "UPDATE payment_verification_attempts SET evidence_private_path = NULL WHERE id = ?",
+          [attempt.id]
+        );
+      }
+    } catch (err) {
+      console.error('[Cleanup] Exception in runEvidenceCleanup:', err);
     }
   }
 };

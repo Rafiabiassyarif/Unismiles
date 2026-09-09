@@ -88,6 +88,7 @@ export interface SessionData {
   /** Harga yang dihitung backend untuk sesi ini, jika endpoint menyediakannya. */
   amount?: number | null;
   status: 'active' | 'completed' | 'abandoned';
+  challenge_id?: string;
 }
 
 export interface PhotoData {
@@ -244,12 +245,14 @@ export const startSession = async (
   }
 
   const amount = Number(data.amount ?? data.price ?? (data.data as any)?.amount ?? (data.data as any)?.price);
+  const challengeId = (data.data as any)?.verification_challenge_id || '';
   return {
     id: sessionCode,
     kiosk_id: kioskId,
     frame_template_id: frameTemplateId,
     amount: Number.isFinite(amount) && amount > 0 ? amount : null,
-    status: 'active'
+    status: 'active',
+    challenge_id: challengeId
   };
 };
 
@@ -413,6 +416,46 @@ export const verifyPayment = async (sessionId: string): Promise<boolean> => {
     throw new KioskApiError(response.data.message || 'Pembayaran ditolak backend.', response.status);
   }
   return true;
+};
+
+export const submitPaymentEvidence = async (
+  sessionCode: string,
+  frames: Blob[],
+  challengeId: string
+): Promise<any> => {
+  const formData = new FormData();
+  formData.append('challenge_id', challengeId);
+  frames.forEach((frame, idx) => {
+    formData.append('frames', frame, `frame_${idx}.jpg`);
+  });
+
+  const response = await request<ApiResponse>({
+    method: 'POST',
+    url: `/sessions/${encodeURIComponent(sessionCode)}/payment-verifications`,
+    data: formData,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  });
+
+  if (!response.data.success) {
+    throw new KioskApiError(response.data.message || 'Gagal mengirim bukti pembayaran.', response.status);
+  }
+  return response.data.data;
+};
+
+export const getPaymentVerificationStatus = async (
+  sessionCode: string,
+  attemptId: string
+): Promise<any> => {
+  const response = await request<ApiResponse>({
+    method: 'GET',
+    url: `/sessions/${encodeURIComponent(sessionCode)}/payment-verifications/${encodeURIComponent(attemptId)}`
+  });
+  if (!response.data.success) {
+    throw new KioskApiError(response.data.message || 'Gagal memeriksa status verifikasi.', response.status);
+  }
+  return response.data.data;
 };
 
 // ─── Email ────────────────────────────────────────────────────────────────────

@@ -15,6 +15,16 @@ export const SettingsPage: React.FC = () => {
   const [assetName, setAssetName] = useState('');
   const [assetUploading, setAssetUploading] = useState(false);
 
+  // New visual proof configuration states
+  const [merchantName, setMerchantName] = useState('UNI SMILE');
+  const [displayName, setDisplayName] = useState('UNI SMILE');
+  const [uniqueAmountEnabled, setUniqueAmountEnabled] = useState(false);
+  const [sessionTtlMinutes, setSessionTtlMinutes] = useState(5);
+  const [verificationMode, setVerificationMode] = useState('assisted');
+  const [merchantAliases, setMerchantAliases] = useState('');
+  const [activeProviders, setActiveProviders] = useState<string[]>(['DANA', 'GOPAY', 'OVO', 'SHOPEEPAY']);
+  const [saving, setSaving] = useState(false);
+
   useEffect(() => {
     fetchProfile();
     fetchReusableAssets('logo').then(setAssets).catch(() => undefined);
@@ -26,17 +36,27 @@ export const SettingsPage: React.FC = () => {
       const res = await api.get('/admin/payment-profile');
       const data = res.data?.data || res.data;
       if (data) {
+        setMerchantName(data.merchant_name || 'UNI SMILE');
+        setDisplayName(data.display_name || 'UNI SMILE');
+        
         let paymentData = data.payment_data;
         if (typeof paymentData === 'string') {
           try { paymentData = JSON.parse(paymentData); } catch (_) {}
         }
-        if (paymentData?.qris_image_url) {
-          setQrisUrl(paymentData.qris_image_url);
+        
+        if (paymentData) {
+          if (paymentData.qris_image_url) {
+            setQrisUrl(paymentData.qris_image_url);
+          }
+          setUniqueAmountEnabled(!!paymentData.unique_amount_enabled);
+          setSessionTtlMinutes(paymentData.session_ttl_minutes || 5);
+          setVerificationMode(paymentData.verification_mode || 'assisted');
+          setMerchantAliases(Array.isArray(paymentData.merchant_aliases) ? paymentData.merchant_aliases.join(', ') : '');
+          setActiveProviders(paymentData.active_providers || ['DANA', 'GOPAY', 'OVO', 'SHOPEEPAY']);
         }
       }
     } catch (error: any) {
       console.error('Failed to fetch payment profile:', error);
-      // It might return 404 if not found yet, don't show error toast in that case
       if (error.response?.status !== 404) {
         toast.error('Failed to load payment profile');
       }
@@ -114,6 +134,28 @@ export const SettingsPage: React.FC = () => {
     return resolveAssetUrl(url);
   };
 
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await api.put('/admin/payment-profile', {
+        merchant_name: merchantName,
+        display_name: displayName,
+        unique_amount_enabled: uniqueAmountEnabled,
+        session_ttl_minutes: sessionTtlMinutes,
+        verification_mode: verificationMode,
+        merchant_aliases: merchantAliases.split(',').map(s => s.trim()).filter(Boolean),
+        active_providers: activeProviders
+      });
+      toast.success('Payment configuration updated successfully');
+    } catch (error: any) {
+      console.error(error);
+      toast.error('Failed to save payment configuration');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -129,7 +171,7 @@ export const SettingsPage: React.FC = () => {
         <p className="text-muted text-[10px] font-black uppercase tracking-[0.3em] opacity-60">Payment Profile & Configuration</p>
       </header>
 
-      <div className="max-w-2xl bg-[#1E293B] border border-white/5 p-8 rounded-[2.5rem] shadow-2xl">
+      <form onSubmit={handleSaveProfile} className="max-w-2xl bg-[#1E293B] border border-white/5 p-8 rounded-[2.5rem] shadow-2xl">
         <div className="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">
           <div className="p-3 bg-primary/10 rounded-2xl border border-primary/20">
             <CreditCard className="w-6 h-6 text-primary" />
@@ -187,8 +229,95 @@ export const SettingsPage: React.FC = () => {
               className="hidden"
             />
           </div>
+
+          <div className="border-t border-white/5 pt-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Merchant Name</label>
+                <input 
+                  type="text" 
+                  value={merchantName} 
+                  onChange={e => setMerchantName(e.target.value)} 
+                  className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:border-primary/50"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Display Name</label>
+                <input 
+                  type="text" 
+                  value={displayName} 
+                  onChange={e => setDisplayName(e.target.value)} 
+                  className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:border-primary/50"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Verification Mode</label>
+                <select 
+                  value={verificationMode} 
+                  onChange={e => setVerificationMode(e.target.value)} 
+                  className="w-full bg-[#10172A] border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:border-primary/50"
+                >
+                  <option value="disabled">Disabled</option>
+                  <option value="shadow">Shadow (Log only)</option>
+                  <option value="assisted">Assisted Auto-approve</option>
+                  <option value="enforced">Enforced strict verification</option>
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-muted uppercase tracking-widest">Session TTL (Minutes)</label>
+                <input 
+                  type="number" 
+                  value={sessionTtlMinutes} 
+                  onChange={e => setSessionTtlMinutes(Number(e.target.value))} 
+                  className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:border-primary/50"
+                  min="1"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-muted uppercase tracking-widest">Merchant Aliases (comma separated)</label>
+              <input 
+                type="text" 
+                value={merchantAliases} 
+                onChange={e => setMerchantAliases(e.target.value)} 
+                placeholder="e.g. unismile, uni smiles, unismile pt"
+                className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:border-primary/50"
+              />
+            </div>
+
+            <div className="flex items-center gap-3 bg-black/20 p-4 rounded-2xl border border-white/5">
+              <input 
+                type="checkbox" 
+                id="uniqueAmount" 
+                checked={uniqueAmountEnabled} 
+                onChange={e => setUniqueAmountEnabled(e.target.checked)} 
+                className="w-5 h-5 rounded bg-black/30 border-white/10 accent-primary"
+              />
+              <label htmlFor="uniqueAmount" className="text-xs font-bold text-foreground cursor-pointer select-none">
+                Enable Unique Suffix Amount (adds Rp1 - Rp99 to session pricing for easy tracking)
+              </label>
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button 
+                type="submit" 
+                disabled={saving}
+                className="px-6 py-3 rounded-xl bg-primary text-[#10172A] text-xs font-black uppercase tracking-wider flex items-center gap-2 hover:bg-primary/95 transition-all disabled:opacity-50"
+              >
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+                Save Changes
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      </form>
 
       <div className="max-w-4xl bg-[#1E293B] border border-white/5 p-8 rounded-[2.5rem] shadow-2xl">
         <div className="flex items-center gap-3 mb-6 border-b border-white/5 pb-4">

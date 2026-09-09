@@ -9,6 +9,8 @@ export interface Session {
   photos: string[];
   amount: number;
   status: string;
+  kiosk_id?: string;
+  kiosk_name?: string;
 }
 
 const parseJson = (value: any) => {
@@ -65,6 +67,8 @@ const normalizeSession = (session: any): Session => ({
   photos: normalizePhotos(session),
   amount: Number(session.amount ?? session.total_amount ?? session.totalAmount ?? 0),
   status: session.status ?? 'Unknown',
+  kiosk_id: session.kiosk_id ?? session.kioskId ?? '',
+  kiosk_name: session.kiosk_name ?? session.kioskName ?? session.kiosk_id ?? session.kioskId ?? 'Unknown Kiosk',
 });
 
 interface SessionContextType {

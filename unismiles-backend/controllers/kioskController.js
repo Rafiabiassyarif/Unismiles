@@ -382,14 +382,15 @@ const kioskController = {
           });
         }
 
-        const rawUrl = r.image_url ? r.image_url.trim() : '';
+        const parseJSON = (val, fallback = []) => parseJson(val, fallback);
+        const layoutConfig = parseJSON(r.layout_config, {});
+
+        const rawUrl = r.image_url ? r.image_url.trim() : (layoutConfig.overlayUrl || layoutConfig.overlay_url || '');
         const imageUrl = rawUrl
-          ? (rawUrl.startsWith('http') ? rawUrl : `${publicBaseUrl(req)}${rawUrl}`)
+          ? (rawUrl.startsWith('http') ? rawUrl : `${publicBaseUrl(req)}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`)
           : null;
 
-        const parseJSON = (val, fallback = []) => parseJson(val, fallback);
-
-        const frameType = r.frame_type || 'color';
+        const frameType = r.frame_type || (imageUrl ? 'png' : 'color');
         const gradStopsRaw = parseJSON(r.gradient_stops, []);
         const textElemsRaw = parseJSON(r.text_elements, []);
 
@@ -404,6 +405,8 @@ const kioskController = {
               offset: s.position !== undefined ? s.position : (s.offset ?? 0),
             })),
           };
+        } else if (frameType === 'png' && imageUrl) {
+          backgroundConfig = { type: 'image', color: r.bg_color || '#ffffff' };
         } else if (frameType === 'color') {
           backgroundConfig = { type: 'solid', color: r.bg_color || '#ffffff' };
         }
@@ -422,7 +425,24 @@ const kioskController = {
           rotation: 0,
         }));
 
-        const layoutConfig = parseJSON(r.layout_config, {});
+        const assetElementsRaw = parseJSON(layoutConfig.assetElements || layoutConfig.asset_elements, []);
+        const assetElements = assetElementsRaw.map((a, idx) => {
+          const aUrl = a.url || a.imageUrl || a.image_url || '';
+          const fullUrl = aUrl.startsWith('http') ? aUrl : `${publicBaseUrl(req)}${aUrl.startsWith('/') ? '' : '/'}${aUrl}`;
+          return {
+            id: a.id || `asset-${idx}`,
+            type: 'sticker',
+            content: fullUrl,
+            x: Number(a.x ?? 50),
+            y: Number(a.y ?? 50),
+            width: Number(a.width ?? a.w ?? 20),
+            height: Number(a.height ?? a.h ?? 0),
+            opacity: Number(a.opacity ?? 1),
+            rotation: Number(a.rotation ?? 0),
+            anchor: a.anchor || 'top-left'
+          };
+        });
+
         const price = resolvePrice({
           templatePrice: r.price,
           layoutConfig,
@@ -434,7 +454,7 @@ const kioskController = {
           name: r.name,
           overlayUrl: imageUrl,
           backgroundConfig,
-          elements,
+          elements: [...elements, ...assetElements],
           _accentColor: r.accent_color || '#FFFFFF',
           _layoutConfig: layoutConfig,
           price,

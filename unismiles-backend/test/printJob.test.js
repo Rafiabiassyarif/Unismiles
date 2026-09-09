@@ -15,7 +15,7 @@ function response() {
 }
 
 function sessionModel() {
-  return { findByCodeAndKiosk: async () => ({ id: '#US-123', session_code: '#US-123' }) };
+  return { findByCodeAndKiosk: async () => ({ id: '#US-123', session_code: '#US-123', payment_status: 'verified' }) };
 }
 
 function jobModel(overrides = {}) {

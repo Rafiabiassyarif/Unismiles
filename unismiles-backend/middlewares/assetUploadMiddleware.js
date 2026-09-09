@@ -17,7 +17,10 @@ module.exports = multer({
   storage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const isPng = file.mimetype === 'image/png' || path.extname(file.originalname).toLowerCase() === '.png';
-    cb(isPng ? null : new Error('Only PNG assets are allowed'), isPng);
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
+    const ext = path.extname(file.originalname).toLowerCase();
+    const allowedExts = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+    const isValid = allowed.has(file.mimetype) || allowedExts.has(ext);
+    cb(isValid ? null : new Error('Only PNG, JPG, JPEG, or WebP images are allowed'), isValid);
   },
 });

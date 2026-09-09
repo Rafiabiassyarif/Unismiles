@@ -6,8 +6,8 @@
     "start": "npm run dev",
     "install-all": "npm install --prefix unismiles-backend && npm install --prefix unismiles-admin && npm install --prefix unismiles-photobooth && npm install --prefix kiosk-agent",
     "agents": "node --watch multi-agent.js",
-    "dev": "npx concurrently -k -n \"backend,admin,booth,agents\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgYellow.bold\" \"npm run dev --prefix unismiles-backend\" \"npm run dev --prefix unismiles-admin\" \"npm run dev --prefix unismiles-photobooth\" \"node --watch multi-agent.js\"",
+    "dev": "npx concurrently -k -n \"backend,admin,booth,agents,vision\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgYellow.bold,bgCyan.bold\" \"npm run dev --prefix unismiles-backend\" \"npm run dev --prefix unismiles-admin\" \"npm run dev --prefix unismiles-photobooth\" \"node --watch multi-agent.js\" \"python3 payment-vision-service/main.py\"",
     "dev:apps": "npx concurrently -k -n \"booth,admin\" -c \"bgGreen.bold,bgMagenta.bold\" \"npm run dev --prefix unismiles-photobooth\" \"npm run dev --prefix unismiles-admin\"",
-    "dev:web": "npx concurrently -k -n \"backend,admin,booth\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold\" \"npm run dev --prefix unismiles-backend\" \"npm run dev --prefix unismiles-admin\" \"npm run dev --prefix unismiles-photobooth\""
+    "dev:web": "npx concurrently -k -n \"backend,admin,booth,vision\" -c \"bgBlue.bold,bgMagenta.bold,bgGreen.bold,bgCyan.bold\" \"npm run dev --prefix unismiles-backend\" \"npm run dev --prefix unismiles-admin\" \"npm run dev --prefix unismiles-photobooth\" \"python3 payment-vision-service/main.py\""
   }
 }

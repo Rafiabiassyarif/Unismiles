@@ -19,6 +19,11 @@ const uploadPhoto = async (req, res) => {
       await fs.unlink(req.file.path).catch(() => {});
       return res.status(404).json({ success: false, message: 'Session not found or does not belong to this kiosk.' });
     }
+
+    if (session.payment_status !== 'verified') {
+      await fs.unlink(req.file.path).catch(() => {});
+      return res.status(403).json({ success: false, message: 'Pembayaran belum diverifikasi. Tidak dapat mengunggah foto.' });
+    }
     await assertImageFile(req.file);
 
     const fileUrl = '/uploads/' + req.file.filename;

@@ -48,8 +48,18 @@ app.use(requestId);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ limit: '2mb', extended: true }));
-app.use('/uploads', express.static('uploads'));
-app.use('/assets', express.static('uploads/assets'));
+app.use('/uploads', express.static('uploads', {
+  setHeaders: (res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+}));
+app.use('/assets', express.static('uploads/assets', {
+  setHeaders: (res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+}));
 
 const downloadController = require('./controllers/downloadController');
 app.get('/download/:session_code', createRateLimiter({ windowMs: 60_000, max: 20, keyGenerator: req => `download:${req.ip}` }), downloadController.serveDownloadPage);

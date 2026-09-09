@@ -15,6 +15,8 @@ import {
   Palette,
   Copy,
   Sparkles,
+  ArrowLeft,
+  Layers,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
@@ -636,30 +638,22 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
     return element;
   };
 
-  const addAssetElement = (asset: ReusableAsset, position?: { x: number; y: number }) => {
-    const element = createAssetElement(asset, position);
-    setState(current => ({
-      ...current,
-      assetElements: [...current.assetElements, element],
-      selectedAssetElementId: element.id,
-    }));
-  };
-
   const handleOverlayFile = async (file?: File) => {
     if (!file) return;
-    if (file.type !== 'image/png') {
-      toast.error('Overlay frame harus berupa PNG transparan.');
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+      toast.error('Format gambar harus PNG, JPG, JPEG, atau WebP.');
       return;
     }
     setAssetUploading(true);
     try {
-      const asset = await uploadReusableAsset(file, assetName || file.name, 'logo');
+      const asset = await uploadReusableAsset(file, assetName || file.name, 'overlay');
       setAssets(current => [asset, ...current]);
       setAssetName('');
-      addAssetElement(asset);
-      toast.success('Overlay di-upload dan ditambahkan ke canvas.');
+      addOverlayAsBackground(asset);
+      toast.success('Gambar frame di-upload dan dijadikan Background Frame (di belakang foto).');
     } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Gagal meng-upload overlay.');
+      toast.error(error.response?.data?.message || 'Gagal meng-upload gambar frame.');
     } finally {
       setAssetUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -677,13 +671,7 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
     if (assetData) {
       try {
         const asset = JSON.parse(assetData) as ReusableAsset;
-        const rect = e.currentTarget.getBoundingClientRect();
-        const x = ((e.clientX - rect.left) / rect.width) * 100;
-        const y = ((e.clientY - rect.top) / rect.height) * 100;
-        addAssetElement(asset, {
-          x: Math.max(0, Math.min(100 - 10, x - 5)),
-          y: Math.max(0, Math.min(100 - 5, y - 2.5)),
-        });
+        addOverlayAsBackground(asset);
         return;
       } catch {}
     }
@@ -696,7 +684,7 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
   };
 
   const selectReusableAsset = (asset: ReusableAsset) => {
-    addAssetElement(asset);
+    addOverlayAsBackground(asset);
   };
 
   const addOverlayAsBackground = (asset: ReusableAsset) => {
@@ -706,8 +694,19 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
       overlayAssetUrl: asset.url,
       pngPreviewUrl: asset.url,
       pngFile: null,
+      assetElements: state.assetElements.filter(el => String(el.assetId) !== String(asset.id) && el.width < 90),
     });
     setEditorTab('bg');
+    toast.success(`"${asset.name}" dijadikan Background Frame (di belakang foto).`);
+  };
+
+  const addAssetElement = (asset: ReusableAsset, position?: { x: number; y: number }) => {
+    const element = createAssetElement(asset, position);
+    setState(current => ({
+      ...current,
+      assetElements: [...current.assetElements, element],
+      selectedAssetElementId: element.id,
+    }));
   };
 
   const updateAssetElement = (id: string, patch: Partial<AssetElement>) => {
@@ -720,14 +719,14 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
 
   const handleReusableAssetUpload = async (file?: File) => {
     if (!file) return;
-    if (file.type !== 'image/png') { toast.error('Asset harus berupa file PNG transparan.'); return; }
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+    if (!allowed.includes(file.type)) { toast.error('Format gambar harus PNG, JPG, JPEG, atau WebP.'); return; }
     setAssetUploading(true);
     try {
-      const asset = await uploadReusableAsset(file, assetName, 'logo');
+      const asset = await uploadReusableAsset(file, assetName || file.name, 'logo');
       setAssets(current => [asset, ...current]);
       setAssetName('');
-      addAssetElement(asset);
-      toast.success('Asset di-upload dan ditambahkan ke frame.');
+      toast.success('Asset berhasil di-upload. Pilih untuk dijadikan Background atau Stiker.');
     } catch (error: any) {
       toast.error(error.response?.data?.message || 'Gagal meng-upload asset.');
     } finally {
@@ -858,410 +857,537 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
   };
 
   const previewImageUrl = state.frameType === 'png'
-    ? (state.pngPreviewUrl || state.overlayAssetUrl || editingTemplate?.image_url || '')
+    ? state.pngPreviewUrl || state.overlayAssetUrl || editingTemplate?.image_url || ''
     : '';
 
-  const resolvedExistingPng = resolvePublicUrl(editingTemplate?.image_url || '');
+  const resolvedExistingPng = editingTemplate?.frame_type === 'png' && editingTemplate?.image_url
+    ? resolvePublicUrl(editingTemplate.image_url)
+    : '';
 
   return (
-    <div className="fixed inset-0 z-[200] flex overflow-hidden bg-[#0a0f1e]">
-      {/* Left Sidebar */}
-      <div className="w-48 flex-shrink-0 bg-[#141a2e] border-r border-white/8 flex flex-col overflow-hidden">
-        {/* Header Info */}
-        <div className="px-4 py-3 border-b border-white/8 flex-shrink-0">
-          <p className="text-[9px] font-black uppercase tracking-widest text-muted">Frame Editor</p>
-          <p className="text-[11px] font-bold text-foreground mt-0.5 truncate">
-            {preset.label} ({preset.width}×{preset.height})
-          </p>
-        </div>
-
-        {/* Editor Tabs */}
-        <div className="flex p-2 gap-1 border-b border-white/8 flex-shrink-0">
-          {([
-            { id: 'bg', label: 'BG', icon: Palette },
-            { id: 'text', label: 'Text', icon: Type },
-            { id: 'asset', label: 'Asset', icon: ImageIcon },
-          ] as const).map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setEditorTab(tab.id)}
-              className={cn(
-                'flex-1 flex items-center justify-center gap-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all',
-                editorTab === tab.id
-                  ? 'bg-primary/20 text-primary border border-primary/30'
-                  : 'text-muted hover:text-foreground hover:bg-white/5'
-              )}
-            >
-              <tab.icon className="w-3 h-3" />
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Scrollable Controls */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-          {editorTab === 'bg' && (
-            <div className="p-3 space-y-4">
-              {/* Type */}
-              <div className="space-y-1.5">
-                <p className="text-[9px] font-black uppercase tracking-widest text-muted">Type</p>
-                <div className="flex gap-1">
-                  {(['transparent', 'color', 'gradient'] as const).map(t => (
-                    <button
-                      key={t}
-                      onClick={() => update({ frameType: t as any })}
-                      className={cn(
-                        'flex-1 py-1.5 text-[8px] font-black uppercase tracking-wider rounded-md transition-all',
-                        state.frameType === t
-                          ? 'bg-primary text-[#10172A]'
-                          : 'bg-white/5 text-muted hover:bg-white/10 hover:text-foreground'
-                      )}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {state.frameType === 'color' && (
-                <div className="space-y-1.5">
-                  <p className="text-[9px] font-black uppercase tracking-widest text-muted">Color</p>
-                  <label className="flex items-center gap-2 cursor-pointer bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 hover:border-primary/30 transition-colors">
-                    <span className="w-5 h-5 rounded border border-white/20 flex-shrink-0" style={{ background: state.bgColor }} />
-                    <input type="color" value={state.bgColor} onChange={e => update({ bgColor: e.target.value })} className="sr-only" />
-                    <span className="font-mono text-[9px] text-foreground">{state.bgColor.toUpperCase()}</span>
-                  </label>
-                </div>
-              )}
-
-              {state.frameType === 'gradient' && (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-muted flex items-center justify-between">
-                      <span>Preset Gradients</span>
-                      <Sparkles className="w-3 h-3 text-primary" />
-                    </p>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {GRADIENT_PRESETS.map((p, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onClick={() => update({
-                            frameType: 'gradient',
-                            gradientStyle: p.style as any,
-                            gradientAngle: p.angle,
-                            gradientStops: p.stops
-                          })}
-                          className="h-7 rounded-lg border border-white/10 overflow-hidden hover:scale-105 hover:border-primary transition-all relative group cursor-pointer"
-                          style={{
-                            background: p.style === 'radial'
-                              ? `radial-gradient(circle, ${p.stops.map(s => `${s.color} ${s.position}%`).join(', ')})`
-                              : `linear-gradient(${p.angle}deg, ${p.stops.map(s => `${s.color} ${s.position}%`).join(', ')})`
-                          }}
-                          title={p.name}
-                        >
-                          <span className="sr-only">{p.name}</span>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-muted">Style</p>
-                    <div className="flex gap-1">
-                      {(['linear', 'radial'] as const).map(s => (
-                        <button
-                          key={s}
-                          onClick={() => update({ gradientStyle: s })}
-                          className={cn(
-                            'flex-1 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md transition-all',
-                            state.gradientStyle === s
-                              ? 'bg-primary text-[#10172A]'
-                              : 'bg-white/5 text-muted hover:bg-white/10'
-                          )}
-                        >
-                          {s}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {state.gradientStyle === 'linear' && (
-                    <div className="space-y-1.5">
-                      <p className="text-[9px] font-black uppercase tracking-widest text-muted">
-                        Angle: {state.gradientAngle}°
-                      </p>
-                      <input
-                        type="range" min={0} max={360}
-                        value={state.gradientAngle}
-                        onChange={e => update({ gradientAngle: Number(e.target.value) })}
-                        className="w-full h-1.5 rounded-full accent-primary cursor-pointer"
-                      />
-                    </div>
-                  )}
-                  <div className="space-y-1.5">
-                    <p className="text-[9px] font-black uppercase tracking-widest text-muted">Stops</p>
-                    <GradientStopEditor
-                      stops={state.gradientStops}
-                      onChange={stops => update({ gradientStops: stops })}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Slot Border */}
-              <div className="space-y-1.5">
-                <p className="text-[9px] font-black uppercase tracking-widest text-muted">Slot Border</p>
-                <label className="flex items-center gap-2 cursor-pointer bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 hover:border-primary/30 transition-colors">
-                  <span className="w-5 h-5 rounded border border-white/20 flex-shrink-0" style={{ background: state.accentColor }} />
-                  <input type="color" value={state.accentColor} onChange={e => update({ accentColor: e.target.value })} className="sr-only" />
-                  <span className="font-mono text-[9px] text-foreground">{state.accentColor.toUpperCase()}</span>
-                </label>
-              </div>
-            </div>
-          )}
-
-          {editorTab === 'asset' && (
-            <div
-              className="p-3 space-y-3"
-              onDragOver={e => e.preventDefault()}
-              onDrop={handleOverlayDrop}
-            >
-              <p className="text-[9px] font-black uppercase tracking-widest text-muted">Frame Overlay</p>
-              <p className="text-[9px] text-muted leading-relaxed">
-                Upload atau drag PNG transparan. Asset langsung masuk canvas, terpilih, dan bisa diatur.
-              </p>
-              <div className="space-y-2">
-                <p className="text-[9px] font-black uppercase tracking-widest text-muted">Saved Assets</p>
-                {assets.length === 0 ? <p className="text-[9px] text-muted italic">Belum ada asset di Settings.</p> : <div className="grid grid-cols-2 gap-2">{assets.map(asset => <button key={asset.id} type="button" draggable onDragStart={e => handleAssetDragStart(e, asset)} onClick={() => selectReusableAsset(asset)} onDoubleClick={() => addOverlayAsBackground(asset)} className={cn('rounded-lg border p-1.5 text-left transition-all cursor-grab active:cursor-grabbing', state.assetElements.some(element => String(element.assetId) === String(asset.id)) ? 'border-primary bg-primary/10' : 'border-white/10 hover:border-primary/40')}><div className="h-14 rounded bg-black/30 flex items-center justify-center"><img src={asset.url} alt={asset.name} className="max-h-full max-w-full object-contain" /></div><span className="block text-[8px] font-bold text-foreground truncate mt-1">{asset.name}</span></button>)}</div>}
-                <div className="flex gap-1.5"><input value={assetName} onChange={e => setAssetName(e.target.value)} placeholder="Nama asset baru" className="min-w-0 flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-[9px] text-foreground" /><input ref={assetFileInputRef} type="file" accept="image/png" className="hidden" onChange={e => handleReusableAssetUpload(e.target.files?.[0])} /><button type="button" disabled={assetUploading} onClick={() => assetFileInputRef.current?.click()} className="px-2 py-1.5 bg-primary/15 border border-primary/30 text-primary rounded-lg text-[8px] font-black uppercase">{assetUploading ? '...' : '+ Upload & Add'}</button></div>
-              </div>
-              {state.assetElements.length > 0 && <div className="space-y-2 border-t border-white/10 pt-3">
-                <p className="text-[9px] font-black uppercase tracking-widest text-muted">Canvas Assets ({state.assetElements.length})</p>
-                {state.assetElements.map((element, index) => <div key={element.id} className={cn('rounded-lg border p-2 space-y-2', state.selectedAssetElementId === element.id ? 'border-primary/50 bg-primary/5' : 'border-white/10 bg-black/20')}>
-                  <div className="flex items-center justify-between"><button type="button" onClick={() => update({ selectedAssetElementId: element.id })} className="text-[9px] font-bold text-foreground truncate max-w-[120px]">{index + 1}. {element.name}</button><button type="button" onClick={() => removeAssetElement(element.id)} className="text-muted hover:text-red-400"><Trash2 className="w-3 h-3" /></button></div>
-                  <div className="grid grid-cols-2 gap-2">
-                    {([['x', 'X', element.x], ['y', 'Y', element.y], ['width', 'Width', element.width], ['height', 'Height', element.height]] as const).map(([field, label, value]) => <label key={field} className="text-[8px] text-muted uppercase font-black">{label} {Math.round(value)}%<input type="range" min="0" max="100" value={value} onChange={e => updateAssetElement(element.id, { [field]: Number(e.target.value) } as Partial<AssetElement>)} className="w-full h-1 accent-primary cursor-pointer" /></label>)}
-                  </div>
-                </div>)}
-                <p className="text-[8px] text-muted italic">Klik lalu drag logo langsung di canvas untuk memindahkannya. Atur ukuran dengan slider.</p>
-              </div>}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/png"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <button
-                type="button"
-                disabled={assetUploading}
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full min-h-28 px-3 py-4 bg-primary/5 border border-dashed border-primary/40 text-primary text-[9px] font-black uppercase tracking-wider rounded-xl hover:bg-primary/10 transition-all flex flex-col items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait"
-              >
-                <Upload className="w-3 h-3" />
-                {assetUploading ? 'Uploading & adding...' : 'Drop image or choose file'}
-                <span className="text-[8px] text-muted normal-case tracking-normal font-medium">PNG transparan paling cocok</span>
-              </button>
-              {(state.pngPreviewUrl || state.overlayAssetUrl || resolvedExistingPng) && (
-                <div className="rounded-lg overflow-hidden border border-white/10 bg-black/40">
-                  <img
-                    src={state.pngPreviewUrl || state.overlayAssetUrl || resolvedExistingPng}
-                    alt="PNG Preview"
-                    className="w-full object-contain max-h-32"
-                  />
-                  <p className="text-center text-[8px] font-bold text-emerald-400 py-1.5">
-                    {state.pngFile ? state.pngFile.name : assets.find(asset => String(asset.id) === String(state.overlayAssetId))?.name || 'Current PNG'}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {editorTab === 'text' && (
-            <div className="p-3 space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-[9px] font-black uppercase tracking-widest text-muted">Text Overlays</p>
-                <button
-                  type="button"
-                  onClick={addTextElement}
-                  className="px-2 py-1 bg-primary text-[#10172A] text-[9px] font-black uppercase rounded hover:brightness-110 flex items-center gap-1"
-                >
-                  <Plus className="w-3 h-3" /> Add Text
-                </button>
-              </div>
-
-              {state.textElements.length === 0 ? (
-                <p className="text-[9px] text-muted italic text-center py-4">No text elements added yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {state.textElements.map((elem, idx) => (
-                    <div key={elem.id} className="p-2.5 bg-black/30 border border-white/10 rounded-lg space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[9px] font-bold text-primary">Text #{idx + 1}</span>
-                        <button
-                          type="button"
-                          onClick={() => removeTextElement(elem.id)}
-                          className="text-muted hover:text-red-400 p-0.5"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      {/* Content */}
-                      <input
-                        type="text"
-                        value={elem.text}
-                        onChange={e => updateTextElement(elem.id, { text: e.target.value })}
-                        placeholder="Text content"
-                        className="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-[10px] text-foreground font-bold"
-                      />
-
-                      {/* Google Font Selector */}
-                      <div className="space-y-1">
-                        <p className="text-[8px] text-muted uppercase font-black">Google Font</p>
-                        <select
-                          value={elem.fontFamily}
-                          onChange={e => updateTextElement(elem.id, { fontFamily: e.target.value })}
-                          className="w-full bg-black/40 border border-white/10 rounded px-1.5 py-1 text-[9px] text-foreground font-bold outline-none"
-                        >
-                          {GOOGLE_FONTS.map(f => (
-                            <option key={f.name} value={f.family} style={{ fontFamily: f.family }}>
-                              {f.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Size & Color */}
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[8px] text-muted uppercase font-black">Size ({elem.fontSize}px)</p>
-                          <input
-                            type="range"
-                            min={16}
-                            max={120}
-                            value={elem.fontSize}
-                            onChange={e => updateTextElement(elem.id, { fontSize: Number(e.target.value) })}
-                            className="w-full h-1 accent-primary cursor-pointer"
-                          />
-                        </div>
-                        <div>
-                          <p className="text-[8px] text-muted uppercase font-black">Color</p>
-                          <label className="flex items-center gap-1 cursor-pointer bg-black/40 border border-white/10 rounded px-1.5 py-0.5">
-                            <span className="w-3.5 h-3.5 rounded border border-white/20" style={{ background: elem.color }} />
-                            <input
-                              type="color"
-                              value={elem.color}
-                              onChange={e => updateTextElement(elem.id, { color: e.target.value })}
-                              className="sr-only"
-                            />
-                            <span className="font-mono text-[8px] text-foreground truncate">{elem.color}</span>
-                          </label>
-                        </div>
-                      </div>
-
-                      {/* Y Position */}
-                      <div>
-                        <p className="text-[8px] text-muted uppercase font-black">Y Position ({elem.y}%)</p>
-                        <input
-                          type="range"
-                          min={5}
-                          max={95}
-                          value={elem.y}
-                          onChange={e => updateTextElement(elem.id, { y: Number(e.target.value) })}
-                          className="w-full h-1 accent-primary cursor-pointer"
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Frame Name + Shared Layout Price */}
-        <div className="border-t border-white/8 p-3 space-y-2 flex-shrink-0">
-          <p className="text-[9px] font-black uppercase tracking-widest text-muted">Frame Name</p>
-          <input
-            type="text"
-            value={state.name}
-            onChange={e => update({ name: e.target.value })}
-            placeholder="e.g. Classic Dark"
-            className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[10px] font-bold text-foreground outline-none focus:border-primary/50 transition-all"
-          />
-          <p className="text-[9px] font-black uppercase tracking-widest text-muted pt-1">Harga Layout (Rp)</p>
-          <div className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[10px] font-bold text-primary">
-            {framePrice ? `Rp ${Number(framePrice).toLocaleString('id-ID')}` : 'Belum diatur'}
+    <div className="fixed inset-0 z-50 bg-[#0B0F19]/95 backdrop-blur-md flex flex-col">
+      {/* Top Header */}
+      <div className="h-12 border-b border-white/10 px-4 flex items-center justify-between flex-shrink-0 bg-[#0D1322]">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 hover:bg-white/10 rounded-lg text-muted hover:text-foreground transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div>
+            <p className="text-[10px] font-black uppercase tracking-widest text-primary">Frame Editor</p>
+            <p className="text-xs font-bold text-foreground">
+              {preset.name} ({preset.width}x{preset.height})
+            </p>
           </div>
-          <p className="text-[8px] text-muted leading-relaxed">Satu harga untuk semua style pada layout ini.</p>
+        </div>
+
+        {/* Zoom Controls */}
+        <div className="flex items-center gap-2">
+          <button onClick={() => setZoom(z => Math.max(15, z - 5))} className="p-1.5 text-muted hover:text-foreground transition-colors rounded-lg hover:bg-white/5">
+            <ZoomOut className="w-4 h-4" />
+          </button>
+          <span className="text-[11px] font-mono text-muted w-10 text-center">{zoom}%</span>
+          <button onClick={() => setZoom(z => Math.min(100, z + 5))} className="p-1.5 text-muted hover:text-foreground transition-colors rounded-lg hover:bg-white/5">
+            <ZoomIn className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-3 py-1.5 rounded-lg border border-white/10 text-muted hover:text-foreground text-[10px] font-bold uppercase tracking-wider transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={isSubmitting || !state.name.trim()}
+            onClick={handleSave}
+            className="px-4 py-1.5 bg-primary text-[#10172A] rounded-lg text-[10px] font-black uppercase tracking-wider hover:brightness-110 disabled:opacity-50 transition-all shadow-lg shadow-primary/20 flex items-center gap-1.5"
+          >
+            {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            {isSubmitting ? 'Saving...' : editingTemplate ? 'Update Frame' : 'Save Frame'}
+          </button>
         </div>
       </div>
 
-      {/* Main Canvas Area */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top Bar */}
-        <div className="h-12 flex items-center justify-between px-4 border-b border-white/8 bg-[#141a2e] flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <button onClick={() => setZoom(z => Math.max(15, z - 5))} className="p-1.5 text-muted hover:text-foreground transition-colors rounded-lg hover:bg-white/5">
-              <ZoomOut className="w-4 h-4" />
-            </button>
-            <span className="text-[11px] font-mono text-muted w-10 text-center">{zoom}%</span>
-            <button onClick={() => setZoom(z => Math.min(100, z + 5))} className="p-1.5 text-muted hover:text-foreground transition-colors rounded-lg hover:bg-white/5">
-              <ZoomIn className="w-4 h-4" />
-            </button>
+      {/* Main Workspace */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        {/* Left Sidebar - Controls */}
+        <div className="w-72 border-r border-white/10 flex flex-col bg-[#0D1322] flex-shrink-0">
+          {/* Sub-tabs */}
+          <div className="flex border-b border-white/10 flex-shrink-0">
+            {([
+              { id: 'bg', label: 'BG', icon: Palette },
+              { id: 'text', label: 'Text', icon: Type },
+              { id: 'asset', label: 'Asset', icon: Layers },
+            ] as const).map(tab => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setEditorTab(tab.id)}
+                  className={cn(
+                    'flex-1 py-2.5 text-[9px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-1.5 border-b-2',
+                    editorTab === tab.id
+                      ? 'border-primary text-primary bg-primary/5'
+                      : 'border-transparent text-muted hover:text-foreground hover:bg-white/5'
+                  )}
+                >
+                  <Icon className="w-3 h-3" />
+                  {tab.label}
+                </button>
+              );
+            })}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onClose}
-              disabled={isSubmitting}
-              className="px-4 py-1.5 text-[11px] font-black uppercase tracking-wider text-muted hover:text-foreground bg-white/5 hover:bg-white/10 rounded-lg transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isSubmitting || !state.name.trim()}
-              className="px-4 py-1.5 text-[11px] font-black uppercase tracking-wider bg-primary text-[#10172A] rounded-lg flex items-center gap-1.5 hover:brightness-110 transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(255,184,0,0.3)]"
-            >
-              {isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 stroke-[3]" />}
-              Save Frame
-            </button>
-          </div>
-        </div>
 
-        {/* Canvas */}
-        <div className="flex-1 overflow-auto flex items-center justify-center bg-[#0c1020] p-8">
-          <div
-            onDragOver={e => { e.preventDefault(); setIsDragOverCanvas(true); }}
-            onDragLeave={() => setIsDragOverCanvas(false)}
-            onDrop={e => { setIsDragOverCanvas(false); handleOverlayDrop(e); }}
-            style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}
-            className={cn('transition-transform duration-200 shadow-[0_0_60px_rgba(0,0,0,0.8)] rounded-xl overflow-hidden flex-shrink-0', isDragOverCanvas ? 'ring-2 ring-primary ring-offset-2 ring-offset-[#0c1020]' : '')}
-          >
-            <CanvasPreview
-              preset={preset}
-              bgColor={state.bgColor}
-              accentColor={state.accentColor}
-              frameType={state.frameType}
-              gradientStops={state.gradientStops}
-              gradientAngle={state.gradientAngle}
-              gradientStyle={state.gradientStyle}
-              textElements={state.textElements}
-              assetElements={state.assetElements}
-              onAssetChange={updateAssetElement}
-              onAssetSelect={(id) => update({ selectedAssetElementId: id })}
-              selectedAssetElementId={state.selectedAssetElementId}
-              imageUrl={previewImageUrl}
-              displayWidth={preset.width}
+          <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {editorTab === 'bg' && (
+              <div className="p-3 space-y-4">
+                {/* Frame Type */}
+                <div className="space-y-1.5">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-muted">Background Type</p>
+                  <div className="flex gap-1 bg-black/30 p-0.5 rounded-lg border border-white/10">
+                    {(['color', 'gradient', 'png'] as const).map(t => (
+                      <button
+                        key={t}
+                        onClick={() => update({ frameType: t })}
+                        className={cn(
+                          'flex-1 py-1.5 text-[8px] font-black uppercase tracking-wider rounded-md transition-all',
+                          state.frameType === t
+                            ? 'bg-primary text-[#10172A]'
+                            : 'bg-white/5 text-muted hover:bg-white/10 hover:text-foreground'
+                        )}
+                      >
+                        {t === 'color' ? 'Solid' : t === 'gradient' ? 'Gradient' : 'Gambar / PNG / JPG'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {state.frameType === 'color' && (
+                  <div className="space-y-1.5">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-muted">Color</p>
+                    <label className="flex items-center gap-2 cursor-pointer bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 hover:border-primary/30 transition-colors">
+                      <span className="w-5 h-5 rounded border border-white/20 flex-shrink-0" style={{ background: state.bgColor }} />
+                      <input type="color" value={state.bgColor} onChange={e => update({ bgColor: e.target.value })} className="sr-only" />
+                      <span className="font-mono text-[9px] text-foreground">{state.bgColor.toUpperCase()}</span>
+                    </label>
+                  </div>
+                )}
+
+                {state.frameType === 'png' && (
+                  <div className="space-y-3">
+                    <div className="p-2.5 rounded-lg border border-primary/30 bg-primary/5 text-primary text-[9px] font-bold leading-relaxed">
+                      ✨ Gambar ini berada di <u>LAPISAN PALING BELAKANG</u> (di bawah kotak foto), sehingga foto dan border slot akan tampil rapi di depannya.
+                    </div>
+
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      onChange={handleFileChange}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={assetUploading}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="w-full py-3 bg-primary/15 border border-dashed border-primary/50 text-primary text-[9px] font-black uppercase tracking-wider rounded-xl hover:bg-primary/25 transition-all flex flex-col items-center justify-center gap-1.5"
+                    >
+                      <Upload className="w-4 h-4" />
+                      {assetUploading ? 'Mengunggah...' : 'Upload Background Gambar (PNG / JPG)'}
+                    </button>
+
+                    {(state.pngPreviewUrl || state.overlayAssetUrl || resolvedExistingPng) && (
+                      <div className="rounded-lg overflow-hidden border border-white/10 bg-black/40 p-2">
+                        <img
+                          src={state.pngPreviewUrl || state.overlayAssetUrl || resolvedExistingPng}
+                          alt="Background Preview"
+                          className="w-full object-contain max-h-36 rounded"
+                        />
+                        <p className="text-center text-[8px] font-bold text-emerald-400 mt-2 truncate">
+                          {state.pngFile ? state.pngFile.name : assets.find(asset => String(asset.id) === String(state.overlayAssetId))?.name || 'Background Aktif'}
+                        </p>
+                      </div>
+                    )}
+
+                    {assets.length > 0 && (
+                      <div className="space-y-2 pt-2 border-t border-white/10">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-muted">Pilih dari Asset yang Sudah Di-upload:</p>
+                        <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto custom-scrollbar">
+                          {assets.map(asset => (
+                            <button
+                              key={asset.id}
+                              type="button"
+                              onClick={() => addOverlayAsBackground(asset)}
+                              className={cn(
+                                'rounded-lg border p-1.5 text-left transition-all hover:border-primary',
+                                String(state.overlayAssetId) === String(asset.id) ? 'border-primary bg-primary/20' : 'border-white/10 bg-black/30'
+                              )}
+                            >
+                              <div className="h-12 rounded bg-black/40 flex items-center justify-center overflow-hidden">
+                                <img src={asset.url} alt={asset.name} className="max-h-full max-w-full object-contain" />
+                              </div>
+                              <span className="block text-[8px] font-bold text-foreground truncate mt-1">{asset.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {state.frameType === 'gradient' && (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-muted flex items-center justify-between">
+                        <span>Preset Gradients</span>
+                        <Sparkles className="w-3 h-3 text-primary" />
+                      </p>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {GRADIENT_PRESETS.map((p, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => update({
+                              frameType: 'gradient',
+                              gradientStyle: p.style as any,
+                              gradientAngle: p.angle,
+                              gradientStops: p.stops
+                            })}
+                            className="h-7 rounded-lg border border-white/10 overflow-hidden hover:scale-105 hover:border-primary transition-all relative group cursor-pointer"
+                            style={{
+                              background: p.style === 'radial'
+                                ? `radial-gradient(circle, ${p.stops.map(s => `${s.color} ${s.position}%`).join(', ')})`
+                                : `linear-gradient(${p.angle}deg, ${p.stops.map(s => `${s.color} ${s.position}%`).join(', ')})`
+                            }}
+                            title={p.name}
+                          >
+                            <span className="sr-only">{p.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-muted">Style</p>
+                      <div className="flex gap-1">
+                        {(['linear', 'radial'] as const).map(s => (
+                          <button
+                            key={s}
+                            onClick={() => update({ gradientStyle: s })}
+                            className={cn(
+                              'flex-1 py-1.5 text-[9px] font-black uppercase tracking-wider rounded-md transition-all',
+                              state.gradientStyle === s
+                                ? 'bg-primary text-[#10172A]'
+                                : 'bg-white/5 text-muted hover:bg-white/10'
+                            )}
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {state.gradientStyle === 'linear' && (
+                      <div className="space-y-1.5">
+                        <p className="text-[9px] font-black uppercase tracking-widest text-muted">
+                          Angle: {state.gradientAngle}°
+                        </p>
+                        <input
+                          type="range" min={0} max={360}
+                          value={state.gradientAngle}
+                          onChange={e => update({ gradientAngle: Number(e.target.value) })}
+                          className="w-full h-1.5 rounded-full accent-primary cursor-pointer"
+                        />
+                      </div>
+                    )}
+                    <div className="space-y-1.5">
+                      <p className="text-[9px] font-black uppercase tracking-widest text-muted">Stops</p>
+                      <GradientStopEditor
+                        stops={state.gradientStops}
+                        onChange={stops => update({ gradientStops: stops })}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Slot Border */}
+                <div className="space-y-1.5">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-muted">Slot Border (Garis Kotak Foto)</p>
+                  <label className="flex items-center gap-2 cursor-pointer bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 hover:border-primary/30 transition-colors">
+                    <span className="w-5 h-5 rounded border border-white/20 flex-shrink-0" style={{ background: state.accentColor }} />
+                    <input type="color" value={state.accentColor} onChange={e => update({ accentColor: e.target.value })} className="sr-only" />
+                    <span className="font-mono text-[9px] text-foreground">{state.accentColor.toUpperCase()}</span>
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {editorTab === 'asset' && (
+              <div
+                className="p-3 space-y-3"
+                onDragOver={e => e.preventDefault()}
+                onDrop={handleOverlayDrop}
+              >
+                <p className="text-[9px] font-black uppercase tracking-widest text-muted">Asset & Stiker</p>
+                <p className="text-[9px] text-muted leading-relaxed">
+                  Upload PNG atau JPG. Anda bisa menjadikannya <b>Background Frame (di belakang foto)</b> atau <b>Stiker/Logo (di depan foto)</b>.
+                </p>
+
+                <div className="space-y-2">
+                  <div className="flex gap-1.5">
+                    <input
+                      value={assetName}
+                      onChange={e => setAssetName(e.target.value)}
+                      placeholder="Nama asset baru"
+                      className="min-w-0 flex-1 bg-black/30 border border-white/10 rounded-lg px-2 py-1.5 text-[9px] text-foreground"
+                    />
+                    <input
+                      ref={assetFileInputRef}
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg,image/webp"
+                      className="hidden"
+                      onChange={e => handleReusableAssetUpload(e.target.files?.[0])}
+                    />
+                    <button
+                      type="button"
+                      disabled={assetUploading}
+                      onClick={() => assetFileInputRef.current?.click()}
+                      className="px-2 py-1.5 bg-primary/15 border border-primary/30 text-primary rounded-lg text-[8px] font-black uppercase"
+                    >
+                      {assetUploading ? '...' : '+ Upload'}
+                    </button>
+                  </div>
+
+                  <p className="text-[9px] font-black uppercase tracking-widest text-muted mt-2">Daftar Asset Tersimpan</p>
+                  {assets.length === 0 ? (
+                    <p className="text-[9px] text-muted italic">Belum ada asset tersimpan.</p>
+                  ) : (
+                    <div className="grid grid-cols-1 gap-2 max-h-56 overflow-y-auto custom-scrollbar">
+                      {assets.map(asset => (
+                        <div
+                          key={asset.id}
+                          className="rounded-lg border border-white/10 bg-black/30 p-2 flex items-center justify-between gap-2"
+                        >
+                          <div className="w-12 h-12 rounded bg-black/40 flex items-center justify-center overflow-hidden flex-shrink-0">
+                            <img src={asset.url} alt={asset.name} className="max-h-full max-w-full object-contain" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <span className="block text-[9px] font-bold text-foreground truncate">{asset.name}</span>
+                            <div className="flex gap-1 mt-1.5">
+                              <button
+                                type="button"
+                                onClick={() => addOverlayAsBackground(asset)}
+                                className="px-2 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 rounded text-[8px] font-bold"
+                                title="Jadikan background di bawah foto"
+                              >
+                                🖼️ Set BG
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => addAssetElement(asset)}
+                                className="px-2 py-1 bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 rounded text-[8px] font-bold"
+                                title="Jadikan stiker/logo di atas foto"
+                              >
+                                ➕ Stiker
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {state.assetElements.length > 0 && (
+                  <div className="space-y-2 border-t border-white/10 pt-3">
+                    <p className="text-[9px] font-black uppercase tracking-widest text-muted">Stiker di Canvas ({state.assetElements.length})</p>
+                    {state.assetElements.map((element, index) => (
+                      <div key={element.id} className={cn('rounded-lg border p-2 space-y-2', state.selectedAssetElementId === element.id ? 'border-primary/50 bg-primary/5' : 'border-white/10 bg-black/20')}>
+                        <div className="flex items-center justify-between">
+                          <button type="button" onClick={() => update({ selectedAssetElementId: element.id })} className="text-[9px] font-bold text-foreground truncate max-w-[120px]">
+                            {index + 1}. {element.name}
+                          </button>
+                          <button type="button" onClick={() => removeAssetElement(element.id)} className="text-muted hover:text-red-400">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {([['x', 'X', element.x], ['y', 'Y', element.y], ['width', 'Width', element.width], ['height', 'Height', element.height]] as const).map(([field, label, value]) => (
+                            <label key={field} className="text-[8px] text-muted uppercase font-black">
+                              {label} {Math.round(value)}%
+                              <input type="range" min="0" max="100" value={value} onChange={e => updateAssetElement(element.id, { [field]: Number(e.target.value) } as Partial<AssetElement>)} className="w-full h-1 accent-primary cursor-pointer" />
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    <p className="text-[8px] text-muted italic">Klik lalu drag logo langsung di canvas untuk memindahkannya. Atur ukuran dengan slider.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {editorTab === 'text' && (
+              <div className="p-3 space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-muted">Text Overlays</p>
+                  <button
+                    type="button"
+                    onClick={addTextElement}
+                    className="px-2 py-1 bg-primary text-[#10172A] text-[9px] font-black uppercase rounded hover:brightness-110 flex items-center gap-1"
+                  >
+                    <Plus className="w-3 h-3" /> Add Text
+                  </button>
+                </div>
+
+                {state.textElements.length === 0 ? (
+                  <p className="text-[9px] text-muted italic text-center py-4">No text elements added yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {state.textElements.map((elem, idx) => (
+                      <div key={elem.id} className="p-2.5 bg-black/30 border border-white/10 rounded-lg space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-bold text-primary">Text #{idx + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeTextElement(elem.id)}
+                            className="text-muted hover:text-red-400 p-0.5"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+
+                        {/* Content */}
+                        <input
+                          type="text"
+                          value={elem.text}
+                          onChange={e => updateTextElement(elem.id, { text: e.target.value })}
+                          placeholder="Text content"
+                          className="w-full bg-black/40 border border-white/10 rounded px-2 py-1 text-[10px] text-foreground font-bold"
+                        />
+
+                        {/* Google Font Selector */}
+                        <div className="space-y-1">
+                          <p className="text-[8px] text-muted uppercase font-black">Google Font</p>
+                          <select
+                            value={elem.fontFamily}
+                            onChange={e => updateTextElement(elem.id, { fontFamily: e.target.value })}
+                            className="w-full bg-black/40 border border-white/10 rounded px-1.5 py-1 text-[9px] text-foreground font-bold outline-none"
+                          >
+                            {GOOGLE_FONTS.map(f => (
+                              <option key={f.name} value={f.family} style={{ fontFamily: f.family }}>
+                                {f.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Size & Color */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <p className="text-[8px] text-muted uppercase font-black">Size ({elem.fontSize}px)</p>
+                            <input
+                              type="range"
+                              min={16}
+                              max={120}
+                              value={elem.fontSize}
+                              onChange={e => updateTextElement(elem.id, { fontSize: Number(e.target.value) })}
+                              className="w-full h-1 accent-primary cursor-pointer"
+                            />
+                          </div>
+                          <div>
+                            <p className="text-[8px] text-muted uppercase font-black">Color</p>
+                            <label className="flex items-center gap-1 cursor-pointer bg-black/40 border border-white/10 rounded px-1.5 py-0.5">
+                              <span className="w-3.5 h-3.5 rounded border border-white/20" style={{ background: elem.color }} />
+                              <input
+                                type="color"
+                                value={elem.color}
+                                onChange={e => updateTextElement(elem.id, { color: e.target.value })}
+                                className="sr-only"
+                              />
+                              <span className="font-mono text-[8px] text-foreground truncate">{elem.color}</span>
+                            </label>
+                          </div>
+                        </div>
+
+                        {/* Y Position */}
+                        <div>
+                          <p className="text-[8px] text-muted uppercase font-black">Y Position ({elem.y}%)</p>
+                          <input
+                            type="range"
+                            min={5}
+                            max={95}
+                            value={elem.y}
+                            onChange={e => updateTextElement(elem.id, { y: Number(e.target.value) })}
+                            className="w-full h-1 accent-primary cursor-pointer"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Frame Name + Shared Layout Price */}
+          <div className="border-t border-white/10 p-3 space-y-2 flex-shrink-0 bg-[#0A0F1D]">
+            <p className="text-[9px] font-black uppercase tracking-widest text-muted">Frame Name</p>
+            <input
+              type="text"
+              value={state.name}
+              onChange={e => update({ name: e.target.value })}
+              placeholder="e.g. Classic Dark"
+              className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[10px] font-bold text-foreground outline-none focus:border-primary/50 transition-all"
             />
+            <p className="text-[9px] font-black uppercase tracking-widest text-muted pt-1">Harga Layout (Rp)</p>
+            <div className="w-full bg-black/30 border border-white/10 rounded-lg px-2.5 py-2 text-[10px] font-bold text-primary">
+              {framePrice ? `Rp ${Number(framePrice).toLocaleString('id-ID')}` : 'Belum diatur'}
+            </div>
+            <p className="text-[8px] text-muted leading-relaxed">Satu harga untuk semua style pada layout ini.</p>
           </div>
         </div>
 
-        {/* Bottom hint */}
-        <div className="flex-shrink-0 h-8 flex items-center justify-center border-t border-white/5">
-          <p className="text-[9px] font-bold text-muted tracking-wider">
-            Click element to edit. Drag to move. Use sidebar for styling. Zoom to adjust view.
-          </p>
+        {/* Main Canvas Area */}
+        <div className="flex-1 flex flex-col min-w-0 bg-[#0c1020] relative">
+          <div className="flex-1 overflow-auto flex items-center justify-center p-8">
+            <div
+              onDragOver={e => { e.preventDefault(); setIsDragOverCanvas(true); }}
+              onDragLeave={() => setIsDragOverCanvas(false)}
+              onDrop={e => { setIsDragOverCanvas(false); handleOverlayDrop(e); }}
+              style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'center center' }}
+              className={cn('transition-transform duration-200 shadow-[0_0_60px_rgba(0,0,0,0.8)] rounded-xl overflow-hidden flex-shrink-0', isDragOverCanvas ? 'ring-2 ring-primary ring-offset-2 ring-offset-[#0c1020]' : '')}
+            >
+              <CanvasPreview
+                preset={preset}
+                bgColor={state.bgColor}
+                accentColor={state.accentColor}
+                frameType={state.frameType}
+                gradientStops={state.gradientStops}
+                gradientAngle={state.gradientAngle}
+                gradientStyle={state.gradientStyle}
+                textElements={state.textElements}
+                assetElements={state.assetElements}
+                onAssetChange={updateAssetElement}
+                onAssetSelect={(id) => update({ selectedAssetElementId: id })}
+                selectedAssetElementId={state.selectedAssetElementId}
+                imageUrl={previewImageUrl}
+                displayWidth={preset.width}
+              />
+            </div>
+          </div>
+
+          {/* Bottom hint */}
+          <div className="flex-shrink-0 h-8 flex items-center justify-center border-t border-white/5 bg-[#0D1322]">
+            <p className="text-[9px] font-bold text-muted tracking-wider">
+              Click element to edit. Drag to move. Use sidebar for styling. Zoom to adjust view.
+            </p>
+          </div>
         </div>
       </div>
     </div>

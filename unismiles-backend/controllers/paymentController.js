@@ -42,4 +42,65 @@ const uploadAdminQRIS = async (req, res) => {
   }
 };
 
-module.exports = { getKioskPaymentMethods, getAdminPaymentProfile, uploadAdminQRIS };
+const updateAdminPaymentProfile = async (req, res) => {
+  try {
+    const user_id = req.user.id;
+    const { 
+      merchant_name, 
+      display_name, 
+      unique_amount_enabled, 
+      session_ttl_minutes, 
+      verification_mode, 
+      merchant_aliases,
+      active_providers
+    } = req.body;
+
+    const existing = await PaymentProfile.findDefaultForKiosk(user_id);
+    
+    let paymentData = {};
+    if (existing && existing.payment_data) {
+      try {
+        paymentData = typeof existing.payment_data === 'string'
+          ? JSON.parse(existing.payment_data)
+          : existing.payment_data;
+      } catch (e) {}
+    }
+
+    paymentData.unique_amount_enabled = !!unique_amount_enabled;
+    paymentData.session_ttl_minutes = Number(session_ttl_minutes) || 5;
+    paymentData.verification_mode = verification_mode || 'assisted';
+    paymentData.merchant_aliases = Array.isArray(merchant_aliases) 
+      ? merchant_aliases 
+      : String(merchant_aliases || '').split(',').map(s => s.trim()).filter(Boolean);
+    paymentData.active_providers = Array.isArray(active_providers) 
+      ? active_providers 
+      : String(active_providers || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    const payment_data_str = JSON.stringify(paymentData);
+
+    const pool = require('../config/db');
+    if (existing) {
+      await pool.query(
+        `UPDATE payment_profiles SET 
+           merchant_name = ?, 
+           display_name = ?, 
+           payment_data = ? 
+         WHERE id = ?`,
+        [merchant_name || 'UNI SMILE', display_name || 'UNI SMILE', payment_data_str, existing.id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO payment_profiles 
+         (user_id, profile_name, payment_type, provider, display_name, merchant_name, is_default, status, payment_data) 
+         VALUES (?, 'Default QRIS', 'manual_qris', 'manual', ?, ?, 1, 'active', ?)`,
+        [user_id, display_name || 'UNI SMILE', merchant_name || 'UNI SMILE', payment_data_str]
+      );
+    }
+
+    return res.status(200).json({ success: true, message: 'Payment profile updated successfully' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { getKioskPaymentMethods, getAdminPaymentProfile, uploadAdminQRIS, updateAdminPaymentProfile };

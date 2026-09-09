@@ -11,7 +11,8 @@ import { kioskAgentBridge } from '../services/kioskAgentBridge';
 import {
   startSession, completeSession, uploadPhoto, sendPhotoByEmail, fetchPaymentProfile,
   verifyPayment, fetchTemplates, queuePrintJob, getPrintJobStatus, KioskApiError,
-  getApiConfig, isAutoPrintEnabled, isManualPrintFallbackEnabled
+  getApiConfig, isAutoPrintEnabled, isManualPrintFallbackEnabled,
+  submitPaymentEvidence, getPaymentVerificationStatus
 } from '../services/apiService';
 
 // Global Scale (Now 1.0 since we removed transform scale from index.html)
@@ -52,7 +53,7 @@ interface PhotoBoothProps {
   onAdminClick: () => void;
 }
 
-type BoothStep = 'LANDING' | 'PACKAGE' | 'LAYOUT' | 'PAYMENT' | 'CAPTURE' | 'EDIT' | 'RESULT';
+type BoothStep = 'LANDING' | 'PACKAGE' | 'LAYOUT' | 'PAYMENT' | 'PAYMENT_SCAN' | 'PAYMENT_CHECKING' | 'CAPTURE' | 'EDIT' | 'RESULT';
 type PrintState = 'idle' | 'preparing' | 'uploading' | 'queued' | 'printing' | 'success' | 'failed';
 
 const ACTIVE_PRINT_STORAGE_KEY = 'unismiles_active_print_job';
@@ -834,6 +835,14 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   const [flowError, setFlowError] = useState<string | null>(null);
   // Harga dari response start session adalah harga authoritative dari backend.
   const [sessionAmount, setSessionAmount] = useState<number | null>(null);
+  
+  // New visual payment verification states
+  const [challengeId, setChallengeId] = useState<string>('');
+  const [verificationAttemptId, setVerificationAttemptId] = useState<string>('');
+  const [verificationStatus, setVerificationStatus] = useState<string>('');
+  const [verificationReasonCodes, setVerificationReasonCodes] = useState<string[]>([]);
+  const [scanningProgress, setScanningProgress] = useState<number>(0);
+  const [scanningHint, setScanningHint] = useState<string>('');
   // Keep email sending and the automatic upload on the same promise. Without
   // this, a visitor can submit the email while the backend still has no photo
   // attached to the session.
@@ -991,8 +1000,11 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
             return;
         }
 
-        // Optimization: If no elements, no need to process
-        if (!selectedFrame.elements || selectedFrame.elements.length === 0) {
+        // Check if there are any stickers OR overlayUrl to process
+        const hasStickers = selectedFrame.elements && selectedFrame.elements.some((el: FrameElement) => el.type === 'sticker' && el.content.startsWith('http'));
+        const hasOverlay = Boolean(selectedFrame.overlayUrl?.startsWith('http'));
+
+        if (!hasStickers && !hasOverlay) {
              clearSafetyTimeout();
              if (isMounted) {
                 setProcessedFrame(selectedFrame);
@@ -1165,7 +1177,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   // Robust Start Camera with Error Handling and Retry Mechanism
   useEffect(() => {
     let isActive = true;
-    const shouldUseCamera = step === 'CAPTURE' || isCalibrating;
+    const shouldUseCamera = step === 'CAPTURE' || step === 'PAYMENT_SCAN' || isCalibrating;
 
     // Do not ask for camera permission while the visitor is still choosing a
     // package/layout or browsing the result screen. Camera permission belongs
@@ -1272,7 +1284,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
     if (handsRef.current && configRef.current.gestureEnabled) await handsRef.current.send({ image: videoElement });
 
     const { step: currentStep, isCalibrating: currentIsCalibrating, selectedBackground: currentBackground } = loopStateRef.current;
-    if (currentIsCalibrating || currentStep === 'PAYMENT' || currentStep === 'CAPTURE') {
+    if (currentIsCalibrating || currentStep === 'PAYMENT' || currentStep === 'PAYMENT_SCAN' || currentStep === 'CAPTURE') {
         if (currentBackground && selfieSegmentationRef.current && currentStep !== 'LANDING') {
              try { await selfieSegmentationRef.current.send({ image: videoElement }); } catch (e) { drawVideoDirectly(); }
         } else {
@@ -1398,22 +1410,193 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
       const sessionData = await startSession(kioskId, templateId);
       setSessionCode(sessionData.id);
       setSessionAmount(sessionData.amount ?? null);
+      setChallengeId(sessionData.challenge_id || '');
       setStep('PAYMENT');
     } catch (error) {
       const message = error instanceof KioskApiError ? error.message : 'Sesi gagal dibuat di backend utama.';
       setFlowError(message);
     }
   };
-  const handlePaymentConfirm = async () => {
+  const handlePaymentConfirm = () => {
     setFlowError(null);
-    try {
-      await verifyPayment(sessionCode);
-      setStep('CAPTURE');
-    } catch (error) {
-      const message = error instanceof KioskApiError ? error.message : 'Pembayaran gagal dikonfirmasi backend.';
-      setFlowError(message);
+    setVerificationStatus('');
+    setVerificationReasonCodes([]);
+    setScanningProgress(0);
+    setScanningHint('');
+    setStep('PAYMENT_SCAN');
+  };
+
+  const captureFrameAsBlob = (): Promise<Blob | null> => {
+    return new Promise((resolve) => {
+      const video = videoRef.current;
+      if (!video) {
+        resolve(null);
+        return;
+      }
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = video.videoWidth || 1920;
+      tempCanvas.height = video.videoHeight || 1080;
+      const ctx = tempCanvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
+        tempCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.98);
+      } else {
+        resolve(null);
+      }
+    });
+  };
+
+  const formatVerificationReason = (code: string): string => {
+    switch (code) {
+      case 'IMAGE_BLURRY':
+        return 'Layar HP buram atau goyang. Dekatkan HP dan tahan dengan stabil.';
+      case 'DETAIL_SCREEN_REQUIRED':
+        return 'Tampilkan halaman Detail / Bukti Transaksi Berhasil (bukan riwayat/mutasi).';
+      case 'PAYMENT_NOT_SUCCESS':
+        return 'Status transaksi pada layar belum berstatus berhasil atau lunas.';
+      case 'AMOUNT_MISMATCH':
+        return 'Nominal pembayaran pada bukti transfer tidak sesuai tagihan.';
+      case 'MERCHANT_MISMATCH':
+        return 'Nama penerima / merchant tidak sesuai dengan tujuan QRIS.';
+      case 'DUPLICATE_REFERENCE':
+        return 'Bukti pembayaran ini sudah pernah digunakan sebelumnya.';
+      case 'STALE_RECEIPT':
+        return 'Bukti pembayaran sudah kedaluwarsa (lebih dari 1 jam).';
+      case 'LOW_CONFIDENCE':
+        return 'Teks bukti bayar kurang jelas. Naikkan kecerahan layar HP ke maksimal.';
+      case 'INTERNAL_ERROR':
+        return 'Layanan analisis bukti bayar sedang sibuk. Silakan coba lagi.';
+      default:
+        return code;
     }
   };
+
+  const handleResetScan = () => {
+    setVerificationStatus('');
+    setVerificationReasonCodes([]);
+    setFlowError(null);
+    setScanningProgress(0);
+    setScanningHint('');
+  };
+
+  const startScanningSequence = async () => {
+    setScanningProgress(0);
+    setVerificationReasonCodes([]);
+    setFlowError(null);
+    
+    const collectedBlobs: Blob[] = [];
+    
+    // Quick frame 1
+    setScanningHint('Mengambil frame bukti bayar (1/3)...');
+    setScanningProgress(30);
+    let blob = await captureFrameAsBlob();
+    if (blob) collectedBlobs.push(blob);
+    await new Promise(r => setTimeout(r, 250));
+    
+    // Quick frame 2
+    setScanningHint('Mengambil frame bukti bayar (2/3)...');
+    setScanningProgress(65);
+    blob = await captureFrameAsBlob();
+    if (blob) collectedBlobs.push(blob);
+    await new Promise(r => setTimeout(r, 250));
+    
+    // Quick frame 3
+    setScanningHint('Mengambil frame bukti bayar (3/3)...');
+    setScanningProgress(100);
+    blob = await captureFrameAsBlob();
+    if (blob) collectedBlobs.push(blob);
+
+    // Switch to checking
+    setStep('PAYMENT_CHECKING');
+    processVerification(collectedBlobs);
+  };
+
+  const processVerification = async (frames: Blob[]) => {
+    setVerificationStatus('processing');
+    setScanningHint('Mengirim bukti pembayaran ke vision service...');
+    
+    try {
+      const data = await submitPaymentEvidence(sessionCode, frames, challengeId);
+      const attemptId = data.attempt_id;
+      setVerificationAttemptId(attemptId);
+      setScanningHint('Menganalisis teks bukti pembayaran...');
+      
+      // Start polling
+      pollVerificationStatus(attemptId);
+    } catch (err: any) {
+      setVerificationStatus('error');
+      setScanningProgress(0);
+      setStep('PAYMENT_SCAN');
+      setFlowError(err.message || 'Gagal mengirim verifikasi pembayaran.');
+    }
+  };
+
+  const pollVerificationStatus = async (attemptId: string) => {
+    let attemptsCount = 0;
+    const interval = setInterval(async () => {
+      attemptsCount++;
+      if (attemptsCount > 25) {
+        clearInterval(interval);
+        setStep('PAYMENT_SCAN');
+        setScanningProgress(0);
+        setVerificationStatus('needs_retry');
+        setFlowError('Pemeriksaan memakan waktu lebih lama dari biasanya. Silakan coba memindai ulang.');
+        return;
+      }
+      
+      try {
+        const data = await getPaymentVerificationStatus(sessionCode, attemptId);
+        if (data.status === 'verified' || data.decision === 'verified') {
+          clearInterval(interval);
+          setVerificationStatus('verified');
+          setScanningProgress(0);
+          setScanningHint('Pembayaran terverifikasi! Memulai sesi foto...');
+          setTimeout(() => {
+            setStep('CAPTURE');
+          }, 1000);
+        } else if (data.decision === 'needs_retry') {
+          clearInterval(interval);
+          setStep('PAYMENT_SCAN');
+          setScanningProgress(0);
+          setVerificationStatus('needs_retry');
+          setVerificationReasonCodes(data.reason_codes || []);
+        } else if (data.decision === 'rejected') {
+          clearInterval(interval);
+          setStep('PAYMENT_SCAN');
+          setScanningProgress(0);
+          setVerificationStatus('rejected');
+          setVerificationReasonCodes(data.reason_codes || []);
+        } else if (data.status === 'error') {
+          clearInterval(interval);
+          setStep('PAYMENT_SCAN');
+          setScanningProgress(0);
+          setVerificationStatus('needs_retry');
+          setVerificationReasonCodes(data.reason_codes || ['INTERNAL_ERROR']);
+        }
+      } catch (err) {
+        console.error('Polling status error:', err);
+      }
+    }, 1000);
+  };
+
+  // Dev testing shortcut: Only active during local dev, disabled in production
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    const handleDevKey = (e: KeyboardEvent) => {
+      if ((e.key === 'p' || e.key === 'P') && ['PAYMENT', 'PAYMENT_SCAN', 'PAYMENT_CHECKING'].includes(step)) {
+        console.log('[Dev] Payment bypass shortcut triggered');
+        setVerificationStatus('verified');
+        setScanningHint('Bypass Developer: Pembayaran Disetujui!');
+        setTimeout(() => {
+          setStep('CAPTURE');
+        }, 400);
+      }
+    };
+    window.addEventListener('keydown', handleDevKey);
+    return () => window.removeEventListener('keydown', handleDevKey);
+  }, [step]);
+
   const handleFinish = () => { 
     setStep('RESULT'); 
     setIsResultPanelCollapsed(window.innerWidth < 1280); 
@@ -1646,6 +1829,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
     const loadImg = (src: string): Promise<HTMLImageElement> =>
       new Promise((resolve, reject) => {
         const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
         const timeoutId = window.setTimeout(() => reject(new Error('Render image load timeout')), RENDER_IMAGE_TIMEOUT_MS);
         img.onload = () => {
           window.clearTimeout(timeoutId);
@@ -2474,6 +2659,139 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
                      </button>
                  </div>
              </div>
+        </BoothWrapper>
+      )}
+
+      {step === 'PAYMENT_SCAN' && (
+        <BoothWrapper uiMode={uiMode} isLocked={isCursorLocked} onToggleLock={() => setIsCursorLocked(!isCursorLocked)} hideHeader hideLogos customBg="bg-[#0c1633]" isVertical={isVertical}>
+          <div className="h-full w-full bg-[#0c1633] flex flex-col items-center justify-center relative p-3 sm:p-5 select-none overflow-y-auto">
+            <div className="z-10 w-full max-w-md flex flex-col items-center gap-3 sm:gap-4 my-auto">
+              
+              {/* Header */}
+              <div className="text-center max-w-md">
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight uppercase">Pindai Bukti Pembayaran</h2>
+                <p className="text-xs sm:text-sm font-semibold text-gray-400 mt-0.5">
+                  Posisikan layar HP Anda (halaman detail transaksi sukses) tepat di dalam bingkai kamera.
+                </p>
+              </div>
+
+              {/* Center Camera Preview - Tall Elongated Smartphone Shape */}
+              <div className="w-[280px] sm:w-[320px] md:w-[340px] h-[370px] sm:h-[410px] md:h-[440px] max-h-[48vh] bg-black/60 border-2 border-white/20 rounded-[2.2rem] relative overflow-hidden shadow-[0_15px_35px_rgba(0,0,0,0.6)] flex items-center justify-center">
+                <canvas ref={processingCanvasRef} className="w-full h-full object-cover transform scale-x-[-1]" />
+                
+                {/* Phone screen border overlay (Elongated Phone Frame) */}
+                <div className="absolute inset-0 border-[10px] sm:border-[12px] border-black/55 pointer-events-none flex items-center justify-center">
+                  <div className="w-[88%] h-[92%] border-4 border-dashed border-[#f6cd46] rounded-[2rem] relative shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse flex items-center justify-center">
+                    <span className="text-[11px] sm:text-xs text-center font-black uppercase text-[#f6cd46] bg-black/80 px-3.5 py-1.5 rounded-full tracking-wider shadow-lg backdrop-blur-sm border border-[#f6cd46]/40">
+                      Layar HP Di Sini
+                    </span>
+                  </div>
+                </div>
+
+                {/* Progress bar overlay if active */}
+                {scanningProgress > 0 && (
+                  <div className="absolute bottom-3 left-3 right-3 bg-black/85 backdrop-blur-md p-3 rounded-2xl border border-white/15 space-y-1.5">
+                    <div className="flex justify-between items-center text-xs font-black text-white uppercase tracking-wider">
+                      <span className="animate-pulse">{scanningHint}</span>
+                      <span>{scanningProgress}%</span>
+                    </div>
+                    <div className="w-full bg-white/15 h-2 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-[#f6cd46] h-full rounded-full transition-all duration-300"
+                        style={{ width: `${scanningProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Button & Feedback Area - ALWAYS Rendered */}
+              <div className="w-[280px] sm:w-[320px] md:w-[340px] flex flex-col gap-2">
+                {(verificationStatus === 'needs_retry' || verificationStatus === 'rejected' || verificationStatus === 'error') ? (
+                  /* Unified Error & Retry Message Card */
+                  <div className="bg-red-500/10 border border-red-500/30 p-3.5 rounded-2xl text-center space-y-2 shadow-lg backdrop-blur-md">
+                    <div className="flex items-center justify-center gap-1.5 text-red-400 font-black text-xs sm:text-sm uppercase">
+                      <span>⚠️</span>
+                      <span>{verificationStatus === 'rejected' ? 'Bukti Bayar Ditolak' : 'Pindai Belum Berhasil'}</span>
+                    </div>
+
+                    <p className="text-[11px] sm:text-xs font-semibold text-gray-300 leading-relaxed">
+                      {verificationStatus === 'rejected' 
+                        ? 'Bukti transaksi tidak sah atau sudah pernah digunakan sebelumnya.'
+                        : (flowError || 'Kamera belum dapat membaca bukti pembayaran dengan jelas.')}
+                    </p>
+                    
+                    {verificationReasonCodes.length > 0 && (
+                      <div className="bg-black/40 border border-white/5 rounded-xl p-2 text-left text-[11px] text-amber-300 space-y-1 font-medium">
+                        {verificationReasonCodes.map(code => (
+                          <div key={code} className="flex items-start gap-1">
+                            <span className="text-amber-400 font-bold">•</span>
+                            <span>{formatVerificationReason(code)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {verificationStatus !== 'rejected' && (
+                      <p className="text-[10px] text-gray-400 italic">
+                        💡 Tips: Naikkan kecerahan layar HP ke maksimal, dekatkan ke kamera, dan hindari pantulan cahaya lampu.
+                      </p>
+                    )}
+
+                    {verificationStatus !== 'rejected' && (
+                      <button 
+                        onClick={handleResetScan}
+                        className="w-full mt-1 bg-[#f6cd46] hover:bg-[#e5bc35] text-black py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 border-2 border-[#f6cd46]"
+                      >
+                        <span>🔄</span>
+                        <span>Pindai Ulang</span>
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  /* Default Primary Scan Button - Always visible in idle state */
+                  <button 
+                    onClick={startScanningSequence}
+                    disabled={scanningProgress > 0}
+                    className="w-full bg-[#f6cd46] hover:bg-[#e5bc35] text-black py-3 sm:py-3.5 rounded-xl text-sm sm:text-base font-black shadow-[0_8px_20px_rgba(246,205,70,0.35)] transition-all active:scale-95 flex items-center justify-center gap-2 border-2 border-[#f6cd46] disabled:opacity-80"
+                  >
+                    <span className="text-lg">📸</span>
+                    <span>{scanningProgress > 0 ? (scanningHint || 'Sedang Memindai...') : 'Pindai Bukti Sekarang'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Back Button */}
+            <div className="absolute top-4 left-4 sm:top-6 sm:left-6 z-50">
+              <button 
+                onClick={() => {
+                  setStep('PAYMENT');
+                  handleResetScan();
+                }} 
+                className="active:scale-95 hover:scale-110 transition-all outline-none"
+              >
+                <img src="/assets/BACK.png" alt="Back" className="h-16 sm:h-20 md:h-24 object-contain drop-shadow-md" />
+              </button>
+            </div>
+          </div>
+        </BoothWrapper>
+      )}
+
+      {step === 'PAYMENT_CHECKING' && (
+        <BoothWrapper uiMode={uiMode} isLocked={isCursorLocked} onToggleLock={() => setIsCursorLocked(!isCursorLocked)} hideHeader customBg="bg-[#0c1633]" isVertical={isVertical}>
+          <div className="h-full w-full bg-[#0c1633] flex flex-col items-center justify-center p-6">
+            <div className="flex flex-col items-center gap-6 max-w-sm text-center">
+              <div className="relative w-20 h-20">
+                <div className="absolute inset-0 rounded-full border-4 border-white/10" />
+                <div className="absolute inset-0 rounded-full border-4 border-t-primary animate-spin" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-2xl font-black text-white tracking-tight uppercase">Memproses Verifikasi</h3>
+                <p className="text-sm font-bold text-gray-400 animate-pulse">{scanningHint}</p>
+              </div>
+            </div>
+          </div>
         </BoothWrapper>
       )}
 

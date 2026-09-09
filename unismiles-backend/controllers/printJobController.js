@@ -61,6 +61,14 @@ function createPrintJobController(overrides = {}) {
           });
         }
 
+        if (session.payment_status !== 'verified') {
+          return res.status(403).json({
+            success: false,
+            message: 'Sesi belum dibayar atau pembayaran belum terverifikasi.',
+            error_code: 'PAYMENT_REQUIRED',
+          });
+        }
+
         const sessionIdentifier = session.session_code || session.id || sessionCode;
         const existing = await deps.printJobModel.findByIdempotencyKey(kiosk.id, request.idempotency_key);
         if (existing) {

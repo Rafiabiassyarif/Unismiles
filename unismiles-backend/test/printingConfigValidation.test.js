@@ -15,11 +15,12 @@ test('normalizes disabled printing and clears adapter/printer', () => {
     printing_enabled: false,
     adapter: 'disabled',
     printer_name: null,
-    paper_size: '4R',
+    paper_size: 'Instax Mini (54 × 86 mm)',
     orientation: 'portrait',
     copies_limit: 1,
     timeout_ms: 60000,
     retry_count: 2,
+    allowed_layouts: [],
   });
 });
 

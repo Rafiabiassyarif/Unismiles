@@ -37,54 +37,68 @@ const startSession = async (req, res) => {
     });
     const session_code = crypto.randomBytes(4).toString('hex').toUpperCase();
 
+    // Check payment profile config
+    const [profiles] = await pool.query(
+      'SELECT payment_data FROM payment_profiles WHERE user_id = ? AND is_default = 1 AND deleted_at IS NULL LIMIT 1',
+      [req.kiosk.user_id]
+    );
+    
+    let uniqueAmountEnabled = true;
+    let sessionTtlMins = 5;
+    if (profiles.length) {
+      try {
+        const pData = typeof profiles[0].payment_data === 'string'
+          ? JSON.parse(profiles[0].payment_data)
+          : profiles[0].payment_data || {};
+        uniqueAmountEnabled = pData.unique_amount_enabled !== false;
+        sessionTtlMins = Number(pData.session_ttl_minutes) || 5;
+      } catch (e) {}
+    }
+
+    let finalAmount = amount;
+    if (uniqueAmountEnabled && amount > 100) {
+      const suffix = Math.floor(Math.random() * 99) + 1;
+      finalAmount = Math.floor(amount / 100) * 100 + suffix;
+    }
+
     await Session.create({ session_code, kiosk_id, frame_template_id });
 
-    return res.status(201).json({ success: true, session_code, amount });
+    // Set payment columns on the session
+    const challengeId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + sessionTtlMins * 60 * 1000);
+      await pool.query(
+        `UPDATE sessions SET 
+           payment_status = 'pending', 
+           payment_required_amount = ?, 
+           payment_expires_at = ? 
+         WHERE session_code = ?`,
+        [finalAmount, expiresAt, session_code]
+      );
+
+    return res.status(201).json({
+      success: true,
+      session_code,
+      amount: finalAmount,
+      data: {
+        session_code,
+        expected_amount: finalAmount,
+        base_amount: amount,
+        payment_expires_at: expiresAt.toISOString(),
+        verification_challenge_id: challengeId,
+        payment_method: 'qris_visual_proof'
+      }
+    });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
 const verifyPayment = async (req, res) => {
-  try {
-    const session_code = req.params.session_code || req.params.id;
-    const [sessions] = await pool.query(
-      `SELECT s.session_code, ft.price AS template_price, ft.layout_config, k.base_price
-       FROM sessions s
-       JOIN kiosks k ON k.id = s.kiosk_id
-       LEFT JOIN frame_templates ft ON ft.id = s.frame_template_id
-       WHERE s.session_code = ? AND k.id = ?
-       LIMIT 1`,
-      [session_code, req.kiosk.id]
-    );
-    if (!sessions.length) {
-      return res.status(404).json({ success: false, message: 'Sesi tidak ditemukan' });
-    }
-    const session = sessions[0];
-    const amount = resolvePrice({
-      templatePrice: session.template_price,
-      layoutConfig: session.layout_config,
-      kioskBasePrice: session.base_price,
-    });
-    if (amount <= 0) {
-      return res.status(400).json({ success: false, message: 'Harga sesi belum tersedia' });
-    }
-    const transaction_code = 'TRX-' + Date.now();
-
-    await Transaction.create({
-      session_id: session_code,
-      transaction_code,
-      amount,
-      payment_method: 'QRIS',
-    });
-
-    // MVP: Manual QRIS — mark as success immediately
-    await Transaction.updateStatusBySessionId(session_code, 'success');
-
-    return res.status(200).json({ success: true, transaction_code });
-  } catch (error) {
-    return res.status(500).json({ success: false, message: error.message });
-  }
+  // Opsi pertama dari brief: Hapus behavior mvp yang langsung sukses
+  return res.status(403).json({
+    success: false,
+    message: 'Manual success payment bypass is deprecated. Please use visual verification endpoint.'
+  });
 };
 
 const completeSession = async (req, res) => {
@@ -93,6 +107,11 @@ const completeSession = async (req, res) => {
 
     const session = await Session.findByCodeAndKiosk(session_code, req.kiosk.id);
     if (!session) return res.status(404).json({ success: false, message: 'Sesi tidak ditemukan' });
+
+    // Enforce payment verification check
+    if (session.payment_status !== 'verified') {
+      return res.status(403).json({ success: false, message: 'Sesi belum dibayar atau pembayaran belum diverifikasi.' });
+    }
 
     await Session.updateStatus(session_code, 'completed');
     const download_url = `${publicBaseUrl(req)}/download/${encodeURIComponent(session_code)}`;
@@ -117,6 +136,8 @@ const getAdminSessions = async (req, res) => {
       let query = `
         SELECT
           ${sessionId} AS session_code,
+          s.kiosk_id,
+          COALESCE(k.name, s.kiosk_id, 'Unknown Kiosk') AS kiosk_name,
           s.started_at AS timestamp,
           COALESCE(ft.name, 'Default Template') AS template,
           s.status,
@@ -174,6 +195,8 @@ const getAdminSessions = async (req, res) => {
       }
       return {
         id: String(r.session_code).startsWith('#') ? String(r.session_code) : `#US-${r.session_code}`,
+        kiosk_id: r.kiosk_id || '',
+        kiosk_name: r.kiosk_name || r.kiosk_id || 'Unknown Kiosk',
         timestamp: r.timestamp,
         template: r.template,
         photos: photosArr,

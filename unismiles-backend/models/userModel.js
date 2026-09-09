@@ -21,6 +21,9 @@ async function getNameColumn() {
         throw new Error("The users table must contain either a 'name' or 'full_name' column");
       }
       return rows[0].COLUMN_NAME;
+    }).catch((err) => {
+      nameColumnPromise = null;
+      throw err;
     });
   }
 

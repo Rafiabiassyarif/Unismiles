@@ -21,6 +21,7 @@ router.get('/dashboard', dashboardController.getDashboardStats);
 
 router.get('/payment-profile', paymentController.getAdminPaymentProfile);
 router.post('/payment-profile/qris', upload.single('qris_image'), paymentController.uploadAdminQRIS);
+router.put('/payment-profile', paymentController.updateAdminPaymentProfile);
 
 router.get('/kiosks', kioskController.getAdminKiosks);
 router.post('/kiosks', kioskController.createKiosk);
@@ -38,7 +39,12 @@ router.post('/templates', upload.single('frame_image'), frameTemplateController.
 router.put('/templates/:id', frameTemplateController.updateTemplate);
 router.delete('/templates/:id', frameTemplateController.deleteTemplate);
 
+const { PaymentVerificationController } = require('../../controllers/paymentVerificationController');
+
 router.get('/sessions', sessionController.getAdminSessions);
+router.get('/payment-verifications/attempts', PaymentVerificationController.getAttempts);
+router.get('/payment-verifications/attempts/:attempt_id/evidence', PaymentVerificationController.getEvidenceFile);
+router.post('/payment-verifications/attempts/:attempt_id/override', PaymentVerificationController.overridePayment);
 
 // Endpoint: POST /api/v1/admin/admin-mitra
 router.post(

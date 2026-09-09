@@ -12,7 +12,8 @@ import {
   Mail,
   Printer,
   Settings,
-  Save
+  Save,
+  Monitor
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useSession } from '../SessionContext';
@@ -25,14 +26,69 @@ export const SessionRepository: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('All Status');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [templateFilter, setTemplateFilter] = useState('All Templates');
+  const [kioskFilter, setKioskFilter] = useState('All Kiosks');
   const [selectedSession, setSelectedSession] = useState<any>(null);
   const [resendEmail, setResendEmail] = useState('');
   
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [retentionMonths, setRetentionMonths] = useState<number>(0);
   const [savingSettings, setSavingSettings] = useState(false);
+
+  // New visual verification states
+  const [attempts, setAttempts] = useState<any[]>([]);
+  const [loadingAttempts, setLoadingAttempts] = useState(false);
+  const [overrideReason, setOverrideReason] = useState('');
+  const [submittingOverride, setSubmittingOverride] = useState(false);
   
   const { sessions, loading } = useSession();
+
+  // Load verification attempts when a session is selected
+  React.useEffect(() => {
+    if (selectedSession) {
+      const cleanId = selectedSession.id.replace('#US-', '').replace('#', '');
+      setLoadingAttempts(true);
+      api.get(`/admin/payment-verifications/attempts?session_id=${cleanId}`)
+        .then(res => {
+          if (res.data && res.data.success) {
+            setAttempts(res.data.data || []);
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load attempts:', err);
+        })
+        .finally(() => {
+          setLoadingAttempts(false);
+        });
+    } else {
+      setAttempts([]);
+      setOverrideReason('');
+    }
+  }, [selectedSession]);
+
+  const handleOverride = async (attemptId: string, action: 'approve' | 'reject') => {
+    if (!overrideReason.trim()) {
+      toast.error('Alasan wajib diisi untuk override manual');
+      return;
+    }
+    setSubmittingOverride(true);
+    try {
+      await api.post(`/admin/payment-verifications/attempts/${attemptId}/override`, {
+        action,
+        reason: overrideReason
+      });
+      toast.success(`Override ${action === 'approve' ? 'Approve' : 'Reject'} berhasil`);
+      setSelectedSession(null);
+      // Wait briefly then reload context
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.response?.data?.message || 'Gagal melakukan override manual');
+    } finally {
+      setSubmittingOverride(false);
+    }
+  };
 
   React.useEffect(() => {
     if (isSettingsOpen) {
@@ -61,25 +117,32 @@ export const SessionRepository: React.FC = () => {
   const getPhotoUrl = (url: string) => resolvePublicUrl(url);
 
   const templates = Array.from(new Set(sessions.map(s => s.template || 'Default')));
+  const kiosks = Array.from(new Set(sessions.map(s => s.kiosk_name || s.kiosk_id || 'Unknown Kiosk').filter(Boolean)));
 
   const filteredSessions = sessions.filter(s => {
     const matchesSearch = s.id.toLowerCase().includes(search.toLowerCase()) ||
-      (s.template || '').toLowerCase().includes(search.toLowerCase());
+      (s.template || '').toLowerCase().includes(search.toLowerCase()) ||
+      (s.kiosk_name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (s.kiosk_id || '').toLowerCase().includes(search.toLowerCase());
 
     const matchesStatus = statusFilter === 'All Status' || s.status === statusFilter;
     const matchesTemplate = templateFilter === 'All Templates' || (s.template || 'Default') === templateFilter;
+    const matchesKiosk = kioskFilter === 'All Kiosks' ||
+      (s.kiosk_name || s.kiosk_id || 'Unknown Kiosk') === kioskFilter ||
+      s.kiosk_id === kioskFilter;
 
     const sessionDate = new Date(s.timestamp);
     const matchesDate = (!dateRange.start || sessionDate >= new Date(dateRange.start)) &&
       (!dateRange.end || sessionDate <= new Date(dateRange.end + 'T23:59:59'));
 
-    return matchesSearch && matchesStatus && matchesTemplate && matchesDate;
+    return matchesSearch && matchesStatus && matchesTemplate && matchesKiosk && matchesDate;
   });
 
   const exportCSV = () => {
-    const headers = ['Session ID', 'Date', 'Template', 'Amount', 'Status'];
+    const headers = ['Session ID', 'Kiosk', 'Date', 'Template', 'Amount', 'Status'];
     const rows = filteredSessions.map(s => [
       s.id,
+      s.kiosk_name || s.kiosk_id || 'Unknown Kiosk',
       new Date(s.timestamp).toLocaleString(),
       s.template,
       s.amount,
@@ -211,7 +274,7 @@ export const SessionRepository: React.FC = () => {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by Session ID..."
+            placeholder="Search by Session ID, Kiosk, or Template..."
             className="w-full bg-foreground/5 border border-primary/20 rounded-2xl pl-12 pr-4 py-3 outline-none focus:border-primary/50 transition-all text-foreground font-medium focus:shadow-[0_0_15px_rgba(255,140,102,0.1)]"
           />
         </div>
@@ -232,11 +295,24 @@ export const SessionRepository: React.FC = () => {
 
           <div className="relative">
             <select
+              value={kioskFilter}
+              onChange={(e) => setKioskFilter(e.target.value)}
+              className="px-4 py-2 glass-panel bg-foreground/5 border-primary/20 rounded-xl text-sm font-bold outline-none focus:border-primary/50 appearance-none cursor-pointer"
+            >
+              <option value="All Kiosks" className="bg-background text-foreground">All Kiosks</option>
+              {kiosks.map(k => (
+                <option key={k} value={k} className="bg-background text-foreground">{k}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="relative">
+            <select
               value={templateFilter}
               onChange={(e) => setTemplateFilter(e.target.value)}
               className="px-4 py-2 glass-panel bg-foreground/5 border-primary/20 rounded-xl text-sm font-bold outline-none focus:border-primary/50 appearance-none cursor-pointer"
             >
-              <option className="bg-background text-foreground">All Templates</option>
+              <option value="All Templates" className="bg-background text-foreground">All Templates</option>
               {templates.map(t => (
                 <option key={t} value={t} className="bg-background text-foreground">{t}</option>
               ))}
@@ -267,6 +343,7 @@ export const SessionRepository: React.FC = () => {
             <thead>
               <tr className="border-b border-primary/10 bg-foreground/5">
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-muted">Session ID</th>
+                <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-muted">Kiosk</th>
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-muted">Date & Time</th>
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-muted">Template</th>
                 <th className="px-6 py-4 text-xs font-bold uppercase tracking-widest text-muted">Photos</th>
@@ -280,6 +357,12 @@ export const SessionRepository: React.FC = () => {
                 <tr key={session.id} className="hover:bg-foreground/[0.02] transition-colors group">
                   <td className="px-6 py-4">
                     <span className="font-mono text-primary font-bold neon-text-glow">{session.id}</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-bold bg-white/5 border border-white/10 text-foreground">
+                      <Monitor className="w-3.5 h-3.5 text-primary" />
+                      {session.kiosk_name || session.kiosk_id || 'Unknown Kiosk'}
+                    </span>
                   </td>
                   <td className="px-6 py-4">
                     <span className="text-sm text-foreground/80 font-medium">
@@ -349,14 +432,14 @@ export const SessionRepository: React.FC = () => {
               ))}
               {!loading && filteredSessions.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-muted font-bold uppercase tracking-widest">
+                  <td colSpan={8} className="px-6 py-10 text-center text-muted font-bold uppercase tracking-widest">
                     No sessions found.
                   </td>
                 </tr>
               )}
               {loading && (
                 <tr>
-                  <td colSpan={7} className="px-6 py-10 text-center text-muted font-bold uppercase tracking-widest">
+                  <td colSpan={8} className="px-6 py-10 text-center text-muted font-bold uppercase tracking-widest">
                     Loading sessions...
                   </td>
                 </tr>
@@ -401,7 +484,7 @@ export const SessionRepository: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[8px] font-black text-muted uppercase tracking-widest block">Kiosk Origin</span>
-                  <span className="text-sm font-bold text-foreground">Kios-K GIAT</span>
+                  <span className="text-sm font-bold text-foreground">{selectedSession.kiosk_name || selectedSession.kiosk_id || 'Unknown Kiosk'}</span>
                 </div>
               </div>
 
@@ -430,6 +513,95 @@ export const SessionRepository: React.FC = () => {
                 ) : (
                   <div className="rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-10 text-center text-sm font-bold text-muted">
                     Belum ada foto untuk session ini.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h4 className="text-[10px] font-black uppercase tracking-widest text-muted mb-3">Payment Verification Attempts</h4>
+                {loadingAttempts ? (
+                  <div className="text-center py-4 text-xs font-bold text-muted">Loading verification logs...</div>
+                ) : attempts.length > 0 ? (
+                  <div className="space-y-4">
+                    {attempts.map((att: any) => {
+                      const reasonCodes = Array.isArray(att.reason_codes) ? att.reason_codes : (typeof att.reason_codes === 'string' ? JSON.parse(att.reason_codes) : []);
+                      return (
+                        <div key={att.id} className="bg-black/30 p-5 rounded-2xl border border-white/5 space-y-3">
+                          <div className="flex justify-between items-center text-xs font-bold">
+                            <span className="text-muted">Attempt #{att.attempt_number}</span>
+                            <span className={`px-3 py-1 rounded-full text-[9px] uppercase tracking-widest ${
+                              att.decision === 'verified' 
+                                ? 'bg-green-500/10 text-green-400 border border-green-500/20' 
+                                : att.decision === 'processing'
+                                ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'
+                                : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                            }`}>
+                              {att.decision}
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <div>
+                              <span className="text-[8px] uppercase tracking-widest text-muted block">Provider Detected</span>
+                              <span className="font-bold text-foreground">{att.provider_detected || 'Unknown'} ({Math.round((att.provider_confidence || 0) * 100)}%)</span>
+                            </div>
+                            <div>
+                              <span className="text-[8px] uppercase tracking-widest text-muted block">Extracted Amount</span>
+                              <span className="font-bold text-foreground">Rp {(att.extracted_amount || 0).toLocaleString()}</span>
+                            </div>
+                          </div>
+
+                          {reasonCodes.length > 0 && (
+                            <div className="bg-red-500/5 border border-red-500/10 p-3 rounded-xl text-[10px] text-red-400 font-bold space-y-1">
+                              <span className="uppercase text-[8px] tracking-wider text-muted block">Failure Reasons</span>
+                              {reasonCodes.map((rc: string) => (
+                                <span key={rc} className="block">• {rc}</span>
+                              ))}
+                            </div>
+                          )}
+
+                          {att.evidence_private_path && (
+                            <div className="space-y-3 border-t border-white/5 pt-3">
+                              <span className="text-[8px] uppercase tracking-widest text-muted block">Evidence Screenshot</span>
+                              <ProtectedImage attemptId={att.id} />
+                              
+                              {att.decision !== 'verified' && (
+                                <div className="space-y-3 bg-[#10172A] p-4 rounded-xl border border-white/5">
+                                  <label className="text-[9px] font-black text-muted uppercase tracking-widest block">Manual Override Reason</label>
+                                  <input 
+                                    type="text" 
+                                    placeholder="Enter reason for manual override..." 
+                                    value={overrideReason}
+                                    onChange={e => setOverrideReason(e.target.value)}
+                                    className="w-full bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-xs outline-none focus:border-primary/40 font-bold text-foreground"
+                                  />
+                                  <div className="flex gap-2 justify-end">
+                                    <button 
+                                      onClick={() => handleOverride(att.id, 'reject')}
+                                      disabled={submittingOverride}
+                                      className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-50"
+                                    >
+                                      Reject Payment
+                                    </button>
+                                    <button 
+                                      onClick={() => handleOverride(att.id, 'approve')}
+                                      disabled={submittingOverride}
+                                      className="px-4 py-2 bg-primary text-[#10172A] rounded-lg text-[9px] font-black uppercase tracking-wider transition-all disabled:opacity-50"
+                                    >
+                                      Approve Payment
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-white/10 bg-black/10 px-4 py-6 text-center text-xs font-bold text-muted">
+                    No payment verification logs for this session.
                   </div>
                 )}
               </div>
@@ -530,4 +702,32 @@ export const SessionRepository: React.FC = () => {
       )}
     </div>
   );
+};
+
+const ProtectedImage: React.FC<{ attemptId: string }> = ({ attemptId }) => {
+  const [src, setSrc] = React.useState<string>('');
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    api.get(`/admin/payment-verifications/attempts/${attemptId}/evidence`, { responseType: 'blob' })
+      .then(res => {
+        const url = URL.createObjectURL(res.data);
+        setSrc(url);
+      })
+      .catch(err => {
+        console.error('Failed to load protected evidence image:', err);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+
+    return () => {
+      if (src) URL.revokeObjectURL(src);
+    };
+  }, [attemptId]);
+
+  if (loading) return <div className="h-40 bg-black/20 flex items-center justify-center text-xs text-muted">Loading evidence...</div>;
+  if (!src) return <div className="h-40 bg-black/20 flex items-center justify-center text-xs text-red-400">Failed to load evidence. It may have expired.</div>;
+
+  return <img src={src} alt="Payment Evidence" className="w-full h-auto rounded-xl border border-white/10 max-h-60 object-contain mx-auto" />;
 };
