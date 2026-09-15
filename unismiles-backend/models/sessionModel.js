@@ -10,10 +10,13 @@ const Session = {
       );
       return result;
     } catch (err) {
-      if (err.code === 'ER_BAD_FIELD_ERROR') {
+      // Older/live schemas still require the primary-key `id`, while newer
+      // schemas also expose `session_code`. Fill both when the first insert
+      // fails because `id` has no default or the schema lacks session_code.
+      if (err.code === 'ER_BAD_FIELD_ERROR' || err.code === 'ER_NO_DEFAULT_FOR_FIELD') {
         const [result] = await pool.query(
-          'INSERT INTO sessions (id, kiosk_id, frame_template_id, status, started_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)',
-          [session_code, kiosk_id, frame_template_id, 'active']
+          'INSERT INTO sessions (id, session_code, kiosk_id, frame_template_id, status, started_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
+          [session_code, session_code, kiosk_id, frame_template_id, 'active']
         );
         return result;
       }
