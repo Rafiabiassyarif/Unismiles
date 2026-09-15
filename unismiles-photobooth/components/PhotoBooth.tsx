@@ -1177,12 +1177,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   // Robust Start Camera with Error Handling and Retry Mechanism
   useEffect(() => {
     let isActive = true;
-    const shouldUseCamera = step === 'CAPTURE' || step === 'PAYMENT_SCAN' || isCalibrating;
+    const shouldUseCamera = step === 'CAPTURE' || step === 'PAYMENT_SCAN' || isCalibrating || gestureEnabled;
 
     // Do not ask for camera permission while the visitor is still choosing a
-    // package/layout or browsing the result screen. Camera permission belongs
-    // to this photobooth origin (localhost:3000), so it must be requested by
-    // the capture UI itself.
+    // package/layout or browsing the result screen UNLESS air gesture is enabled.
     if (!shouldUseCamera) {
       stopCamera();
       setCameraError(null);
@@ -1264,7 +1262,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
       isActive = false;
       stopCamera();
     };
-  }, [step, isCalibrating, currentDeviceId, cameraRetryCount]);
+  }, [step, isCalibrating, gestureEnabled, currentDeviceId, cameraRetryCount]);
 
   const toggleCamera = () => {
     if (devices.length < 2) return;
