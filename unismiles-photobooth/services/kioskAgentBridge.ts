@@ -13,6 +13,7 @@ class KioskAgentBridge {
   private socket: WebSocket | null = null;
   private listeners: Set<StateCallback> = new Set();
   private reconnectTimer: any = null;
+  private enabled = String(import.meta.env.VITE_ENABLE_LOCAL_KIOSK_BRIDGE || 'false').toLowerCase() === 'true';
   private currentPort = Number(import.meta.env.VITE_LOCAL_BRIDGE_PORT) || 3011;
 
   public currentState: KioskAgentState = {
@@ -24,6 +25,7 @@ class KioskAgentBridge {
   };
 
   constructor() {
+    if (!this.enabled) return;
     this.connect();
     this.pollFallback();
   }

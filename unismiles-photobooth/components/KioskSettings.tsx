@@ -84,19 +84,21 @@ export const KioskSettings: React.FC = () => {
 
     saveAppConfig(updatedConfig);
     
-    // Sync credentials with local Kiosk Agent
-    const bridgePort = Number(import.meta.env.VITE_LOCAL_BRIDGE_PORT) || 3011;
-    fetch(`http://localhost:${bridgePort}/api/update-credentials`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        backendUrl: updatedConfig.backendUrl,
-        deviceId: updatedConfig.kioskId,
-        deviceToken: updatedConfig.apiKey
-      })
-    }).catch(err => {
-      console.warn('Gagal sinkronisasi dengan Kiosk Agent (mungkin agen sedang offline):', err);
-    });
+    // Sync credentials with the optional local Kiosk Agent only when explicitly enabled.
+    if (String(import.meta.env.VITE_ENABLE_LOCAL_KIOSK_BRIDGE || 'false').toLowerCase() === 'true') {
+      const bridgePort = Number(import.meta.env.VITE_LOCAL_BRIDGE_PORT) || 3011;
+      fetch(`http://localhost:${bridgePort}/api/update-credentials`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backendUrl: updatedConfig.backendUrl,
+          deviceId: updatedConfig.kioskId,
+          deviceToken: updatedConfig.apiKey
+        })
+      }).catch(err => {
+        console.warn('Gagal sinkronisasi dengan Kiosk Agent (mungkin agen sedang offline):', err);
+      });
+    }
 
     setStatus('success');
     setMessage('Konfigurasi Kiosk berhasil disimpan secara lokal dan disinkronkan ke Agen!');
