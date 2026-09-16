@@ -1,4 +1,10 @@
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+// KroomBox runs this app from the monorepo root while server.js lives in
+// unismiles-backend/. Load the site-level .env explicitly before importing
+// clients that read PAYMENT_VISION_SERVICE_URL at module initialization.
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env'), override: false });
 
 if (process.env.NODE_ENV === 'production') {
   if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
