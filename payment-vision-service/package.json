@@ -1,0 +1,9 @@
+{
+  "name": "unismiles-payment-vision-service",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "python3 -m pip install -r requirements.txt",
+    "start": "python3 main.py"
+  }
+}
