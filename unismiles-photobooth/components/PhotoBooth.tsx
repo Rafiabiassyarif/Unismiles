@@ -1197,9 +1197,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
         }
         const constraints: MediaStreamConstraints = { 
             video: { 
-                width: { ideal: 1280 }, 
-                height: { ideal: 720 }, 
-                frameRate: { ideal: 30 } 
+                width: { ideal: 1920, min: 1280 },
+                height: { ideal: 1080, min: 720 },
+                frameRate: { ideal: 30 }
             } 
         };
         
@@ -1431,13 +1431,37 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
         resolve(null);
         return;
       }
+      const sourceWidth = video.videoWidth || 1920;
+      const sourceHeight = video.videoHeight || 1080;
+      // The preview is a portrait phone frame rendered with object-fit: cover.
+      // Crop the same centered portrait area before OCR so receipt text is not
+      // reduced by the unused sides of the landscape camera frame.
+      const previewAspect = 0.78;
+      let cropWidth = sourceWidth;
+      let cropHeight = sourceHeight;
+      if (sourceWidth / sourceHeight > previewAspect) {
+        cropWidth = Math.round(sourceHeight * previewAspect);
+      } else {
+        cropHeight = Math.round(sourceWidth / previewAspect);
+      }
+      const inset = 0.04;
+      cropWidth = Math.round(cropWidth * (1 - inset * 2));
+      cropHeight = Math.round(cropHeight * (1 - inset * 2));
+      const cropX = Math.round((sourceWidth - cropWidth) / 2);
+      const cropY = Math.round((sourceHeight - cropHeight) / 2);
+      const outputWidth = 1400;
+      const outputHeight = Math.round(outputWidth / previewAspect);
       const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = video.videoWidth || 1920;
-      tempCanvas.height = video.videoHeight || 1080;
+      tempCanvas.width = outputWidth;
+      tempCanvas.height = outputHeight;
       const ctx = tempCanvas.getContext('2d');
       if (ctx) {
-        ctx.drawImage(video, 0, 0, tempCanvas.width, tempCanvas.height);
-        tempCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.98);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.filter = 'contrast(1.16) brightness(1.06) saturate(0.92)';
+        ctx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, outputWidth, outputHeight);
+        ctx.filter = 'none';
+        tempCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.96);
       } else {
         resolve(null);
       }
