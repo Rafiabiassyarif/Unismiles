@@ -57,7 +57,26 @@ app.post('/process', auth, upload.array('files', 3), async (req, res) => {
       if (result?.data?.text) texts.push(result.data.text);
     }
     const output = extract(texts.join('\n'), req.body.expected_amount);
-    res.json({ ...output, liveness_score: req.files.length > 1 ? 0.8 : 0.5, tamper_score: 0.1, processing_time_ms: 0 });
+    const recognized = Boolean(output.amount || output.status === 'success');
+    const qualityScore = recognized ? 0.86 : 0.18;
+    const normalized = {
+      ...output,
+      provider: { label: output.provider, confidence: output.provider_confidence },
+      screen_type: { label: output.screen_type, confidence: output.screen_type === 'receipt_detail' ? 0.9 : 0.2 },
+      status: output.status,
+      fields: {
+        status: { value: output.status, confidence: output.status === 'success' ? 0.9 : 0.3 },
+        amount: { value: output.amount, confidence: output.amount ? 0.86 : 0 },
+        merchant_name: { value: output.merchant, confidence: output.merchant !== 'UNKNOWN' ? 0.75 : 0.2 },
+        paid_at: { value: output.status === 'success' ? new Date().toISOString() : null, confidence: output.status === 'success' ? 0.7 : 0 },
+        reference_id: { value: output.reference_id, confidence: output.reference_id ? 0.8 : 0 }
+      },
+      quality: { score: qualityScore },
+      liveness: { score: req.files.length > 1 ? 0.8 : 0.5 },
+      tamper_score: 0.1,
+      model_version: 'tesseract-node-1.0'
+    };
+    res.json(normalized);
   } catch (err) {
     console.error('[VisionNode]', err.message);
     res.status(503).json({ detail: 'Vision processing unavailable' });
