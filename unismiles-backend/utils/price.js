@@ -10,14 +10,13 @@ const asPositiveAmount = value => {
 };
 
 /**
- * Harga kiosk yang diset Admin adalah sumber kebenaran untuk photobooth.
- * Harga frame/layout hanya menjadi fallback untuk kiosk lama yang belum memiliki
- * base_price yang valid.
+ * Harga frame yang diset Admin menjadi sumber kebenaran untuk frame tersebut.
+ * Harga kiosk dan layout hanya menjadi fallback untuk data lama tanpa harga frame.
  */
 const resolvePrice = ({ templatePrice, layoutConfig, kioskBasePrice }) => {
   const config = parseJson(layoutConfig, {});
-  return asPositiveAmount(kioskBasePrice)
-    || asPositiveAmount(templatePrice)
+  return asPositiveAmount(templatePrice)
+    || asPositiveAmount(kioskBasePrice)
     || asPositiveAmount(config.layout_price)
     || 0;
 };
