@@ -163,8 +163,8 @@ const getAdminSessions = async (req, res) => {
           COALESCE(
             MAX(t.amount),
             MAX(s.payment_required_amount),
-            NULLIF(ft.price, 0),
-            NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ft.layout_config, '$.layout_price')), 0),
+            MAX(NULLIF(ft.price, 0)),
+            MAX(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ft.layout_config, '$.layout_price')), 0)),
             0
           ) AS amount,
           (
