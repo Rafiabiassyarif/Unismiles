@@ -43,14 +43,16 @@ const startSession = async (req, res) => {
       [req.kiosk.user_id]
     );
     
-    let uniqueAmountEnabled = true;
+    // The Admin price is the exact amount shown and requested by Photobooth.
+    // Unique suffixes are opt-in only; they must never silently change the saved price.
+    let uniqueAmountEnabled = false;
     let sessionTtlMins = 5;
     if (profiles.length) {
       try {
         const pData = typeof profiles[0].payment_data === 'string'
           ? JSON.parse(profiles[0].payment_data)
           : profiles[0].payment_data || {};
-        uniqueAmountEnabled = pData.unique_amount_enabled !== false;
+        uniqueAmountEnabled = pData.unique_amount_enabled === true;
         sessionTtlMins = Number(pData.session_ttl_minutes) || 5;
       } catch (e) {}
     }
