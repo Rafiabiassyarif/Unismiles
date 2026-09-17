@@ -183,7 +183,8 @@ const getAdminSessions = async (req, res) => {
         query += ' WHERE k.user_id = ?';
         params.push(user_id);
       }
-      query += ` GROUP BY ${sessionId} ORDER BY s.started_at DESC`;
+      // only_full_group_by aktif di server live: kolom non-agregat harus ikut di GROUP BY.
+      query += ` GROUP BY ${sessionId}, s.kiosk_id, k.name, s.started_at, ft.name, s.status ORDER BY s.started_at DESC`;
       return pool.query(query, params);
     };
 
