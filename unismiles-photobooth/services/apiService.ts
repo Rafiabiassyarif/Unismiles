@@ -89,6 +89,8 @@ export interface SessionData {
   amount?: number | null;
   status: 'active' | 'completed' | 'abandoned';
   challenge_id?: string;
+  /** Kode unik Rp1-Rp99 yang ditambahkan ke harga dasar untuk transaksi ini. */
+  unique_code?: number | null;
 }
 
 export interface PhotoData {
@@ -246,13 +248,15 @@ export const startSession = async (
 
   const amount = Number(data.amount ?? data.price ?? (data.data as any)?.amount ?? (data.data as any)?.price);
   const challengeId = (data.data as any)?.verification_challenge_id || '';
+  const uniqueCode = Number((data.data as any)?.unique_code);
   return {
     id: sessionCode,
     kiosk_id: kioskId,
     frame_template_id: frameTemplateId,
     amount: Number.isFinite(amount) && amount > 0 ? amount : null,
     status: 'active',
-    challenge_id: challengeId
+    challenge_id: challengeId,
+    unique_code: Number.isInteger(uniqueCode) && uniqueCode > 0 ? uniqueCode : null
   };
 };
 

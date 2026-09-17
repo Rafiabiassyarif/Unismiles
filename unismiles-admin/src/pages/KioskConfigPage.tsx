@@ -118,7 +118,10 @@ export const KioskConfigPage: React.FC<KioskConfigPageProps> = ({ kiosk, onBack,
         brandLogo: null,
         navStyle: 'normal',
         ...(existing.branding || {})
-      }
+      },
+      // kiosks.base_price adalah nominal yang dipakai photobooth, jadi Admin
+      // harus menampilkan angka itu, bukan default lokal.
+      price: Number(kiosk.base_price) > 0 ? Number(kiosk.base_price) : (existing.price ?? DEFAULT_CONFIG.price)
     };
   });
   const [activeConfig, setActiveConfig] = useState(initialConfig);
@@ -258,7 +261,9 @@ export const KioskConfigPage: React.FC<KioskConfigPageProps> = ({ kiosk, onBack,
   };
 
   const handleSave = () => {
-    onUpdate(kiosk.id, { config: activeConfig });
+    // Harga di tab Pricing harus ikut tersimpan ke kiosks.base_price, karena
+    // angka itulah yang dipakai photobooth saat membuat sesi.
+    onUpdate(kiosk.id, { config: activeConfig, base_price: Number(activeConfig.price) || 0 });
     setInitialConfig(activeConfig);
     setIsDirty(false);
     toast.success('Konfigurasi berhasil diperbarui');

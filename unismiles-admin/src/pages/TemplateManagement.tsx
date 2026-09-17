@@ -1577,7 +1577,9 @@ export const TemplateManagement: React.FC = () => {
       return;
     }
     if (templatesForLayout.length === 0) {
-      toast.success('Harga layout disimpan dan akan dipakai untuk style pertama.');
+      // Tanpa frame, tidak ada record harga yang bisa disimpan. Jangan tampilkan
+      // sukses palsu: nominal Admin harus sama dengan yang dibaca photobooth.
+      toast.error('Belum ada frame pada layout ini. Tambahkan style dulu agar harga tersimpan.');
       return;
     }
 

@@ -835,6 +835,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   const [flowError, setFlowError] = useState<string | null>(null);
   // Harga dari response start session adalah harga authoritative dari backend.
   const [sessionAmount, setSessionAmount] = useState<number | null>(null);
+  const [uniqueCode, setUniqueCode] = useState<number | null>(null);
   
   // New visual payment verification states
   const [challengeId, setChallengeId] = useState<string>('');
@@ -1364,6 +1365,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
       setSessionCode('');
       setProcessedFrame(null);
       setSessionAmount(null);
+      setUniqueCode(null);
       setPrintState('idle');
       setPrintJobId(null);
       setPrintError(null);
@@ -1408,6 +1410,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
       const sessionData = await startSession(kioskId, templateId);
       setSessionCode(sessionData.id);
       setSessionAmount(sessionData.amount ?? null);
+      setUniqueCode(sessionData.unique_code ?? null);
       setChallengeId(sessionData.challenge_id || '');
       setStep('PAYMENT');
     } catch (error) {
@@ -2641,6 +2644,11 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
                                               : new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(payableAmount)}
                                         </span>
                                     </div>
+                                    {uniqueCode !== null && (
+                                      <div className="w-full mb-2 px-2 text-[11px] md:text-xs font-bold text-gray-500 text-center uppercase tracking-wider">
+                                        Kode unik transaksi: <span className="text-[#00aead] font-black">+{uniqueCode}</span>
+                                      </div>
+                                    )}
                                     <div className="flex-1 flex items-center justify-center w-full">
                                         {qrisUrl ? (
                                             <img

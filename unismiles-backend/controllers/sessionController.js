@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const pool = require('../config/db');
 const Session = require('../models/sessionModel');
 const Transaction = require('../models/transactionModel');
-const { resolvePrice } = require('../utils/price');
+const { resolvePrice, buildUniqueAmount } = require('../utils/price');
 const { publicBaseUrl, isValidEmail, escapeHtml } = require('../utils/security');
 
 const isPlaceholder = value => {
@@ -57,11 +57,27 @@ const startSession = async (req, res) => {
       } catch (e) {}
     }
 
-    let finalAmount = amount;
-    if (uniqueAmountEnabled && amount > 100) {
-      const suffix = Math.floor(Math.random() * 99) + 1;
-      finalAmount = Math.floor(amount / 100) * 100 + suffix;
-    }
+    // Sesi kedaluwarsa tidak boleh memblokir kode unik baru.
+    await pool.query(
+      `UPDATE sessions SET payment_status = 'expired'
+       WHERE kiosk_id = ? AND payment_status = 'pending'
+         AND payment_expires_at IS NOT NULL AND payment_expires_at < NOW()`,
+      [kiosk_id]
+    );
+
+    // Reservasi nominal dihitung di SATU tempat (kiosk owner) supaya dua kiosk
+    // dengan harga dasar sama tidak mendapat kode unik yang bentrok.
+    const [pending] = await pool.query(
+      `SELECT DISTINCT payment_required_amount FROM sessions
+       WHERE ((kiosk_id = ?) OR (kiosk_id IN (SELECT id FROM kiosks WHERE user_id = ?)))
+         AND payment_status = 'pending'
+         AND payment_required_amount IS NOT NULL`,
+      [kiosk_id, req.kiosk.user_id]
+    );
+
+    const { total: uniqueTotal, uniqueCode } = buildUniqueAmount(amount, pending.map(r => r.payment_required_amount));
+    const finalAmount = uniqueAmountEnabled ? uniqueTotal : amount;
+    const finalUniqueCode = uniqueAmountEnabled ? uniqueCode : null;
 
     await Session.create({ session_code, kiosk_id, frame_template_id });
 
@@ -85,6 +101,7 @@ const startSession = async (req, res) => {
         session_code,
         expected_amount: finalAmount,
         base_amount: amount,
+        unique_code: finalUniqueCode,
         payment_expires_at: expiresAt.toISOString(),
         verification_challenge_id: challengeId,
         payment_method: 'qris_visual_proof'
@@ -145,6 +162,7 @@ const getAdminSessions = async (req, res) => {
           s.status,
           COALESCE(
             MAX(t.amount),
+            MAX(s.payment_required_amount),
             NULLIF(ft.price, 0),
             NULLIF(JSON_UNQUOTE(JSON_EXTRACT(ft.layout_config, '$.layout_price')), 0),
             0
