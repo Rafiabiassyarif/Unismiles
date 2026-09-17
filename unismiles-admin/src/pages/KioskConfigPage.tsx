@@ -578,7 +578,7 @@ export const KioskConfigPage: React.FC<KioskConfigPageProps> = ({ kiosk, onBack,
                   
                   <div className="space-y-8">
                     <div className="space-y-3">
-                      <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Price per Session (IDR)</label>
+                      <label className="text-[9px] font-black text-muted uppercase tracking-widest ml-1">Harga Dasar Kiosk (IDR) — hanya dipakai frame tanpa harga</label>
                       <div className="relative group">
                         <span className="absolute left-6 top-1/2 -translate-y-1/2 font-black text-muted text-sm group-focus-within:text-primary transition-colors">Rp</span>
                         <input 
