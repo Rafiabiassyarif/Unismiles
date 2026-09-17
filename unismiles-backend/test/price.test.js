@@ -37,3 +37,10 @@ test('kode unik habis: jatuh ke nominal Admin, bukan angka acak', () => {
   assert.strictEqual(total, 10000);
   assert.strictEqual(uniqueCode, null);
 });
+
+test('plafon 99 sesi pending per nominal dasar (didokumentasikan, bukan bug)', () => {
+  const taken = [];
+  for (let i = 0; i < 99; i += 1) taken.push(buildUniqueAmount(10000, taken).total);
+  assert.strictEqual(new Set(taken).size, 99);
+  assert.strictEqual(buildUniqueAmount(10000, taken).uniqueCode, null);
+});

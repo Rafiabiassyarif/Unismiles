@@ -28,6 +28,9 @@ const UNIQUE_CODE_MAX = 99;
  * Kode unik per transaksi: nominal Admin + kode unik (Rp1-Rp99).
  * Kode harus unik antar sesi yang masih menunggu pembayaran pada nominal dasar
  * yang sama, supaya bukti transfer bisa dicocokkan ke sesi yang benar.
+ * ponytail: plafon 99 sesi pending per nominal dasar (rentang Rp1-Rp99 sesuai
+ * label Admin). Sesi ke-100+ memakai nominal Admin apa adanya, jadi bisa sama.
+ * Naikkan plafon hanya kalau antrian pending per nominal benar-benar > 99.
  */
 const buildUniqueAmount = (baseAmount, takenAmounts = [], random = Math.random) => {
   const base = Math.floor(Number(baseAmount) || 0);
