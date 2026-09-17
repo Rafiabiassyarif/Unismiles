@@ -57,11 +57,8 @@ const startSession = async (req, res) => {
       } catch (e) {}
     }
 
-    let finalAmount = amount;
-    if (uniqueAmountEnabled && amount > 100) {
-      const suffix = Math.floor(Math.random() * 99) + 1;
-      finalAmount = Math.floor(amount / 100) * 100 + suffix;
-    }
+    // Always use the exact amount configured in Admin for this session.
+    const finalAmount = amount;
 
     await Session.create({ session_code, kiosk_id, frame_template_id });
 
