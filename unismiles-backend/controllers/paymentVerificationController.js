@@ -260,7 +260,7 @@ const PaymentVerificationController = {
         return res.status(400).json({ success: false, message: 'Pembayaran untuk sesi ini sudah terverifikasi' });
       }
 
-      if (session.payment_expires_at && new Date() > new Date(session.payment_expires_at)) {
+      if (session.payment_expires_at && Date.now() > new Date(session.payment_expires_at).getTime()) {
         return res.status(400).json({ success: false, message: 'Sesi pembayaran sudah kadaluwarsa' });
       }
 
