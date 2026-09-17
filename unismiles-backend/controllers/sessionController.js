@@ -43,22 +43,25 @@ const startSession = async (req, res) => {
       [req.kiosk.user_id]
     );
     
-    // The Admin price is the exact amount shown and requested by Photobooth.
-    // Unique suffixes are opt-in only; they must never silently change the saved price.
-    let uniqueAmountEnabled = false;
+    // Unique suffixes are enabled by default so each payment can be matched,
+    // while the Admin frame price remains the base amount.
+    let uniqueAmountEnabled = true;
     let sessionTtlMins = 5;
     if (profiles.length) {
       try {
         const pData = typeof profiles[0].payment_data === 'string'
           ? JSON.parse(profiles[0].payment_data)
           : profiles[0].payment_data || {};
-        uniqueAmountEnabled = pData.unique_amount_enabled === true;
+        uniqueAmountEnabled = pData.unique_amount_enabled !== false;
         sessionTtlMins = Number(pData.session_ttl_minutes) || 5;
       } catch (e) {}
     }
 
-    // Always use the exact amount configured in Admin for this session.
-    const finalAmount = amount;
+    let finalAmount = amount;
+    if (uniqueAmountEnabled && amount > 100) {
+      const suffix = Math.floor(Math.random() * 99) + 1;
+      finalAmount = Math.floor(amount / 100) * 100 + suffix;
+    }
 
     await Session.create({ session_code, kiosk_id, frame_template_id });
 
