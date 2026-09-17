@@ -17,6 +17,10 @@ const pool = mysql.createPool({
   enableKeepAlive: true,
   keepAliveInitialDelay: 10000,
   idleTimeout: 60000,
+  // Kolom TIMESTAMP di server live memakai UTC. Tanpa ini, driver mengonversi
+  // tanggal pakai zona proses (WIB) dan payment_expires_at tersimpan +7 jam,
+  // sehingga sesi pembayaran tidak pernah kedaluwarsa pada waktunya.
+  timezone: 'Z',
 });
 
 module.exports = pool;
