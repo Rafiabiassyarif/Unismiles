@@ -133,7 +133,7 @@ const App: React.FC = () => {
         <div className="max-w-xl w-full rounded-2xl border border-red-400/40 bg-red-950/40 p-8 text-center">
           <h1 className="text-2xl font-bold text-red-200">Koneksi photobooth gagal</h1>
           <p className="mt-3 text-red-100/80">{backendError}</p>
-          <p className="mt-2 text-sm text-white/60">Backend: `http://localhost:8000`. Masukkan API key kiosk asli dari Admin.</p>
+          <p className="mt-2 text-sm text-white/60">Backend: {getAppConfig().backendUrl || 'belum diset'}. Masukkan API key kiosk asli dari Admin.</p>
           <form onSubmit={saveApiKeyAndRetry} className="mt-6 flex flex-col gap-3 text-left">
             <label htmlFor="kiosk-api-key" className="text-sm font-semibold text-white/80">Kiosk API Key</label>
             <input
