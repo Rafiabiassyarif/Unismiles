@@ -59,6 +59,12 @@ type PrintState = 'idle' | 'preparing' | 'uploading' | 'queued' | 'printing' | '
 const ACTIVE_PRINT_STORAGE_KEY = 'unismiles_active_print_job';
 const PRINT_POLL_TIMEOUT_MS = 60_000;
 
+// Ambang ketajaman (variance Laplacian) di bawah ini berarti kamera belum
+// mengunci fokus sehingga struk pasti terbaca buram. Nilainya sengaja rendah:
+// lebih baik mencoba scan daripada menolak bukti yang sebenarnya terbaca.
+// ponytail: ambang empiris; naikkan kalau masih ada scan lolos dalam keadaan blur.
+const SCAN_MIN_SHARPNESS = 60;
+
 interface PersistedPrintJob {
   sessionCode: string;
   jobId: string;
@@ -844,6 +850,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   const [verificationReasonCodes, setVerificationReasonCodes] = useState<string[]>([]);
   const [scanningProgress, setScanningProgress] = useState<number>(0);
   const [scanningHint, setScanningHint] = useState<string>('');
+  const [scanningCountdown, setScanningCountdown] = useState<string | null>(null);
   // Keep email sending and the automatic upload on the same promise. Without
   // this, a visitor can submit the email while the backend still has no photo
   // attached to the session.
@@ -1219,6 +1226,17 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          // Kamera TV signage sering masih fokus ke latar saat layar HP
+          // diangkat ke depan lensa, sehingga struk terbaca buram. Minta
+          // fokus kontinu lewat track supaya lensa terus mengejar objek
+          // terdekat. Diabaikan diam-diam kalau kamera tidak mendukung.
+          try {
+            const track = stream.getVideoTracks()[0];
+            const caps: any = track?.getCapabilities?.() || {};
+            if (caps.focusMode?.includes('continuous')) {
+              await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as any] });
+            }
+          } catch (_) { /* kamera tanpa kontrol fokus: tetap lanjut */ }
           videoRef.current.onloadedmetadata = async () => {
               try { 
                   if (!isActive) return;
@@ -1427,7 +1445,41 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
     setStep('PAYMENT_SCAN');
   };
 
-  const captureFrameAsBlob = (): Promise<Blob | null> => {
+  // Ukur ketajaman satu frame dengan variance Laplacian pada versi kecil gambar.
+  // Kamera signage yang belum sempat autofokus menghasilkan frame rata (blur),
+  // yang variance-nya rendah. Dipakai untuk membuang frame blur sebelum dikirim.
+  const measureSharpness = (source: HTMLCanvasElement): number => {
+    const w = 240;
+    const h = Math.max(1, Math.round((source.height / source.width) * w));
+    const small = document.createElement('canvas');
+    small.width = w;
+    small.height = h;
+    const ctx = small.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return 0;
+    ctx.drawImage(source, 0, 0, w, h);
+    const { data } = ctx.getImageData(0, 0, w, h);
+    const lum = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i += 1) {
+      lum[i] = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+    }
+    let sum = 0;
+    let sumSq = 0;
+    let count = 0;
+    for (let y = 1; y < h - 1; y += 1) {
+      for (let x = 1; x < w - 1; x += 1) {
+        const c = y * w + x;
+        const lap = 4 * lum[c] - lum[c - 1] - lum[c + 1] - lum[c - w] - lum[c + w];
+        sum += lap;
+        sumSq += lap * lap;
+        count += 1;
+      }
+    }
+    if (!count) return 0;
+    const mean = sum / count;
+    return Math.max(0, sumSq / count - mean * mean);
+  };
+
+  const captureFrameCandidate = (): Promise<{ blob: Blob; sharpness: number } | null> => {
     return new Promise((resolve) => {
       const video = videoRef.current;
       if (!video) {
@@ -1461,10 +1513,12 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
       if (ctx) {
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.filter = 'contrast(1.16) brightness(1.06) saturate(0.92)';
+        // Kontras dinaikkan supaya angka struk lebih tegas bagi OCR.
+        ctx.filter = 'contrast(1.24) brightness(1.04) saturate(0.9)';
         ctx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, outputWidth, outputHeight);
         ctx.filter = 'none';
-        tempCanvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.96);
+        const sharpness = measureSharpness(tempCanvas);
+        tempCanvas.toBlob((blob) => resolve(blob ? { blob, sharpness } : null), 'image/jpeg', 0.96);
       } else {
         resolve(null);
       }
@@ -1502,38 +1556,70 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
     setFlowError(null);
     setScanningProgress(0);
     setScanningHint('');
+    setScanningCountdown(null);
   };
 
+  // Ambil beberapa jepretan berurutan, lalu kirim hanya yang paling tajam.
+  // Beberapa frame sengaja dikirim (bukan satu) karena satu frame bisa gagal
+  // baca sementara frame lain berhasil; vision service memilih yang terbaik.
+  const SCAN_FRAME_COUNT = 5;
+  const SCAN_FRAME_GAP_MS = 350;
+  const COUNTDOWN_STEPS = ['3', '2', '1'];
+
   const startScanningSequence = async () => {
-    setScanningProgress(0);
+    setVerificationStatus('');
     setVerificationReasonCodes([]);
     setFlowError(null);
-    
-    const collectedBlobs: Blob[] = [];
-    
-    // Quick frame 1
-    setScanningHint('Mengambil frame bukti bayar (1/3)...');
-    setScanningProgress(30);
-    let blob = await captureFrameAsBlob();
-    if (blob) collectedBlobs.push(blob);
-    await new Promise(r => setTimeout(r, 250));
-    
-    // Quick frame 2
-    setScanningHint('Mengambil frame bukti bayar (2/3)...');
-    setScanningProgress(65);
-    blob = await captureFrameAsBlob();
-    if (blob) collectedBlobs.push(blob);
-    await new Promise(r => setTimeout(r, 250));
-    
-    // Quick frame 3
-    setScanningHint('Mengambil frame bukti bayar (3/3)...');
+
+    // Jeda hitung mundur: memberi waktu autofokus kamera signage mengunci ke
+    // layar HP dan tangan pengunjung berhenti bergerak sebelum difoto.
+    for (let i = 0; i < COUNTDOWN_STEPS.length; i += 1) {
+      setScanningCountdown(COUNTDOWN_STEPS[i]);
+      setScanningHint('Tahan layar HP di dalam bingkai...');
+      setScanningProgress(Math.round(((i + 1) / (COUNTDOWN_STEPS.length + 1)) * 100));
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    setScanningCountdown(null);
+
+    const candidates: { blob: Blob; sharpness: number }[] = [];
+    for (let i = 0; i < SCAN_FRAME_COUNT; i += 1) {
+      setScanningHint(`Memotret bukti bayar (${i + 1}/${SCAN_FRAME_COUNT})...`);
+      setScanningProgress(
+        Math.round(((COUNTDOWN_STEPS.length + 1 + i) / (COUNTDOWN_STEPS.length + SCAN_FRAME_COUNT + 1)) * 100)
+      );
+      const shot = await captureFrameCandidate();
+      if (shot) candidates.push(shot);
+      if (i < SCAN_FRAME_COUNT - 1) await new Promise(r => setTimeout(r, SCAN_FRAME_GAP_MS));
+    }
+
     setScanningProgress(100);
-    blob = await captureFrameAsBlob();
-    if (blob) collectedBlobs.push(blob);
+
+    if (candidates.length === 0) {
+      setScanningCountdown(null);
+      setVerificationStatus('error');
+      setScanningProgress(0);
+      setFlowError('Kamera tidak menghasilkan gambar. Coba pindai ulang.');
+      return;
+    }
+
+    // Kirim frame paling tajam lebih dulu; sisanya sebagai cadangan di vision
+    // service kalau frame terbaik ternyata masih gagal dibaca.
+    const ordered = [...candidates].sort((a, b) => b.sharpness - a.sharpness).map(c => c.blob);
+    const sharpest = candidates.reduce((best, c) => (c.sharpness > best.sharpness ? c : best), candidates[0]);
+
+    // Semua frame sama-sama rata: tidak ada gunanya dikirim, kamera belum fokus.
+    if (sharpest.sharpness < SCAN_MIN_SHARPNESS) {
+      setScanningCountdown(null);
+      setVerificationStatus('needs_retry');
+      setScanningProgress(0);
+      setVerificationReasonCodes(['IMAGE_BLURRY']);
+      setFlowError('Kamera belum fokus. Pegang layar HP lebih stabil, lalu pindai ulang.');
+      return;
+    }
 
     // Switch to checking
     setStep('PAYMENT_CHECKING');
-    processVerification(collectedBlobs);
+    processVerification(ordered);
   };
 
   const processVerification = async (frames: Blob[]) => {
@@ -2717,6 +2803,18 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
                     </span>
                   </div>
                 </div>
+
+                {/* Countdown besar sebelum memotret — memberi waktu autofokus */}
+                {scanningCountdown && (
+                  <div className="absolute inset-0 bg-black/55 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-none z-20">
+                    <span className="text-6xl sm:text-7xl font-black text-[#f6cd46] drop-shadow-[0_0_25px_rgba(246,205,70,0.6)] animate-pulse">
+                      {scanningCountdown}
+                    </span>
+                    <span className="mt-2 text-[11px] sm:text-xs font-black text-white/85 uppercase tracking-widest text-center px-4">
+                      {scanningHint}
+                    </span>
+                  </div>
+                )}
 
                 {/* Progress bar overlay if active */}
                 {scanningProgress > 0 && (

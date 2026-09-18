@@ -82,7 +82,9 @@ async function processVerificationInBackground(attemptId, sessionCode, kioskId, 
     const profile = await PaymentProfile.findDefaultForKiosk(userId);
 
     // Apply strict validation rules
-    if (qualityScore < 0.3) {
+    // Ambang kualitas memakai skor frame asli dari vision service. Skor 0.18
+    // lama dipakai sebagai penanda tetap "OCR gagal total", bukan hasil ukur.
+    if (qualityScore < 0.35) {
       reasonCodes.push('IMAGE_BLURRY');
       decision = 'needs_retry';
     }
@@ -99,15 +101,22 @@ async function processVerificationInBackground(attemptId, sessionCode, kioskId, 
 
     const isStrictMatch = process.env.PAYMENT_STRICT_MATCH === 'true';
 
-    if (isStrictMatch && (!extractedAmount || extractedAmount !== Number(expectedAmount))) {
+    // Nominal adalah bukti utama: nominal kiosk sudah unik per transaksi
+    // (harga Admin + kode unik Rp1-Rp99). Kalau nominal terbaca persis dan
+    // status sukses, itu sudah cukup mencocokkan bukti ke sesi ini. Sisa
+    // alasan tidak boleh menggagalkan pembayaran yang sudah jelas benar.
+    const amountMatches = Boolean(extractedAmount) && extractedAmount === Number(expectedAmount);
+    const paymentClearlyProven = amountMatches && (extractedStatus === 'success' || extractedStatus === 'berhasil');
+
+    if (isStrictMatch && !amountMatches) {
       reasonCodes.push('AMOUNT_MISMATCH');
       decision = 'needs_retry';
-    } else if (extractedAmount && extractedAmount !== Number(expectedAmount)) {
+    } else if (extractedAmount && !amountMatches) {
       console.log(`[Testing Mode] Extracted amount Rp ${extractedAmount} accepted (Expected: Rp ${expectedAmount})`);
     }
 
     const hasConfiguredMerchant = profile && (profile.merchant_name || profile.display_name);
-    if (isStrictMatch && hasConfiguredMerchant && !matchMerchant(extractedMerchant, profile)) {
+    if (isStrictMatch && !paymentClearlyProven && hasConfiguredMerchant && !matchMerchant(extractedMerchant, profile)) {
       reasonCodes.push('MERCHANT_MISMATCH');
       decision = 'needs_retry';
     }
@@ -119,14 +128,16 @@ async function processVerificationInBackground(attemptId, sessionCode, kioskId, 
         reasonCodes.push('DUPLICATE_REFERENCE');
         decision = 'rejected';
       }
-    } else {
-      // If we cannot extract reference ID, default to low confidence or manual review
+    } else if (!paymentClearlyProven) {
+      // Tanpa nominal yang cocok, nomor referensi adalah satu-satunya pengaman
+      // anti-pemakaian-ulang. Kalau nominal sudah cocok persis, bukti ini tetap
+      // sah walaupun nomor referensinya tidak terbaca.
       reasonCodes.push('LOW_CONFIDENCE');
       decision = 'needs_retry';
     }
 
     // Check freshness of the receipt (only enforced in strict production mode)
-    if (isStrictMatch && extractedPaidAt) {
+    if (isStrictMatch && !paymentClearlyProven && extractedPaidAt) {
       const paidTime = new Date(extractedPaidAt);
       const now = new Date();
       // Must be paid within the last 1 hour
