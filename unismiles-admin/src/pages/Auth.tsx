@@ -43,13 +43,29 @@ export const Auth: React.FC = () => {
 
       login(token, user);
     } catch (err: any) {
-      const errorMessage = !err?.response
-        ? err instanceof Error
-          ? err.message
-          : 'Backend tidak dapat dihubungi. Periksa koneksi atau URL API backend.'
-        : err.response.status === 401
-          ? 'Email atau password tidak valid.'
-          : err.response.data?.message || err.response.data?.error || `Login gagal (HTTP ${err.response.status}).`;
+      // 429 = rate limit, bukan "Network Error". Tanpa cabang ini, pesan
+      // servernya ("Too many requests, coba lagi dalam N detik") hilang dan
+      // pengguna hanya melihat "Network Error" yang menyesatkan.
+      const status = err?.response?.status;
+      const serverMessage = err?.response?.data?.message || err?.response?.data?.error;
+      const retryAfter = err?.response?.data?.retry_after_seconds;
+
+      let errorMessage: string;
+      if (status === 429) {
+        errorMessage = retryAfter
+          ? `Terlalu banyak percobaan login. Coba lagi dalam ${retryAfter} detik.`
+          : 'Terlalu banyak percobaan login. Tunggu sebentar lalu coba lagi.';
+      } else if (status === 401) {
+        errorMessage = 'Email atau password tidak valid.';
+      } else if (serverMessage) {
+        errorMessage = serverMessage;
+      } else if (status) {
+        errorMessage = `Login gagal (HTTP ${status}).`;
+      } else if (err?.code === 'ECONNABORTED' || /timeout/i.test(String(err?.message))) {
+        errorMessage = 'Backend tidak merespons (timeout). Coba lagi sebentar.';
+      } else {
+        errorMessage = 'Backend tidak dapat dihubungi. Periksa koneksi, lalu coba lagi.';
+      }
       setError(errorMessage);
     } finally {
       setLoading(false);

@@ -50,6 +50,12 @@ app.use(cors({
   origin: corsOrigin,
   credentials: true,
 }));
+// WAJIB sebelum limiter: aplikasi berjalan di belakang proxy web server.
+// Tanpa ini, req.ip berisi alamat proxy untuk SEMUA pengunjung, sehingga satu
+// bucket rate limit dipakai bersama. Akibatnya 20 kali salah password dari satu
+// orang mengunci halaman login untuk semua orang selama 15 menit, dan aplikasi
+// melaporkannya sebagai "Network Error" karena 429 yang terpotong.
+app.set('trust proxy', 1);
 app.use(requestId);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
