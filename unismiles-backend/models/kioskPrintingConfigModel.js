@@ -68,7 +68,7 @@ const model = {
       `INSERT INTO kiosk_printing_configs
        (kiosk_id, printing_enabled, adapter, printer_name, paper_size, orientation, copies_limit, timeout_ms, retry_count, allowed_layouts, config_version, updated_by)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
-      [kioskId, defaults.printing_enabled !== undefined ? (defaults.printing_enabled ? 1 : 0) : 1, defaults.adapter || 'windows', defaults.printer_name || 'AUTO',
+      [kioskId, defaults.printing_enabled !== undefined ? (defaults.printing_enabled ? 1 : 0) : 1, defaults.adapter || 'disabled', defaults.printer_name || 'AUTO',
         defaults.paper_size || '4R', defaults.orientation || 'portrait', defaults.copies_limit || 1,
         defaults.timeout_ms || 60000, defaults.retry_count ?? 2, JSON.stringify(defaults.allowed_layouts || []), updatedBy]
     );

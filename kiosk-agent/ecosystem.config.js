@@ -22,7 +22,9 @@ module.exports = {
     max_memory_restart: '200M',
     env: {
       NODE_ENV: 'production',
-      LOCAL_BRIDGE_PORT: '3001',
+      // Harus sama dengan VITE_LOCAL_BRIDGE_PORT di web photobooth, kalau tidak
+      // sinyal maintenance mode tidak pernah sampai ke aplikasi photobooth.
+      LOCAL_BRIDGE_PORT: '3011',
       HEARTBEAT_INTERVAL: '20000',
     },
     log_date_format: 'YYYY-MM-DD HH:mm:ss',

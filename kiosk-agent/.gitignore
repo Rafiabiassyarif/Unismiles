@@ -5,3 +5,7 @@ node_modules/
 logs/
 .DS_Store
 npm-debug.log*
+
+# Runtime state: berisi deviceToken (API key kiosk). Dibuat otomatis oleh
+# configManager dan tidak boleh masuk repository.
+data/
