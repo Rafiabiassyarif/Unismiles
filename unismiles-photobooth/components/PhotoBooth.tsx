@@ -10,6 +10,11 @@ import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
+  SCAN_WINDOW_MS, SCAN_FRAME_GAP_MS,
+  remainingMs, progressPercent, remainingSeconds,
+  classifyFrame, scanHint, shouldSubmit, keepBestFrames, orderFramesForUpload,
+} from '../services/scanWindow';
+import {
   startSession, completeSession, uploadPhoto, sendPhotoByEmail, fetchPaymentProfile,
   verifyPayment, fetchTemplates, queuePrintJob, getPrintJobStatus, KioskApiError,
   getApiConfig, isAutoPrintEnabled, isManualPrintFallbackEnabled,
@@ -68,17 +73,24 @@ const PRINT_POLL_TIMEOUT_MS = 60_000;
 // supaya bisa diuji tanpa browser.
 const SIGNAGE_HOME_URL = SIGNAGE_URL;
 
-// Ambang ketajaman tidak lagi dipakai untuk menolak pemindaian; lihat
-// SCAN_MIN_SHARPNESS. Ketajaman hanya menjadi urutan prioritas frame.
-// Tingkat ketajaman (variance Laplacian) hanya dipakai untuk MEMILIH frame
-// terbaik, bukan untuk menolak pemindaian.
-//
-// Sebelumnya ada ambang keras di sini (butuh >= 300). Ambang itu menolak
-// pemindaian sebelum vision service sempat mencoba OCR sama sekali, sehingga
-// pembayaran yang sebenarnya sah langsung gagal walau frame-nya masih bisa
-// dibaca. Penilaian apakah bukti bayar terbaca sekarang sepenuhnya dilakukan
-// vision service, yang mengukur dari teks yang benar-benar terbaca.
-const SCAN_MIN_SHARPNESS = 0;
+// Catatan: tidak ada lagi ambang ketajaman yang menolak pemindaian di sisi
+// kiosk. Ketajaman hanya dipakai untuk mengurutkan frame dan memberi tahu
+// pengunjung apakah posisinya sudah tepat; keputusan berhasil/gagal diambil
+// vision service dari teks yang benar-benar terbaca.
+
+// Label & warna indikator mutu bingkai di layar pemindaian, supaya pengunjung
+// tahu apakah posisi bukti bayarnya sudah tepat.
+const SCAN_QUALITY_LABELS: Record<'good' | 'fair' | 'poor', string> = {
+  good: 'Terbaca jelas',
+  fair: 'Cukup jelas',
+  poor: 'Cari posisi',
+};
+
+const SCAN_QUALITY_STYLES: Record<'good' | 'fair' | 'poor', string> = {
+  good: 'border-emerald-400/60 text-emerald-300 bg-emerald-500/15',
+  fair: 'border-amber-400/60 text-amber-300 bg-amber-500/15',
+  poor: 'border-white/25 text-white/70 bg-white/10',
+};
 
 interface PersistedPrintJob {
   sessionCode: string;
@@ -865,7 +877,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const [verificationReasonCodes, setVerificationReasonCodes] = useState<string[]>([]);
   const [scanningProgress, setScanningProgress] = useState<number>(0);
   const [scanningHint, setScanningHint] = useState<string>('');
-  const [scanningCountdown, setScanningCountdown] = useState<string | null>(null);
+  // Status jendela pemindaian otomatis di layar pembayaran.
+  const [scanActive, setScanActive] = useState<boolean>(false);
+  const [scanRemainingSeconds, setScanRemainingSeconds] = useState<number>(SCAN_WINDOW_MS / 1000);
+  const [scanQuality, setScanQuality] = useState<'good' | 'fair' | 'poor'>('poor');
   // Keep email sending and the automatic upload on the same promise. Without
   // this, a visitor can submit the email while the backend still has no photo
   // attached to the session.
@@ -873,6 +888,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const sessionCompletedRef = useRef(false);
   // Timer pengembalian otomatis ke signage saat photobooth menganggur.
   const idleTimerRef = useRef<number | null>(null);
+  // Menyetel true akan menghentikan loop pemindaian yang sedang berjalan
+  // (pengunjung menekan Back, reset, atau sesi sudah terverifikasi).
+  const scanCancelRef = useRef(false);
 
   // Satu-satunya jalan keluar ke signage, dipakai tombol Back (halaman pertama),
   // tombol Home (halaman akhir), dan timer idle.
@@ -1610,100 +1628,29 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   };
 
   const handleResetScan = () => {
+    // Hentikan loop yang mungkin masih berjalan, kalau tidak hasilnya akan
+    // menimpa layar yang baru direset.
+    scanCancelRef.current = true;
     setVerificationStatus('');
     setVerificationReasonCodes([]);
     setFlowError(null);
     setScanningProgress(0);
     setScanningHint('');
-    setScanningCountdown(null);
+    setScanRemainingSeconds(SCAN_WINDOW_MS / 1000);
+    setScanActive(false);
+    setScanQuality('poor');
   };
 
-  // Ambil beberapa jepretan berurutan, lalu kirim hanya yang paling tajam.
-  // Beberapa frame sengaja dikirim (bukan satu) karena satu frame bisa gagal
-  // baca sementara frame lain berhasil; vision service memilih yang terbaik.
-  //
-  // Jeda 350 ms terlalu cepat: kelima jepretan praktis jatuh pada kondisi fokus
-  // yang sama, sehingga tidak ada frame pembanding yang benar-benar berbeda.
-  // Jeda 700 ms memberi autofokus webcam kesempatan bergerak, dan jumlah frame
-  // dinaikkan ke 6 supaya peluang salah satu frame jatuh saat fokus terkunci
-  // lebih besar. Total burst ~3.5 detik: masih wajar untuk pengunjung.
-  const SCAN_FRAME_COUNT = 6;
-  const SCAN_FRAME_GAP_MS = 700;
-  const COUNTDOWN_STEPS = ['3', '2', '1'];
-
-  const startScanningSequence = async () => {
-    setVerificationStatus('');
-    setVerificationReasonCodes([]);
-    setFlowError(null);
-
-    // Jeda hitung mundur: memberi waktu autofokus kamera signage mengunci ke
-    // layar HP dan tangan pengunjung berhenti bergerak sebelum difoto.
-    for (let i = 0; i < COUNTDOWN_STEPS.length; i += 1) {
-      setScanningCountdown(COUNTDOWN_STEPS[i]);
-      setScanningHint('Tahan layar HP di dalam bingkai...');
-      setScanningProgress(Math.round(((i + 1) / (COUNTDOWN_STEPS.length + 1)) * 100));
-      await new Promise(r => setTimeout(r, 1000));
-    }
-    setScanningCountdown(null);
-
-    // Minta kamera fokus ulang tepat saat pengunjung menahan layar HP. Fokus
-    // kontinu saja tidak cukup: lensa bisa masih terpaku ke latar ruangan saat
-    // struk diangkat ke depan. Diabaikan diam-diam kalau kamera tidak punya
-    // kontrol fokus.
-    try {
-      const track = (videoRef.current?.srcObject as MediaStream)?.getVideoTracks?.()[0];
-      const caps: any = track?.getCapabilities?.() || {};
-      if (caps.focusMode?.includes('continuous')) {
-        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as any] });
-      }
-    } catch (_) { /* kamera tanpa kontrol fokus: tetap lanjut */ }
-
-    const candidates: { blob: Blob; sharpness: number }[] = [];
-    for (let i = 0; i < SCAN_FRAME_COUNT; i += 1) {
-      setScanningHint(`Memotret bukti bayar (${i + 1}/${SCAN_FRAME_COUNT})...`);
-      setScanningProgress(
-        Math.round(((COUNTDOWN_STEPS.length + 1 + i) / (COUNTDOWN_STEPS.length + SCAN_FRAME_COUNT + 1)) * 100)
-      );
-      const shot = await captureFrameCandidate();
-      if (shot) candidates.push(shot);
-      if (i < SCAN_FRAME_COUNT - 1) await new Promise(r => setTimeout(r, SCAN_FRAME_GAP_MS));
-    }
-
-    setScanningProgress(100);
-
-    if (candidates.length === 0) {
-      setScanningCountdown(null);
-      setVerificationStatus('error');
-      setScanningProgress(0);
-      setFlowError('Kamera tidak menghasilkan gambar. Coba pindai ulang.');
-      return;
-    }
-
-    // Kirim frame paling tajam lebih dulu; sisanya sebagai cadangan di vision
-    // service kalau frame terbaik ternyata masih gagal dibaca.
-    const ordered = [...candidates].sort((a, b) => b.sharpness - a.sharpness).map(c => c.blob);
-
-    // Sengaja TIDAK menolak di sini walau semua frame terukur kurang tajam:
-    // ketajaman piksel bukan ukuran yang andal untuk "teks terbaca". Frame
-    // "buram" menurut variance Laplacian sering masih terbaca OCR, sedangkan
-    // menolak di sisi kiosk membuat pengunjung kehilangan jatah scan untuk
-    // pembayaran yang sah. Penentuan berhasil/gagal diserahkan ke vision
-    // service, yang mengukur dari teks yang benar-benar terbaca.
-    setStep('PAYMENT_CHECKING');
-    processVerification(ordered);
-  };
-
-  const processVerification = async (frames: Blob[]) => {
+  // Kirim frame bukti bayar ke backend lalu pantau hasil verifikasinya.
+  const processVerification = useCallback(async (frames: Blob[]) => {
     setVerificationStatus('processing');
     setScanningHint('Mengirim bukti pembayaran ke vision service...');
-    
+
     try {
       const data = await submitPaymentEvidence(sessionCode, frames, challengeId);
       const attemptId = data.attempt_id;
       setVerificationAttemptId(attemptId);
       setScanningHint('Menganalisis teks bukti pembayaran...');
-      
-      // Start polling
       pollVerificationStatus(attemptId);
     } catch (err: any) {
       setVerificationStatus('error');
@@ -1711,9 +1658,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       setStep('PAYMENT_SCAN');
       setFlowError(err.message || 'Gagal mengirim verifikasi pembayaran.');
     }
-  };
+  }, [sessionCode, challengeId]);
 
-  const pollVerificationStatus = async (attemptId: string) => {
+  const pollVerificationStatus = (attemptId: string) => {
     let attemptsCount = 0;
     const interval = setInterval(async () => {
       attemptsCount++;
@@ -1722,10 +1669,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         setStep('PAYMENT_SCAN');
         setScanningProgress(0);
         setVerificationStatus('needs_retry');
-        setFlowError('Pemeriksaan memakan waktu lebih lama dari biasanya. Silakan coba memindai ulang.');
+        setFlowError('Pemeriksaan memakan waktu lebih lama dari biasanya. Tekan "Coba Scan Lagi".');
         return;
       }
-      
+
       try {
         const data = await getPaymentVerificationStatus(sessionCode, attemptId);
         if (data.status === 'verified' || data.decision === 'verified') {
@@ -1760,6 +1707,121 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       }
     }, 1000);
   };
+
+  // Loop pemindaian otomatis.
+  //
+  // Berbeda dengan versi sebelumnya (hitung mundur 3-2-1 lalu 6 jepretan cepat
+  // berurutan), loop ini berjalan TERUS-MENERUS sampai jendela waktu habis.
+  // Alasannya: pengunjung perlu waktu mengangkat HP, memperbaiki posisi, dan
+  // menahan bukti bayar di depan kamera. Burst 3,5 detik membuat mereka
+  // kehilangan kesempatan sebelum sempat mengatur posisi.
+  //
+  // Selama jendela berjalan, frame diambil berulang kali dan hanya yang terbaik
+  // yang disimpan. Pengiriman terjadi lebih awal kalau bukti bayar sudah terbaca
+  // jelas beberapa kali, atau saat waktu benar-benar habis.
+  const activeScanRunRef = useRef(0);
+
+  const runScanWindow = useCallback(async () => {
+    const runId = activeScanRunRef.current + 1;
+    activeScanRunRef.current = runId;
+    scanCancelRef.current = false;
+
+    setVerificationStatus('');
+    setVerificationReasonCodes([]);
+    setFlowError(null);
+    setScanActive(true);
+    setScanQuality('poor');
+    setScanningHint(scanHint('poor', false));
+    setScanningProgress(progressPercent(0));
+    setScanRemainingSeconds(Math.ceil(SCAN_WINDOW_MS / 1000));
+
+    // Kamera mungkin baru menyala; beri kesempatan satu detik agar tidak
+    // langsung memotret frame hitam.
+    await new Promise((r) => setTimeout(r, 1000));
+
+    // Minta fokus ulang tepat saat pengunjung menahan bukti bayar. Fokus
+    // kontinu saja tidak cukup: lensa bisa masih terpaku ke latar ruangan.
+    try {
+      const track = (videoRef.current?.srcObject as MediaStream)?.getVideoTracks?.()[0];
+      const caps: any = track?.getCapabilities?.() || {};
+      if (caps.focusMode?.includes('continuous')) {
+        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as any] });
+      }
+    } catch (_) { /* kamera tanpa kontrol fokus: tetap lanjut */ }
+
+    const startedAt = Date.now();
+    const isStale = () => scanCancelRef.current || activeScanRunRef.current !== runId;
+
+    let kept: { blob: Blob; sharpness: number }[] = [];
+
+    while (true) {
+      const elapsed = Date.now() - startedAt;
+      // Progres dihitung dari WAKTU, jadi bar selalu bergerak walau frame buram
+      // dan tidak ada yang tersimpan.
+      setScanningProgress(progressPercent(elapsed));
+      setScanRemainingSeconds(remainingSeconds(elapsed));
+
+      const shot = await captureFrameCandidate();
+      if (isStale()) return;
+
+      if (shot && shot.blob.size > 0) {
+        kept = keepBestFrames(kept, shot);
+        setScanQuality(classifyFrame(shot.sharpness));
+        setScanningHint(scanHint(classifyFrame(shot.sharpness), true));
+      }
+
+      if (shouldSubmit(kept, elapsed)) break;
+      if (remainingMs(elapsed) <= 0) break;
+
+      // Jeda dipotong supaya tidak melewati sisa jendela waktu.
+      await new Promise((r) => setTimeout(r, Math.min(SCAN_FRAME_GAP_MS, remainingMs(elapsed))));
+      if (isStale()) return;
+    }
+
+    if (isStale()) return;
+
+    setScanActive(false);
+    setScanningProgress(100);
+
+    if (kept.length === 0) {
+      setVerificationStatus('error');
+      setScanningProgress(0);
+      setFlowError('Kamera tidak menghasilkan gambar. Tekan "Coba Scan Lagi".');
+      return;
+    }
+
+    // Frame paling tajam dikirim lebih dulu; sisanya jadi cadangan di vision
+    // service. Tidak ada penolakan berdasarkan ketajaman di sisi kiosk:
+    // keputusan berhasil/gagal diambil vision service dari teks yang benar-benar
+    // terbaca, supaya pembayaran sah tidak hilang hanya karena gambarnya redup.
+    const ordered = orderFramesForUpload(kept).map((c) => c.blob);
+    setStep('PAYMENT_CHECKING');
+    processVerification(ordered);
+  }, [captureFrameCandidate, processVerification]);
+
+  const startScanningSequence = () => {
+    if (scanActive) return;
+    runScanWindow();
+  };
+
+  // Scanner aktif sendiri begitu masuk layar pemindaian: pengunjung tidak perlu
+  // menekan tombol. Begitu halaman terbuka, kamera menyala dan jendela waktu
+  // mulai berjalan sehingga mereka punya kesempatan mengatur posisi.
+  //
+  // Dependensi sengaja hanya [step]: kalau runScanWindow ikut masuk, referensinya
+  // berubah tiap render dan loop akan restart terus-menerus. State yang dipegang
+  // loop sudah berupa ref, jadi versi fungsi yang tertangkap tetap benar.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (step !== 'PAYMENT_SCAN') {
+      // Tinggalkan layar pemindaian: hentikan loop agar tidak mengubah state
+      // layar lain.
+      scanCancelRef.current = true;
+      return;
+    }
+    scanCancelRef.current = false;
+    runScanWindow();
+  }, [step]);
 
   // Dev testing shortcut: Only active during local dev, disabled in production
   useEffect(() => {
@@ -2843,26 +2905,27 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
               <div className="w-[280px] sm:w-[320px] md:w-[340px] h-[370px] sm:h-[410px] md:h-[440px] max-h-[48vh] bg-black/60 border-2 border-white/20 rounded-[2.2rem] relative overflow-hidden shadow-[0_15px_35px_rgba(0,0,0,0.6)] flex items-center justify-center">
                 <canvas ref={processingCanvasRef} className="w-full h-full object-cover transform scale-x-[-1]" />
                 
-                {/* Phone screen border overlay (Elongated Phone Frame) */}
+                {/* Panduan area scan: bingkai berubah warna sesuai mutu tangkapan,
+                    jadi pengunjung langsung tahu apakah posisinya sudah tepat. */}
                 <div className="absolute inset-0 border-[10px] sm:border-[12px] border-black/55 pointer-events-none flex items-center justify-center">
-                  <div className="w-[88%] h-[92%] border-4 border-dashed border-[#f6cd46] rounded-[2rem] relative shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse flex items-center justify-center">
-                    <span className="text-[11px] sm:text-xs text-center font-black uppercase text-[#f6cd46] bg-black/80 px-3.5 py-1.5 rounded-full tracking-wider shadow-lg backdrop-blur-sm border border-[#f6cd46]/40">
-                      Layar HP Di Sini
+                  <div className={`w-[88%] h-[92%] border-4 rounded-[2rem] relative transition-colors duration-300 flex items-center justify-center ${
+                    !scanActive
+                      ? 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)]'
+                      : scanQuality === 'good'
+                        ? 'border-solid border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.55)] animate-pulse'
+                        : scanQuality === 'fair'
+                          ? 'border-solid border-amber-400 shadow-[0_0_30px_rgba(251,191,36,0.45)]'
+                          : 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse'
+                  }`}>
+                    <span className="text-[11px] sm:text-xs text-center font-black uppercase text-white bg-black/80 px-3.5 py-1.5 rounded-full tracking-wider shadow-lg backdrop-blur-sm border border-white/20">
+                      {scanQuality === 'good'
+                        ? 'Terbaca jelas, tahan posisi'
+                        : scanActive
+                          ? 'Posisikan bukti bayar di area ini'
+                          : 'Area scan bukti bayar'}
                     </span>
                   </div>
                 </div>
-
-                {/* Countdown besar sebelum memotret — memberi waktu autofokus */}
-                {scanningCountdown && (
-                  <div className="absolute inset-0 bg-black/55 backdrop-blur-sm flex flex-col items-center justify-center pointer-events-none z-20">
-                    <span className="text-6xl sm:text-7xl font-black text-[#f6cd46] drop-shadow-[0_0_25px_rgba(246,205,70,0.6)] animate-pulse">
-                      {scanningCountdown}
-                    </span>
-                    <span className="mt-2 text-[11px] sm:text-xs font-black text-white/85 uppercase tracking-widest text-center px-4">
-                      {scanningHint}
-                    </span>
-                  </div>
-                )}
 
                 {/* Progress bar overlay if active */}
                 {scanningProgress > 0 && (
@@ -2916,24 +2979,47 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
                     {verificationStatus !== 'rejected' && (
                       <button 
-                        onClick={handleResetScan}
+                        onClick={startScanningSequence}
                         className="w-full mt-1 bg-[#f6cd46] hover:bg-[#e5bc35] text-black py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-black shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 border-2 border-[#f6cd46]"
                       >
                         <span>🔄</span>
-                        <span>Pindai Ulang</span>
+                        <span>Coba Scan Lagi</span>
                       </button>
                     )}
                   </div>
+                ) : verificationStatus === 'processing' ? (
+                  /* Sudah dikirim: jangan tawarkan scan kedua. */
+                  <div className="w-full bg-white/5 border border-white/15 p-3.5 rounded-2xl text-center shadow-lg backdrop-blur-md">
+                    <p className="text-[11px] sm:text-xs font-black text-white uppercase tracking-wider animate-pulse">
+                      Memeriksa bukti pembayaran...
+                    </p>
+                    <p className="text-[10px] text-gray-400 mt-1">Mohon tunggu, jangan tutup halaman ini.</p>
+                  </div>
                 ) : (
-                  /* Default Primary Scan Button - Always visible in idle state */
-                  <button 
-                    onClick={startScanningSequence}
-                    disabled={scanningProgress > 0}
-                    className="w-full bg-[#f6cd46] hover:bg-[#e5bc35] text-black py-3 sm:py-3.5 rounded-xl text-sm sm:text-base font-black shadow-[0_8px_20px_rgba(246,205,70,0.35)] transition-all active:scale-95 flex items-center justify-center gap-2 border-2 border-[#f6cd46] disabled:opacity-80"
-                  >
-                    <span className="text-lg">📸</span>
-                    <span>{scanningProgress > 0 ? (scanningHint || 'Sedang Memindai...') : 'Pindai Bukti Sekarang'}</span>
-                  </button>
+                  /* Pemindaian berjalan otomatis: status + sisa waktu, bukan tombol
+                     yang harus ditekan pengunjung setiap kali. */
+                  <div className="w-full bg-[#f6cd46]/10 border border-[#f6cd46]/40 p-3.5 rounded-2xl text-center space-y-2 shadow-lg backdrop-blur-md">
+                    <div className="flex items-center justify-center gap-2 text-[#f6cd46] font-black text-xs sm:text-sm uppercase tracking-wider">
+                      <span className="flex gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#f6cd46] animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#f6cd46] animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#f6cd46] animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </span>
+                      <span>{scanActive ? 'Mencari bukti pembayaran...' : 'Bersiap memindai...'}</span>
+                    </div>
+
+                    <p className="text-[11px] sm:text-xs font-semibold text-gray-200 leading-snug">{scanningHint}</p>
+
+                    {/* Sisa waktu: pengunjung tahu masih ada kesempatan mengatur posisi */}
+                    <div className="flex items-center justify-center gap-2 pt-0.5">
+                      <span className={`text-2xl font-black tabular-nums ${scanRemainingSeconds <= 5 ? 'text-red-400' : 'text-[#f6cd46]'}`}>
+                        {scanRemainingSeconds}s
+                      </span>
+                      <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${SCAN_QUALITY_STYLES[scanQuality]}`}>
+                        {SCAN_QUALITY_LABELS[scanQuality]}
+                      </span>
+                    </div>
+                  </div>
                 )}
               </div>
             </div>

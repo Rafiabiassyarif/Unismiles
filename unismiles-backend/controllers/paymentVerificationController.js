@@ -275,10 +275,17 @@ const PaymentVerificationController = {
         return res.status(400).json({ success: false, message: 'Sesi pembayaran sudah kadaluwarsa' });
       }
 
-      // Check verification attempt count
+      // Batas percobaan per sesi.
+      //
+      // Dinaikkan dari 3 ke 6 karena pemindaian sekarang berjalan OTOMATIS saat
+      // halaman pembayaran terbuka. Dengan batas 3, satu pengiriman otomatis
+      // langsung memakan sepertiga jatah dan pengunjung hanya menyisakan 2
+      // percobaan manual — padahal mereka belum sempat mengatur posisi.
+      // Batas tetap ada supaya penyalahgunaan (spam unggahan) masih tertahan.
+      const MAX_SCAN_ATTEMPTS = 6;
       const attemptCount = await PaymentVerificationModel.countAttempts(session.session_id);
-      if (attemptCount >= 3) {
-        return res.status(429).json({ success: false, message: 'Batas maksimum scan bukti pembayaran (3 kali) telah tercapai.' });
+      if (attemptCount >= MAX_SCAN_ATTEMPTS) {
+        return res.status(429).json({ success: false, message: `Batas maksimum scan bukti pembayaran (${MAX_SCAN_ATTEMPTS} kali) telah tercapai.` });
       }
 
       const attemptId = crypto.randomUUID();
