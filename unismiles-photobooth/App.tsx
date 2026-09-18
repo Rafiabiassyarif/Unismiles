@@ -172,7 +172,13 @@ const App: React.FC = () => {
       >
         {/* 1. Photo Booth View (Default Screen) */}
         {currentView === View.BOOTH && (
-          <PhotoBooth onAdminClick={() => setIsLoginOpen(true)} />
+          <PhotoBooth
+            onAdminClick={() => setIsLoginOpen(true)}
+            /* Tahan timer idle saat modal login/pengaturan terbuka atau
+               maintenance mode aktif, supaya operator tidak terlempar ke
+               signage di tengah konfigurasi. */
+            idlePaused={isLoginOpen || isMaintenanceActive}
+          />
         )}
 
         {/* 2. Unified Kiosk Settings View */}

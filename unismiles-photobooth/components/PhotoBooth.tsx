@@ -8,6 +8,7 @@ import { FrameLayout, FrameStyle, PhotoFilter, GridLayoutId, VirtualBackground, 
 import { getStoredFilters, getLayoutConfig, getStoredBackgrounds, getAppConfig } from '../services/storageService';
 import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
+import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
   startSession, completeSession, uploadPhoto, sendPhotoByEmail, fetchPaymentProfile,
   verifyPayment, fetchTemplates, queuePrintJob, getPrintJobStatus, KioskApiError,
@@ -51,6 +52,10 @@ const formatCaptureTime = (seconds: number): string => {
 
 interface PhotoBoothProps {
   onAdminClick: () => void;
+  // Menahan pengembalian otomatis ke signage. Diisi true saat modal admin
+  // terbuka atau maintenance mode aktif, supaya operator tidak terlempar keluar
+  // di tengah pengaturan.
+  idlePaused?: boolean;
 }
 
 type BoothStep = 'LANDING' | 'PACKAGE' | 'LAYOUT' | 'PAYMENT' | 'PAYMENT_SCAN' | 'PAYMENT_CHECKING' | 'CAPTURE' | 'EDIT' | 'RESULT';
@@ -59,11 +64,9 @@ type PrintState = 'idle' | 'preparing' | 'uploading' | 'queued' | 'printing' | '
 const ACTIVE_PRINT_STORAGE_KEY = 'unismiles_active_print_job';
 const PRINT_POLL_TIMEOUT_MS = 60_000;
 
-// Tujuan tombol Home di halaman akhir. Kiosk ini satu perangkat dengan TV
-// signage, jadi Home mengembalikan pengunjung ke layar signage.
-// ponytail: URL tetap; jadikan env (VITE_SIGNAGE_URL) kalau nanti ada kiosk
-// yang signage-nya beda alamat.
-const SIGNAGE_HOME_URL = 'https://signage.jagoai.dev/';
+// Tujuan tombol Back/Home dan kebijakan timer idle tinggal di services/idleReturn
+// supaya bisa diuji tanpa browser.
+const SIGNAGE_HOME_URL = SIGNAGE_URL;
 
 // Ambang ketajaman (variance Laplacian) di bawah ini berarti kamera belum
 // mengunci fokus sehingga struk pasti terbaca buram. Dikalibrasi dengan struk
@@ -707,7 +710,7 @@ const FrameThumbnail: React.FC<{ style: FrameStyle, layoutId: string }> = ({ sty
     );
 };
 
-export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
+export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused = false }) => {
   const [step, setStep] = useState<BoothStep>('LANDING');
   const [uiMode, setUiMode] = useState<'normal' | 'air-touch'>('normal');
   const [monitorOrientation, setMonitorOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
@@ -866,6 +869,14 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   // attached to the session.
   const finalPhotoUploadPromiseRef = useRef<Promise<string | null> | null>(null);
   const sessionCompletedRef = useRef(false);
+  // Timer pengembalian otomatis ke signage saat photobooth menganggur.
+  const idleTimerRef = useRef<number | null>(null);
+
+  // Satu-satunya jalan keluar ke signage, dipakai tombol Back (halaman pertama),
+  // tombol Home (halaman akhir), dan timer idle.
+  const goToSignage = useCallback(() => {
+    window.location.href = SIGNAGE_HOME_URL;
+  }, []);
 
   const ensureSessionCompleted = async () => {
     if (!sessionCode) throw new KioskApiError('Sesi belum dibuat.');
@@ -946,6 +957,40 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Kosongkan photobooth yang ditinggal: setelah 60 detik tanpa sentuhan di
+  // layar tunggu, kembali ke signage supaya TV tidak tertinggal di halaman
+  // photobooth. Pesan & gesture kamera sengaja tidak dihitung sebagai aktivitas
+  // — kalau dihitung, orang yang lewat di depan kamera akan terus menahan timer
+  // dan tujuan fitur ini tidak tercapai.
+  useEffect(() => {
+    if (!shouldArmIdleTimer({ step, isCalibrating, idlePaused })) {
+      if (idleTimerRef.current !== null) {
+        window.clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+      return;
+    }
+
+    const armTimer = () => {
+      if (idleTimerRef.current !== null) window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = window.setTimeout(goToSignage, IDLE_REDIRECT_MS);
+    };
+
+    // pointerdown menangkap mouse dan sentuhan sekaligus; keydown untuk remote
+    // atau keyboard yang menempel di kiosk.
+    const activityEvents = ['pointerdown', 'keydown', 'wheel'] as const;
+    activityEvents.forEach((event) => window.addEventListener(event, armTimer, { passive: true }));
+    armTimer();
+
+    return () => {
+      activityEvents.forEach((event) => window.removeEventListener(event, armTimer));
+      if (idleTimerRef.current !== null) {
+        window.clearTimeout(idleTimerRef.current);
+        idleTimerRef.current = null;
+      }
+    };
+  }, [step, idlePaused, isCalibrating, goToSignage]);
 
   // Admin updates can happen while the kiosk page stays open. Refresh when
   // the kiosk is idle; never replace frame data during an active photo flow.
@@ -1859,7 +1904,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
       // Halaman akhir: tombol Home mengembalikan ke layar signage. Ini mengganti
       // soft-reset sebelumnya yang hanya berpindah ke LANDING dan membiarkan
       // signage tidak pernah kembali tampil di TV.
-      window.location.href = SIGNAGE_HOME_URL;
+      goToSignage();
   };
 
   const handleSendEmail = async (e: React.FormEvent) => {
@@ -2613,6 +2658,13 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
                   <img src="/assets/LOGO KOLAB.png" alt="Kolab" className="h-12 md:h-16 object-contain" />
                   <img src="/assets/LOGO UNI SMILE.png" alt="Uni Smile" className="h-12 md:h-16 rounded-xl object-contain" />
               </div>
+            </div>
+            <div className="absolute top-8 left-8 flex gap-4 z-50">
+               {/* Tombol Back di halaman pertama: keluar ke signage, bukan mundur
+                   ke layar lain. */}
+               <button id="btn-back-landing" onClick={goToSignage} className={`flex items-center gap-2 rounded-full backdrop-blur-sm transition-colors bg-white/10 text-white/70 hover:bg-white/20 border-2 border-white/20 font-bold ${isAirTouch ? 'px-8 py-6 text-2xl' : 'px-6 py-4'}`}>
+                 <ChevronLeft size={isAirTouch ? 40 : 28} /> Back
+               </button>
             </div>
             <div className="absolute top-8 right-8 flex gap-4 z-50">
                <button id="btn-toggle-cursor-lock-landing" onClick={() => setIsCursorLocked(!isCursorLocked)} className={`rounded-full backdrop-blur-sm transition-colors border-2 ${isAirTouch ? 'p-6' : 'p-4'} ${isCursorLocked ? 'bg-red-500/20 border-red-400 text-white' : 'bg-white/10 border-white/20 text-white/70 hover:bg-white/20'}`} style={{ display: isAirTouch ? 'block' : 'none' }}>{isCursorLocked ? <Lock size={isAirTouch?40:32}/> : <Unlock size={isAirTouch?40:32}/>}</button>
