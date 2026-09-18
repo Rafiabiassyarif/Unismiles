@@ -4,10 +4,10 @@ const { createWorker } = require('tesseract.js');
 const { pickBestFrame } = require('./ocr');
 
 const app = express();
-// Kiosk mengirim 6 jepretan supaya frame blur bisa dibuang; batas dinaikkan
-// dari 3 agar tidak ditolak multer sebelum dinilai.
+// Kiosk mengirim beberapa jepretan supaya frame blur bisa dibuang; batas
+// dinaikkan dari 3 agar tidak ditolak multer sebelum dinilai.
 const upload = multer({ limits: { files: 8, fileSize: 8 * 1024 * 1024 } });
-const port = Number(process.env.PORT || 5001);
+const port = Number(process.env.PORT || 5018);
 const token = process.env.PAYMENT_VISION_SERVICE_TOKEN || '';
 let workerPromise;
 let busy = false;
