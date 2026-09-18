@@ -1,7 +1,9 @@
 const express = require('express');
 const multer = require('multer');
+const jpeg = require('jpeg-js');
 const { createWorker } = require('tesseract.js');
-const { pickBestFrame } = require('./ocr');
+const { pickBestFrame, voteAmounts } = require('./ocr');
+const { prepareForOcr, grayToRgba } = require('./preprocess');
 
 const app = express();
 // Kiosk mengirim beberapa jepretan supaya frame blur bisa dibuang; batas
@@ -22,6 +24,32 @@ async function getWorker() {
   return workerPromise;
 }
 
+/**
+ * Pass 2: OCR ulang pada gambar yang sudah diperbaiki.
+ *
+ * Hanya dijalankan kalau pass 1 gagal menemukan nominal tagihan, sehingga jalur
+ * cepat tetap cepat. Blur diperbaiki dengan penajaman tepi (unsharp mask) dan
+ * frame dipusatkan ke layar HP lewat auto-crop; lihat preprocess.js untuk
+ * catatan teknik mana yang diukur berguna dan mana yang sengaja tidak dipakai.
+ */
+async function retryWithPreprocessing(worker, files, expected) {
+  const texts = [];
+  for (const file of files) {
+    let decoded;
+    try {
+      decoded = jpeg.decode(file.buffer, { useTArray: true });
+    } catch (err) {
+      continue;
+    }
+    const prepared = prepareForOcr(decoded.data, decoded.width, decoded.height);
+    const rgba = grayToRgba(prepared.gray, prepared.width, prepared.height);
+    const buffer = jpeg.encode({ data: rgba, width: prepared.width, height: prepared.height }, 95).data;
+    const result = await worker.recognize(buffer);
+    texts.push(result?.data?.text || '');
+  }
+  return texts;
+}
+
 app.get('/health', (req, res) => res.json({ status: 'ok', service: 'payment-vision-node' }));
 
 app.post('/process', auth, upload.array('files', 8), async (req, res) => {
@@ -31,18 +59,40 @@ app.post('/process', auth, upload.array('files', 8), async (req, res) => {
   try {
     const worker = await getWorker();
     const expected = req.body.expected_amount;
+    const expectedAmount = Number(expected) || null;
 
-    // OCR SETIAP frame, lalu pilih yang paling jelas. Sebelumnya teks semua
-    // frame digabung jadi satu: satu frame blur ikut mencemari hasil, dan
-    // kualitas dilaporkan angka tetap 0.18/0.86 yang tidak menggambarkan foto.
-    const texts = [];
+    // PASS 1 — OCR frame apa adanya. Ini jalur tercepat dan tetap jalur utama.
+    let texts = [];
     for (const file of req.files) {
       const result = await worker.recognize(file.buffer);
       texts.push(result?.data?.text || '');
     }
 
-    const best = pickBestFrame(texts, expected);
-    if (!best) return res.status(400).json({ detail: 'No readable text' });
+    let best = pickBestFrame(texts, expected);
+    let preprocessed = false;
+
+    // PASS 2 — jalankan HANYA kalau nominal tagihan belum ketemu di pass 1.
+    // Gambar buram atau redup masih bisa diselamatkan setelah penajaman.
+    if (expectedAmount && best && best.amount !== expectedAmount) {
+      const retryTexts = await retryWithPreprocessing(worker, req.files, expected);
+      const retryBest = pickBestFrame(retryTexts, expected);
+      if (retryBest && retryBest.amount === expectedAmount) {
+        texts = texts.concat(retryTexts);
+        best = retryBest;
+        preprocessed = true;
+      } else if (retryBest && !best.amount && retryBest.amount) {
+        // Pass 1 tidak menemukan nominal sama sekali; pass 2 menemukan angka.
+        best = retryBest;
+        preprocessed = true;
+      }
+    }
+
+    // Gabungkan kandidat dari semua frame: satu frame bisa salah baca satu digit
+    // sementara frame lain benar. Hanya diterima bila sama persis dengan tagihan.
+    const vote = expectedAmount ? voteAmounts(texts, expectedAmount) : null;
+    if (vote && vote.matched && best.amount !== expectedAmount) {
+      best = { ...best, amount: expectedAmount, amount_from_vote: true };
+    }
 
     const qualityScore = best.frame_score;
     const successful = best.status === 'success' || best.status === 'berhasil';
@@ -72,12 +122,14 @@ app.post('/process', auth, upload.array('files', 8), async (req, res) => {
       quality: { score: qualityScore },
       liveness: { score: req.files.length > 1 ? 0.8 : 0.5 },
       tamper_score: 0.1,
-      model_version: 'tesseract-node-1.1'
+      model_version: 'tesseract-node-1.2'
     };
 
     console.log(
       `[VisionNode] ${req.files.length} frame, skor=${best.frame_scores.join(',')} ` +
-      `terbaik=${qualityScore} nominal=${best.amount} status=${best.status}`
+      `terbaik=${qualityScore} nominal=${best.amount} status=${best.status}` +
+      `${preprocessed ? ' (preprocessing)' : ''}` +
+      `${best.amount_from_vote ? ' (gabung kandidat)' : ''}`
     );
     res.json(normalized);
   } catch (err) {

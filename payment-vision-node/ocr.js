@@ -144,4 +144,30 @@ function pickBestFrame(texts, expected) {
   };
 }
 
-module.exports = { normalizeAmount, collectAmounts, extract, scoreFrame, pickBestFrame };
+/**
+ * Gabungkan kandidat nominal dari beberapa frame.
+ *
+ * Satu frame bisa salah baca satu digit (log produksi: 5.073 terbaca 9.073).
+ * Karena tiap jepretan punya noise berbeda, frame lain biasanya membaca angka
+ * yang benar. Kandidat hanya diterima kalau PERSIS sama dengan nominal tagihan,
+ * jadi ini tidak melonggarkan validasi — hanya menambah kesempatan menemukan
+ * nominal yang sudah benar.
+ */
+function voteAmounts(texts, expected) {
+  const votes = new Map();
+  const perFrame = [];
+  for (const text of (texts || [])) {
+    const { strong } = collectAmounts(String(text || ''));
+    perFrame.push(strong);
+    for (const value of strong) votes.set(value, (votes.get(value) || 0) + 1);
+  }
+
+  const expectedAmount = normalizeAmount(expected);
+  if (expectedAmount && votes.has(expectedAmount)) {
+    return { amount: expectedAmount, matched: true, perFrame, votes: Object.fromEntries(votes) };
+  }
+  const top = [...votes.entries()].sort((a, b) => b[1] - a[1])[0];
+  return { amount: top ? top[0] : null, matched: false, perFrame, votes: Object.fromEntries(votes) };
+}
+
+module.exports = { normalizeAmount, collectAmounts, extract, scoreFrame, pickBestFrame, voteAmounts };

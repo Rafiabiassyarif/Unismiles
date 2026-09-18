@@ -68,15 +68,17 @@ const PRINT_POLL_TIMEOUT_MS = 60_000;
 // supaya bisa diuji tanpa browser.
 const SIGNAGE_HOME_URL = SIGNAGE_URL;
 
-// Ambang ketajaman (variance Laplacian) di bawah ini berarti kamera belum
-// mengunci fokus sehingga struk pasti terbaca buram. Dikalibrasi dengan struk
-// uji: OCR masih membaca nominal pada variance ~1000, tetapi gagal total pada
-// ~100. Nilai 300 di tengah keduanya (margin >3x dari batas gagal, <4x dari
-// batas berhasil). Sesi dibatasi 3 kali scan, jadi lebih baik meminta
-// pengunjung menahan HP lebih stabil daripada membuang satu jatah scan.
-// ponytail: diukur pada struk sintetis; noise kamera asli menambah variance,
-// jadi turunkan hanya kalau scan yang seharusnya terbaca malah diblokir.
-const SCAN_MIN_SHARPNESS = 300;
+// Ambang ketajaman tidak lagi dipakai untuk menolak pemindaian; lihat
+// SCAN_MIN_SHARPNESS. Ketajaman hanya menjadi urutan prioritas frame.
+// Tingkat ketajaman (variance Laplacian) hanya dipakai untuk MEMILIH frame
+// terbaik, bukan untuk menolak pemindaian.
+//
+// Sebelumnya ada ambang keras di sini (butuh >= 300). Ambang itu menolak
+// pemindaian sebelum vision service sempat mencoba OCR sama sekali, sehingga
+// pembayaran yang sebenarnya sah langsung gagal walau frame-nya masih bisa
+// dibaca. Penilaian apakah bukti bayar terbaca sekarang sepenuhnya dilakukan
+// vision service, yang mengukur dari teks yang benar-benar terbaca.
+const SCAN_MIN_SHARPNESS = 0;
 
 interface PersistedPrintJob {
   sessionCode: string;
@@ -1258,12 +1260,14 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         if (!navigator.mediaDevices?.getUserMedia) {
             throw new Error('Browser ini tidak mendukung akses kamera. Buka photobooth melalui Chrome/Edge di http://localhost:3000.');
         }
-        const constraints: MediaStreamConstraints = { 
-            video: { 
-                width: { ideal: 1920, min: 1280 },
-                height: { ideal: 1080, min: 720 },
+        const constraints: MediaStreamConstraints = {
+            video: {
+                // Resolusi dinaikkan: pada webcam murah, mode 4:3 sering memberi
+                // detail piksel lebih banyak untuk teks kecil dibanding 16:9.
+                width: { ideal: 2560, min: 1280 },
+                height: { ideal: 1440, min: 720 },
                 frameRate: { ideal: 30 }
-            } 
+            }
         };
         
         if (currentDeviceId) {
@@ -1617,8 +1621,14 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   // Ambil beberapa jepretan berurutan, lalu kirim hanya yang paling tajam.
   // Beberapa frame sengaja dikirim (bukan satu) karena satu frame bisa gagal
   // baca sementara frame lain berhasil; vision service memilih yang terbaik.
-  const SCAN_FRAME_COUNT = 5;
-  const SCAN_FRAME_GAP_MS = 350;
+  //
+  // Jeda 350 ms terlalu cepat: kelima jepretan praktis jatuh pada kondisi fokus
+  // yang sama, sehingga tidak ada frame pembanding yang benar-benar berbeda.
+  // Jeda 700 ms memberi autofokus webcam kesempatan bergerak, dan jumlah frame
+  // dinaikkan ke 6 supaya peluang salah satu frame jatuh saat fokus terkunci
+  // lebih besar. Total burst ~3.5 detik: masih wajar untuk pengunjung.
+  const SCAN_FRAME_COUNT = 6;
+  const SCAN_FRAME_GAP_MS = 700;
   const COUNTDOWN_STEPS = ['3', '2', '1'];
 
   const startScanningSequence = async () => {
@@ -1635,6 +1645,18 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       await new Promise(r => setTimeout(r, 1000));
     }
     setScanningCountdown(null);
+
+    // Minta kamera fokus ulang tepat saat pengunjung menahan layar HP. Fokus
+    // kontinu saja tidak cukup: lensa bisa masih terpaku ke latar ruangan saat
+    // struk diangkat ke depan. Diabaikan diam-diam kalau kamera tidak punya
+    // kontrol fokus.
+    try {
+      const track = (videoRef.current?.srcObject as MediaStream)?.getVideoTracks?.()[0];
+      const caps: any = track?.getCapabilities?.() || {};
+      if (caps.focusMode?.includes('continuous')) {
+        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' } as any] });
+      }
+    } catch (_) { /* kamera tanpa kontrol fokus: tetap lanjut */ }
 
     const candidates: { blob: Blob; sharpness: number }[] = [];
     for (let i = 0; i < SCAN_FRAME_COUNT; i += 1) {
@@ -1660,19 +1682,13 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     // Kirim frame paling tajam lebih dulu; sisanya sebagai cadangan di vision
     // service kalau frame terbaik ternyata masih gagal dibaca.
     const ordered = [...candidates].sort((a, b) => b.sharpness - a.sharpness).map(c => c.blob);
-    const sharpest = candidates.reduce((best, c) => (c.sharpness > best.sharpness ? c : best), candidates[0]);
 
-    // Semua frame sama-sama rata: tidak ada gunanya dikirim, kamera belum fokus.
-    if (sharpest.sharpness < SCAN_MIN_SHARPNESS) {
-      setScanningCountdown(null);
-      setVerificationStatus('needs_retry');
-      setScanningProgress(0);
-      setVerificationReasonCodes(['IMAGE_BLURRY']);
-      setFlowError('Kamera belum fokus. Pegang layar HP lebih stabil, lalu pindai ulang.');
-      return;
-    }
-
-    // Switch to checking
+    // Sengaja TIDAK menolak di sini walau semua frame terukur kurang tajam:
+    // ketajaman piksel bukan ukuran yang andal untuk "teks terbaca". Frame
+    // "buram" menurut variance Laplacian sering masih terbaca OCR, sedangkan
+    // menolak di sisi kiosk membuat pengunjung kehilangan jatah scan untuk
+    // pembayaran yang sah. Penentuan berhasil/gagal diserahkan ke vision
+    // service, yang mengukur dari teks yang benar-benar terbaca.
     setStep('PAYMENT_CHECKING');
     processVerification(ordered);
   };
