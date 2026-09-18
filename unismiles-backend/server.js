@@ -107,7 +107,9 @@ app.use('/api/v1/auth', authRoutes);
 app.use(notFoundHandler);
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 8000;
+// Default port mengikuti port runtime KroomBox untuk site ini, supaya nilai di
+// server tidak perlu diubah manual setiap kali deploy.
+const PORT = process.env.PORT || 5017;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Uni-Smiles REST API & WebSocket Server is running on port ${PORT}`);
 });
