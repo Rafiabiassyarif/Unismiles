@@ -59,6 +59,12 @@ type PrintState = 'idle' | 'preparing' | 'uploading' | 'queued' | 'printing' | '
 const ACTIVE_PRINT_STORAGE_KEY = 'unismiles_active_print_job';
 const PRINT_POLL_TIMEOUT_MS = 60_000;
 
+// Tujuan tombol Home di halaman akhir. Kiosk ini satu perangkat dengan TV
+// signage, jadi Home mengembalikan pengunjung ke layar signage.
+// ponytail: URL tetap; jadikan env (VITE_SIGNAGE_URL) kalau nanti ada kiosk
+// yang signage-nya beda alamat.
+const SIGNAGE_HOME_URL = 'https://signage.jagoai.dev/';
+
 // Ambang ketajaman (variance Laplacian) di bawah ini berarti kamera belum
 // mengunci fokus sehingga struk pasti terbaca buram. Dikalibrasi dengan struk
 // uji: OCR masih membaca nominal pada variance ~1000, tetapi gagal total pada
@@ -1850,40 +1856,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick }) => {
   };
 
   const handleHome = () => {
-      // Soft Reset: Clear all state to initial values instead of forcing a page reload
-      // This prevents black screen issues and feels faster
-      setCapturedPhotos([]);
-      setRetakeIndex(null);
-      setReviewPhotoIndex(null);
-      setCaptureDeadline(null);
-      setRemainingCaptureSeconds(0);
-      setCaptureExpired(false);
-      setSelectedLayoutId(null);
-      setSelectedBackground(null);
-      setSelectedFilter(null);
-      setSelectedFrame(null);
-      setProcessedFrame(null);
-      setAreAssetsReady(false);
-      setFinalUploadedUrl(null);
-      setDownloadUrl(null);
-      setUploadError(null);
-      setFlowError(null);
-      setUploadStatus('idle');
-      setPrintState('idle');
-      setPrintJobId(null);
-      setPrintError(null);
-      printActionInFlightRef.current = false;
-      printPollTokenRef.current += 1;
-      if (printPollTimerRef.current !== null) window.clearTimeout(printPollTimerRef.current);
-      clearPersistedPrintJob();
-      finalPhotoUploadPromiseRef.current = null;
-      sessionCompletedRef.current = false;
-      setEmail('');
-      setEmailError(null);
-      setIsSent(false);
-      setStep('LANDING');
-      const emailForm = document.getElementById('email-form-container');
-      if (emailForm) { emailForm.classList.add('hidden'); emailForm.classList.remove('flex'); }
+      // Halaman akhir: tombol Home mengembalikan ke layar signage. Ini mengganti
+      // soft-reset sebelumnya yang hanya berpindah ke LANDING dan membiarkan
+      // signage tidak pernah kembali tampil di TV.
+      window.location.href = SIGNAGE_HOME_URL;
   };
 
   const handleSendEmail = async (e: React.FormEvent) => {
