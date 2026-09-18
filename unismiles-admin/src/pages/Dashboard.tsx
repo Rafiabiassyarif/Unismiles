@@ -68,7 +68,8 @@ const compactCurrency = (amount: number) => {
 
 const isSuccessfulSession = (status: unknown) => {
   const normalizedStatus = String(status ?? '').trim().toLowerCase();
-  if (!normalizedStatus) return true;
+  // Status kosong/tak dikenal BUKAN sukses. Sebelumnya nilai kosong dianggap
+  // sukses sehingga sesi tanpa status ikut menambah Total Revenue.
   return normalizedStatus === 'success'
     || normalizedStatus === 'successful'
     || normalizedStatus === 'complete'

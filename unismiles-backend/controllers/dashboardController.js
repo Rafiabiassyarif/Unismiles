@@ -1,6 +1,21 @@
 const pool = require('../config/db');
 
-const runDashboardQueries = async (sessionKey, userId, userRole) => {
+/**
+ * Satu definisi "sesi sukses" untuk seluruh angka dashboard.
+ *
+ * Sebelumnya Total Revenue dan Total Sessions dihitung dari tabel yang berbeda
+ * dengan syarat yang berbeda: revenue menjumlahkan SEMUA transaksi berstatus
+ * 'success', sementara sessions hanya menghitung sesi berstatus 'completed'.
+ * Akibatnya revenue ikut menjumlahkan sesi yang tidak pernah selesai (mis.
+ * pembayaran terverifikasi tetapi sesi tetap 'active' tanpa foto), sehingga
+ * kedua kartu saling bertentangan.
+ *
+ * Definisi ini sama dengan label "Success" pada halaman Sessions
+ * (sessionController.getAdminSessions memetakan status 'completed' -> 'Success').
+ */
+const SUCCESS_SESSION_PREDICATE = "s.status = 'completed'";
+
+const buildDashboardQueries = (sessionKey, userId, userRole) => {
   const scoped = userRole !== 'Super Admin';
   const kioskFilter = scoped ? ' WHERE user_id = ?' : '';
   const sessionFilter = scoped ? ' AND k.user_id = ?' : '';
@@ -14,24 +29,41 @@ const runDashboardQueries = async (sessionKey, userId, userRole) => {
       SUM(CASE WHEN last_heartbeat IS NULL OR TIMESTAMPDIFF(SECOND, last_heartbeat, NOW()) >= 600 THEN 1 ELSE 0 END) AS offline_kiosks
     FROM kiosks${scoped ? ' WHERE user_id = ?' : ''}
   `;
+
+  // Kedua angka memakai tabel sessions dengan predikat yang sama, jadi tidak
+  // mungkin lagi saling bertentangan. Nominal diambil dari
+  // payment_required_amount, yaitu jumlah yang benar-benar dibayar pelanggan
+  // (harga frame Admin + kode unik) dan sudah dipastikan cocok oleh verifikasi.
   const sessionQuery = `
     SELECT COUNT(${sessionId}) AS total_sessions
     FROM sessions s
     JOIN kiosks k ON s.kiosk_id = k.id
-    WHERE s.status = 'completed'${sessionFilter}
+    WHERE ${SUCCESS_SESSION_PREDICATE}${sessionFilter}
   `;
   const revenueQuery = `
-    SELECT COALESCE(SUM(t.amount), 0) AS total_revenue
-    FROM transactions t
-    JOIN sessions s ON t.session_id = ${sessionId}
+    SELECT COALESCE(SUM(COALESCE(s.payment_required_amount, 0)), 0) AS total_revenue
+    FROM sessions s
     JOIN kiosks k ON s.kiosk_id = k.id
-    WHERE t.status = 'success'${sessionFilter}
+    WHERE ${SUCCESS_SESSION_PREDICATE}${sessionFilter}
   `;
 
-  const [[{ total_kiosks }]] = await pool.query(kioskQuery, scoped ? [userId] : []);
-  const [[statusRow]] = await pool.query(statusQuery, scoped ? [userId] : []);
-  const [[{ total_sessions }]] = await pool.query(sessionQuery, scoped ? [userId] : []);
-  const [[{ total_revenue }]] = await pool.query(revenueQuery, scoped ? [userId] : []);
+  return {
+    kioskQuery,
+    statusQuery,
+    sessionQuery,
+    revenueQuery,
+    params: scoped ? [userId] : [],
+  };
+};
+
+const runDashboardQueries = async (sessionKey, userId, userRole) => {
+  const queries = buildDashboardQueries(sessionKey, userId, userRole);
+  const { params } = queries;
+
+  const [[{ total_kiosks }]] = await pool.query(queries.kioskQuery, params);
+  const [[statusRow]] = await pool.query(queries.statusQuery, params);
+  const [[{ total_sessions }]] = await pool.query(queries.sessionQuery, params);
+  const [[{ total_revenue }]] = await pool.query(queries.revenueQuery, params);
 
   return {
     total_kiosks: Number(total_kiosks) || 0,
@@ -67,5 +99,7 @@ const getDashboardStats = async (req, res) => {
 };
 
 module.exports = {
-  getDashboardStats
+  getDashboardStats,
+  buildDashboardQueries,
+  SUCCESS_SESSION_PREDICATE,
 };
