@@ -60,10 +60,14 @@ const ACTIVE_PRINT_STORAGE_KEY = 'unismiles_active_print_job';
 const PRINT_POLL_TIMEOUT_MS = 60_000;
 
 // Ambang ketajaman (variance Laplacian) di bawah ini berarti kamera belum
-// mengunci fokus sehingga struk pasti terbaca buram. Nilainya sengaja rendah:
-// lebih baik mencoba scan daripada menolak bukti yang sebenarnya terbaca.
-// ponytail: ambang empiris; naikkan kalau masih ada scan lolos dalam keadaan blur.
-const SCAN_MIN_SHARPNESS = 60;
+// mengunci fokus sehingga struk pasti terbaca buram. Dikalibrasi dengan struk
+// uji: OCR masih membaca nominal pada variance ~1000, tetapi gagal total pada
+// ~100. Nilai 300 di tengah keduanya (margin >3x dari batas gagal, <4x dari
+// batas berhasil). Sesi dibatasi 3 kali scan, jadi lebih baik meminta
+// pengunjung menahan HP lebih stabil daripada membuang satu jatah scan.
+// ponytail: diukur pada struk sintetis; noise kamera asli menambah variance,
+// jadi turunkan hanya kalau scan yang seharusnya terbaca malah diblokir.
+const SCAN_MIN_SHARPNESS = 300;
 
 interface PersistedPrintJob {
   sessionCode: string;
