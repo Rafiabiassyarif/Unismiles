@@ -1571,7 +1571,36 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   // diperkecil seperlunya agar unggahan tetap ringan. Pemotongan yang aman
   // dilakukan di vision service: di sana crop berbasis DETEKSI area terang,
   // bukan tebakan posisi, dan gambar asli tetap tersedia sebagai cadangan.
-  const captureFrameCandidate = (): Promise<{ blob: Blob; sharpness: number } | null> => {
+  /**
+   * Bagian piksel terang dari sebuah frame (0-1).
+   *
+   * Ini penanda yang benar untuk "ada layar HP di depan kamera": pada frame nyata,
+   * kamera menghadap struk = ~97% piksel terang, menghadap ruangan = ~1,6%.
+   *
+   * Ketajaman (variance Laplacian) TIDAK bisa dipakai untuk ini — ruangan penuh
+   * tekstur justru bernilai lebih tinggi daripada struk, sehingga pemindaian
+   * pernah berhenti dalam ~1 detik padahal tidak ada bukti bayar.
+   */
+  const measureBrightRatio = useCallback((source: HTMLCanvasElement): number => {
+    const w = 240;
+    const h = Math.max(1, Math.round((source.height / source.width) * w));
+    const small = document.createElement('canvas');
+    small.width = w;
+    small.height = h;
+    const ctx = small.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return 0;
+    ctx.drawImage(source, 0, 0, w, h);
+    const { data } = ctx.getImageData(0, 0, w, h);
+
+    let bright = 0;
+    for (let i = 0; i < w * h; i += 1) {
+      const lum = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
+      if (lum >= 180) bright += 1;
+    }
+    return bright / Math.max(1, w * h);
+  }, []);
+
+  const captureFrameCandidate = useCallback((): Promise<{ blob: Blob; sharpness: number; brightRatio: number } | null> => {
     return new Promise((resolve) => {
       const video = videoRef.current;
       if (!video) {
@@ -1600,12 +1629,19 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         ctx.drawImage(video, 0, 0, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
         ctx.filter = 'none';
         const sharpness = measureSharpness(tempCanvas);
-        tempCanvas.toBlob((blob) => resolve(blob ? { blob, sharpness } : null), 'image/jpeg', 0.96);
+        // Bagian piksel terang: penanda keberadaan layar HP di depan kamera.
+        // Dipakai untuk memutuskan kapan berhenti memindai — lihat scanWindow.ts.
+        const brightRatio = measureBrightRatio(tempCanvas);
+        tempCanvas.toBlob(
+          (blob) => resolve(blob ? { blob, sharpness, brightRatio } : null),
+          'image/jpeg',
+          0.96,
+        );
       } else {
         resolve(null);
       }
     });
-  };
+  }, [measureBrightRatio]);
 
   const formatVerificationReason = (code: string): string => {
     switch (code) {
@@ -1736,7 +1772,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setFlowError(null);
     setScanActive(true);
     setScanQuality('poor');
-    setScanningHint(scanHint('poor', false));
+    setScanningHint(scanHint(null, false));
     setScanningProgress(progressPercent(0));
     setScanRemainingSeconds(Math.ceil(SCAN_WINDOW_MS / 1000));
 
@@ -1772,7 +1808,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       if (shot && shot.blob.size > 0) {
         kept = keepBestFrames(kept, shot);
         setScanQuality(classifyFrame(shot.sharpness));
-        setScanningHint(scanHint(classifyFrame(shot.sharpness), true));
+        // Hint memakai objek frame (butuh brightRatio) supaya bisa membedakan
+        // "layar HP belum terlihat" dari "gambar kurang tajam".
+        setScanningHint(scanHint(shot, true));
       }
 
       if (shouldSubmit(kept, elapsed)) break;

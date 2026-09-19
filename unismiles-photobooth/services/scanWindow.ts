@@ -18,18 +18,36 @@ export const SCAN_FRAME_GAP_MS = 400;
 export const MAX_FRAMES_TO_SEND = 6;
 
 /**
- * Ambang ketajaman (variance Laplacian). HANYA untuk memberi tahu pengunjung
- * apakah bukti bayarnya sudah masuk area dan terbaca jelas — bukan untuk
- * menolak. Kalibrasi: OCR masih membaca nominal pada variance ~1000 dan gagal
- * total pada ~100.
+ * Ambang ketajaman (variance Laplacian).
+ *
+ * PENTING: nilai ini TIDAK dipakai untuk memutuskan kapan berhenti memindai.
+ *
+ * Pengukuran pada frame kamera nyata menunjukkan variance Laplacian bukan ukuran
+ * "bukti bayar terlihat jelas":
+ *   kamera menghadap ruangan, TANPA bukti bayar -> ketajaman 1694-1955
+ *   kamera menghadap struk                      -> ketajaman 590
+ * Ruangan penuh tekstur justru memberi skor LEBIH TINGGI daripada struk, sehingga
+ * ambang ini pernah membuat pemindaian berhenti dalam ~1 detik tanpa ada bukti
+ * bayar (keluhan: "kok cepat banget ngescan padahal tidak ada bukti bayar").
+ *
+ * Sekarang nilai ini hanya dipakai untuk memberi tahu pengunjung apakah gambar
+ * sudah cukup tajam, dipasangkan dengan deteksi keberadaan layar.
  */
 export const GOOD_SHARPNESS = 300;
 export const FAIR_SHARPNESS = 120;
 
 /**
- * Jumlah frame bagus sebelum pengiriman dipercepat. Kalau bukti bayar sudah
- * terbaca jelas dua kali, tidak ada gunanya membuat pengunjung menunggu sampai
- * jendela waktu habis.
+ * Bagian piksel yang terang. Ini penanda yang benar untuk "ada layar HP di depan
+ * kamera": layar HP jauh lebih terang daripada ruangan pada umumnya.
+ *
+ * Diukur pada frame nyata: kamera menghadap struk = 97% piksel terang; kamera
+ * menghadap ruangan = 1,6%. Jaraknya lebar, jadi ambangnya tidak sensitif.
+ */
+export const SCREEN_BRIGHT_RATIO = 0.12;
+
+/**
+ * Jumlah frame yang sudah memenuhi syarat sebelum pengiriman dipercepat.
+ * Dipakai bersama deteksi layar, bukan hanya ketajaman.
  */
 export const TARGET_GOOD_FRAMES = 2;
 
@@ -59,6 +77,8 @@ export type FrameQuality = 'good' | 'fair' | 'poor';
 
 export interface FrameLike {
   sharpness: number;
+  /** Bagian piksel terang (0-1). Ada layar HP di depan kamera kalau nilainya tinggi. */
+  brightRatio?: number;
 }
 
 export function remainingMs(elapsedMs: number): number {
@@ -80,14 +100,31 @@ export function remainingSeconds(elapsedMs: number): number {
   return Math.ceil(remainingMs(elapsedMs) / 1000);
 }
 
+/** Apakah frame ini benar-benar memuat layar HP (bukan hanya ruangan). */
+export function hasScreen(frame: FrameLike | null | undefined): boolean {
+  if (!frame || typeof frame.brightRatio !== 'number') return false;
+  return frame.brightRatio >= SCREEN_BRIGHT_RATIO;
+}
+
 export function classifyFrame(sharpness: number): FrameQuality {
   if (sharpness >= GOOD_SHARPNESS) return 'good';
   if (sharpness >= FAIR_SHARPNESS) return 'fair';
   return 'poor';
 }
 
+/**
+ * Frame yang layak (layar HP terlihat) DAN cukup tajam.
+ *
+ * Keduanya diperlukan. Ketajaman saja tidak cukup karena ruangan penuh tekstur
+ * mendapat skor ketajaman lebih tinggi daripada struk; keberadaan layar saja
+ * tidak cukup karena layar bisa berada jauh atau buram.
+ */
+export function isFrameUsable(frame: FrameLike): boolean {
+  return hasScreen(frame) && classifyFrame(frame.sharpness) !== 'poor';
+}
+
 export function countGoodFrames(frames: FrameLike[]): number {
-  return (frames || []).filter((f) => classifyFrame(f.sharpness) === 'good').length;
+  return (frames || []).filter(isFrameUsable).length;
 }
 
 /**
@@ -96,15 +133,16 @@ export function countGoodFrames(frames: FrameLike[]): number {
  * Pengunjung perlu tahu apakah bingkainya sudah tepat: tanpa umpan balik, satu-
  * satunya tanda yang mereka lihat adalah kegagalan di akhir.
  */
-export function scanHint(quality: FrameQuality, hasAnyFrame: boolean): string {
-  if (!hasAnyFrame) return 'Arahkan bukti bayar (layar sukses) ke kamera';
-  switch (quality) {
+export function scanHint(frame: FrameLike | null, hasAnyFrame: boolean): string {
+  if (!hasAnyFrame || !frame) return 'Arahkan bukti bayar (layar sukses) ke kamera';
+  if (!hasScreen(frame)) return 'Layar HP belum terlihat — dekatkan ke area scan';
+  switch (classifyFrame(frame.sharpness)) {
     case 'good':
       return 'Bagus! Tahan sebentar, sedang membaca...';
     case 'fair':
       return 'Posisikan bukti bayar di dalam area scan';
     default:
-      return 'Dekatkan layar HP ke kamera, hindari pantulan cahaya';
+      return 'Tahan lebih stabil, gambar masih kurang tajam';
   }
 }
 
@@ -112,11 +150,13 @@ export function scanHint(quality: FrameQuality, hasAnyFrame: boolean): string {
  * Kapan frame dikirim ke vision service.
  *
  * Dua jalan keluar, sengaja keduanya ada:
- *  - cukup frame bagus  -> kirim lebih awal (pengunjung tidak menunggu sia-sia)
+ *  - cukup frame yang benar-benar memuat layar HP -> kirim lebih awal
  *  - jendela waktu habis -> kirim frame terbaik yang sempat terkumpul, supaya
- *    upaya pengunjung tidak dibuang hanya karena gambarnya tidak pernah "bagus".
+ *    upaya pengunjung tidak dibuang hanya karena gambarnya tidak sempurna.
  *
- * Tidak pernah mengirim tanpa satu pun frame: itu berarti kamera bermasalah.
+ * Ketajaman TIDAK dipakai sendiri untuk mempercepat: ruangan tanpa bukti bayar
+ * bisa bernilai ketajaman lebih tinggi daripada struk, dan itu pernah membuat
+ * pemindaian berhenti dalam ~1 detik walau tidak ada bukti bayar.
  */
 export function shouldSubmit(frames: FrameLike[], elapsedMs: number): boolean {
   if (!frames || frames.length === 0) return false;
