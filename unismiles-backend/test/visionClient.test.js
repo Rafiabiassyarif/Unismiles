@@ -16,9 +16,11 @@ test('tanpa konfigurasi apa pun, tidak jatuh ke localhost yang tidak ada', () =>
   assert.ok(!/localhost|127\.0\.0\.1/.test(url), `dapat ${url}`);
 });
 
-test('nilai default lama localhost:5001 ditolak', () => {
+test('alamat loopback ditolak di port berapa pun', () => {
+  // Loopback terisolasi per-site di server, jadi ini selalu salah.
   assert.strictEqual(pickVisionUrl(['http://localhost:5001']), DEFAULT_VISION_URL);
-  assert.strictEqual(pickVisionUrl(['http://127.0.0.1:5001']), DEFAULT_VISION_URL);
+  assert.strictEqual(pickVisionUrl(['http://127.0.0.1:5013']), DEFAULT_VISION_URL);
+  assert.strictEqual(pickVisionUrl(['http://localhost:5018']), DEFAULT_VISION_URL);
 });
 
 test('alamat sah dipakai apa adanya', () => {

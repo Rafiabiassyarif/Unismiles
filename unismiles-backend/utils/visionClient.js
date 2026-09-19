@@ -3,19 +3,21 @@
  *
  * PENTING soal alamat service.
  *
- * Versi lama hanya memakai `process.env.PAYMENT_VISION_SERVICE_URL` dengan
- * cadangan `http://localhost:5001`. Akibatnya fatal dan sempat terjadi di
- * produksi: `.env` site root kehilangan variabel itu (isinya hanya kredensial DB),
- * sehingga backend diam-diam menembak `localhost:5001` — alamat yang tidak ada di
- * server — dan setiap verifikasi pembayaran berakhir `INTERNAL_ERROR` walau
- * vision service sendiri sehat di domain publiknya.
+ * Setiap site KroomBox berjalan di jail-nya sendiri. Dari dalam backend,
+ * hasil pengukuran nyata di server:
+ *   127.0.0.1:5013          -> GAGAL (errno 111). Loopback terisolasi per-site,
+ *                             jadi "localhost" TIDAK menunjuk ke vision service.
+ *   payment-vision-node...  -> gagal dipanggil balik dari dalam (hairpin NAT).
+ *   192.168.100.185:5013    -> OPEN. Ini satu-satunya jalur yang bekerja.
  *
- * Karena itu alamat diambil dari beberapa sumber berurutan, dan domain publik
- * yang sudah terbukti hidup dipakai sebagai cadangan terakhir. Menaruh nilai yang
- * benar di `.env` tetap cara utama; cadangan ini hanya mencegah kegagalan total.
+ * Versi lama memakai `localhost:5001` sebagai cadangan, sehingga begitu
+ * PAYMENT_VISION_SERVICE_URL hilang dari .env, setiap verifikasi pembayaran
+ * berakhir INTERNAL_ERROR walaupun vision service sehat. Sekarang cadangannya
+ * alamat LAN yang terbukti hidup, jadi kesalahan konfigurasi tidak lagi
+ * mematikan pembayaran.
  */
 
-const DEFAULT_VISION_URL = 'https://payment-vision-node.uniinside.net';
+const DEFAULT_VISION_URL = 'http://192.168.100.185:5013';
 
 /** Ambil variabel pertama yang benar-benar terisi. */
 function firstNonEmpty(...values) {
@@ -27,15 +29,16 @@ function firstNonEmpty(...values) {
 }
 
 /**
- * Buang garis miring di akhir dan tolak alamat yang jelas tidak berguna.
- * `localhost:5001` adalah sisa nilai default lama; kalau itu yang dipakai berarti
- * konfigurasi hilang, jadi lebih baik jatuh ke domain publik daripada gagal total.
+ * Buang garis miring di akhir dan tolak alamat yang terbukti tidak bekerja.
+ *
+ * `localhost`/`127.0.0.1` ditolak karena loopback terisolasi per-site di server:
+ * mengarahkannya ke sana menjamin verifikasi gagal total.
  */
 function normalizeUrl(raw) {
   const text = String(raw || '').trim().replace(/\/+$/, '');
   if (!text) return '';
-  if (/^https?:\/\/localhost(?::5001)?$/i.test(text)) return '';
-  if (/^https?:\/\/127\.0\.0\.1(?::5001)?$/i.test(text)) return '';
+  if (/^https?:\/\/localhost(?::\d+)?$/i.test(text)) return '';
+  if (/^https?:\/\/127\.0\.0\.1(?::\d+)?$/i.test(text)) return '';
   return text;
 }
 
