@@ -22,28 +22,34 @@ function calculateReferenceHmac(referenceId) {
   return crypto.createHmac('sha256', secret).update(normalized).digest('hex');
 }
 
-// Check if merchant name matches configured aliases
+/**
+ * Cocokkan nama merchant pada bukti dengan profil pembayaran kiosk.
+ *
+ * Dipakai modul keputusan sebagai pemeriksaan PENDUKUNG: hanya relevan kalau
+ * nominal belum cocok. Nominal yang cocok persis sudah membuktikan pembayaran
+ * itu milik sesi ini, jadi nama merchant tidak boleh menggagalkannya.
+ */
 function matchMerchant(extractedMerchant, profile) {
-  if (!extractedMerchant) return false;
-  
+  if (!extractedMerchant || !profile) return false;
+
   const extracted = String(extractedMerchant).trim().toLowerCase();
-  
-  // Try matching with profile details
+  if (!extracted) return false;
+
   const merchantName = String(profile.merchant_name || '').trim().toLowerCase();
   const displayName = String(profile.display_name || '').trim().toLowerCase();
-  
+
   if (extracted === merchantName || extracted === displayName) return true;
 
-  // Check aliases from JSON payment_data
+  // Alias dari kolom JSON payment_data
   let paymentData = {};
   try {
-    paymentData = typeof profile.payment_data === 'string' 
-      ? JSON.parse(profile.payment_data) 
+    paymentData = typeof profile.payment_data === 'string'
+      ? JSON.parse(profile.payment_data)
       : profile.payment_data || {};
-  } catch (e) {}
+  } catch (e) { /* data rusak: anggap tidak ada alias */ }
 
-  const aliases = Array.isArray(paymentData.merchant_aliases) 
-    ? paymentData.merchant_aliases 
+  const aliases = Array.isArray(paymentData.merchant_aliases)
+    ? paymentData.merchant_aliases
     : [];
 
   return aliases.some(alias => String(alias).trim().toLowerCase() === extracted);
@@ -81,66 +87,52 @@ async function processVerificationInBackground(attemptId, sessionCode, kioskId, 
     const userId = kiosk[0]?.user_id;
     const profile = await PaymentProfile.findDefaultForKiosk(userId);
 
-    // Apply strict validation rules
-    // Ambang kualitas memakai skor frame asli dari vision service. Skor 0.18
-    // lama dipakai sebagai penanda tetap "OCR gagal total", bukan hasil ukur.
-    if (qualityScore < 0.35) {
-      reasonCodes.push('IMAGE_BLURRY');
-      decision = 'needs_retry';
-    }
-    
-    if (screenType !== 'receipt_detail') {
-      reasonCodes.push('DETAIL_SCREEN_REQUIRED');
-      decision = 'needs_retry';
-    }
-
-    if (extractedStatus !== 'success' && extractedStatus !== 'berhasil') {
-      reasonCodes.push('PAYMENT_NOT_SUCCESS');
-      decision = 'needs_retry';
-    }
-
+    // Nominal adalah bukti utama — keputusannya ada di SATU tempat.
+    //
+    // Modul utils/paymentDecision.js memegang seluruh aturannya supaya bisa diuji
+    // tanpa database, dan supaya tidak ada dua salinan yang bisa saling berbeda
+    // (dua salinan logika inilah yang menyebabkan bug berulang di alur ini).
+    //
+    // Ringkas aturannya: nominal cocok persis + struk tidak menyatakan gagal =
+    // verified. Pemeriksaan pendukung (kualitas gambar, jenis layar, kata
+    // "berhasil", nama merchant) TIDAK BOLEH menggagalkannya.
     const isStrictMatch = process.env.PAYMENT_STRICT_MATCH === 'true';
 
-    // Nominal adalah bukti utama: nominal kiosk sudah unik per transaksi
-    // (harga Admin + kode unik Rp1-Rp99). Kalau nominal terbaca persis dan
-    // status sukses, itu sudah cukup mencocokkan bukti ke sesi ini. Sisa
-    // alasan tidak boleh menggagalkan pembayaran yang sudah jelas benar.
     const amountMatches = Boolean(extractedAmount) && extractedAmount === Number(expectedAmount);
-    const paymentClearlyProven = amountMatches && (extractedStatus === 'success' || extractedStatus === 'berhasil');
 
-    if (isStrictMatch && !amountMatches) {
-      reasonCodes.push('AMOUNT_MISMATCH');
-      decision = 'needs_retry';
-    } else if (extractedAmount && !amountMatches) {
+    // Nomor referensi diperiksa lebih dulu: anti-replay berlaku selalu.
+    const referenceHmac = calculateReferenceHmac(referenceId);
+    let duplicateReference = false;
+    if (referenceHmac) {
+      const duplicateAttempt = await PaymentVerificationModel.findByReferenceHmac(referenceHmac);
+      duplicateReference = Boolean(duplicateAttempt);
+    }
+
+    const verdict = decideVerification({
+      extractedAmount,
+      expectedAmount,
+      extractedStatus: fields.status?.value,
+      qualityScore,
+      screenType,
+      strictMatch: isStrictMatch,
+      duplicateReference,
+      merchantMatches: matchMerchant(extractedMerchant, profile),
+    });
+
+    reasonCodes.push(...verdict.reasonCodes);
+    decision = verdict.decision;
+
+    // Catatan mode uji (pencocokan tidak ketat): nominal berbeda masih dicatat
+    // supaya mudah ditelusuri saat penyetelan.
+    if (!isStrictMatch && extractedAmount && !amountMatches) {
       console.log(`[Testing Mode] Extracted amount Rp ${extractedAmount} accepted (Expected: Rp ${expectedAmount})`);
     }
 
-    const hasConfiguredMerchant = profile && (profile.merchant_name || profile.display_name);
-    if (isStrictMatch && !paymentClearlyProven && hasConfiguredMerchant && !matchMerchant(extractedMerchant, profile)) {
-      reasonCodes.push('MERCHANT_MISMATCH');
-      decision = 'needs_retry';
-    }
-
-    const referenceHmac = calculateReferenceHmac(referenceId);
-    if (referenceHmac) {
-      const duplicateAttempt = await PaymentVerificationModel.findByReferenceHmac(referenceHmac);
-      if (duplicateAttempt) {
-        reasonCodes.push('DUPLICATE_REFERENCE');
-        decision = 'rejected';
-      }
-    } else if (!paymentClearlyProven) {
-      // Tanpa nominal yang cocok, nomor referensi adalah satu-satunya pengaman
-      // anti-pemakaian-ulang. Kalau nominal sudah cocok persis, bukti ini tetap
-      // sah walaupun nomor referensinya tidak terbaca.
-      reasonCodes.push('LOW_CONFIDENCE');
-      decision = 'needs_retry';
-    }
-
-    // Check freshness of the receipt (only enforced in strict production mode)
-    if (isStrictMatch && !paymentClearlyProven && extractedPaidAt) {
+    // Kesegaran struk hanya relevan kalau bukti belum kuat.
+    if (isStrictMatch && decision !== 'verified' && extractedPaidAt) {
       const paidTime = new Date(extractedPaidAt);
       const now = new Date();
-      // Must be paid within the last 1 hour
+      // Harus dibayar dalam 1 jam terakhir
       if (Math.abs(now - paidTime) > 60 * 60 * 1000) {
         reasonCodes.push('STALE_RECEIPT');
         decision = 'rejected';

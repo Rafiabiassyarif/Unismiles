@@ -36,9 +36,15 @@ test('nomor percobaan tetap dihitung untuk pelacakan', () => {
 });
 
 // Anti-replay TIDAK boleh ikut dimatikan: itu pengaman pemakaian ulang bukti.
+// Pemeriksaannya kini ada di utils/paymentDecision.js (satu tempat), dan controller
+// menyerahkan hasilnya lewat flag duplicateReference.
 test('anti-replay tetap berlaku walau batas percobaan dimatikan', () => {
-  assert.match(source, /DUPLICATE_REFERENCE/, 'bukti yang sama tidak boleh dipakai dua kali');
-  assert.match(source, /referenceHmac/, 'pemeriksaan nomor referensi harus tetap ada');
+  assert.match(source, /duplicateReference/, 'controller harus meneruskan status duplikat');
+  assert.match(source, /findByReferenceHmac/, 'pemeriksaan nomor referensi harus tetap ada');
+  const decisionSource = fs.readFileSync(
+    path.join(__dirname, '..', 'utils', 'paymentDecision.js'), 'utf8'
+  );
+  assert.match(decisionSource, /DUPLICATE_REFERENCE/, 'keputusan duplikat harus tetap ada');
 });
 
 // Pengaman ukuran unggahan tetap ada supaya memori server aman.
