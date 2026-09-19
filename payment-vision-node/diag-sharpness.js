@@ -1,28 +1,36 @@
 /**
- * diag-sharpness.js — ukur nilai ketajaman frame kamera NYATA.
+ * diag-sharpness.js — periksa apakah sebuah frame kamera layak dibaca.
  *
- * Dugaan: optimasi "kirim lebih awal kalau bukti bayar sudah jelas" memakai
- * variance Laplacian sebagai ukuran. Kamera yang diarahkan ke ruangan biasa
- * (banyak tekstur) juga punya variance tinggi, sehingga dianggap "jelas" padahal
- * tidak ada bukti bayar sama sekali. Akibatnya pemindaian berhenti dalam ~1 detik.
+ * Latar belakang: dulu "berhenti memindai lebih awal" hanya memakai ketajaman
+ * (variance Laplacian). Pengukuran pada frame nyata membuktikan ukuran itu
+ * TERBALIK:
+ *   kamera menghadap ruangan, TANPA bukti bayar -> ketajaman 1694-1955
+ *   kamera menghadap struk                      -> ketajaman 590
+ * Ruangan penuh tekstur menang, jadi pemindaian berhenti dalam ~1 detik walau
+ * tidak ada bukti bayar.
  *
- * Skrip ini memakai algoritma yang sama persis dengan measureSharpness di
- * PhotoBooth.tsx, dijalankan pada frame kamera nyata.
+ * Aturan yang benar (sama dengan services/scanWindow.ts) butuh DUA syarat:
+ *   ada layar HP (bagian piksel terang) DAN gambar cukup tajam.
+ *
+ * Skrip ini memakai aturan itu supaya bisa dipakai memeriksa foto asli dari
+ * lapangan. Jalankan: node diag-sharpness.js <foto.jpg> [foto2.jpg ...]
  */
 const fs = require('fs');
 const path = require('path');
 const jpeg = require('jpeg-js');
 
-/** Samakan dengan GOOD_SHARPNESS / FAIR_SHARPNESS di services/scanWindow.ts. */
+/** Samakan dengan services/scanWindow.ts. */
 const GOOD_SHARPNESS = 300;
 const FAIR_SHARPNESS = 120;
+const SCREEN_BRIGHT_RATIO = 0.12;
+/** Ambang luminance untuk menganggap piksel termasuk layar HP. */
+const BRIGHT_LUMINANCE = 180;
 
 /** Salinan measureSharpness dari PhotoBooth.tsx (downscale 240 px + Laplacian). */
 function measureSharpness(rgba, sourceWidth, sourceHeight) {
   const w = 240;
   const h = Math.max(1, Math.round((sourceHeight / sourceWidth) * w));
 
-  // Downscale bilinear sederhana ke lebar 240 px.
   const lum = new Float32Array(w * h);
   for (let y = 0; y < h; y += 1) {
     const sy = Math.min(sourceHeight - 1, Math.floor((y * sourceHeight) / h));
@@ -50,42 +58,46 @@ function measureSharpness(rgba, sourceWidth, sourceHeight) {
   return Math.max(0, sumSq / count - mean * mean);
 }
 
-/** Bagian piksel yang terang: indikasi ada layar HP di dalam frame. */
-function brightRatio(rgba, width, height, threshold = 180) {
+/** Salinan measureBrightRatio dari PhotoBooth.tsx. */
+function measureBrightRatio(rgba, width, height) {
   let bright = 0;
   let total = 0;
-  for (let i = 0; i < width * height; i += 3) {
-    const l = 0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2];
-    if (l >= threshold) bright += 1;
+  for (let i = 0; i < width * height; i += 1) {
+    const off = i * 4;
+    const l = 0.299 * rgba[off] + 0.587 * rgba[off + 1] + 0.114 * rgba[off + 2];
+    if (l >= BRIGHT_LUMINANCE) bright += 1;
     total += 1;
   }
   return bright / Math.max(1, total);
 }
 
-function classify(sharpness) {
-  if (sharpness >= GOOD_SHARPNESS) return 'good  (memicu kirim lebih awal)';
-  if (sharpness >= FAIR_SHARPNESS) return 'fair';
-  return 'poor';
+/** Aturan sama dengan isFrameUsable di scanWindow.ts. */
+function verdict(sharpness, brightRatio) {
+  const screen = brightRatio >= SCREEN_BRIGHT_RATIO;
+  if (!screen) return 'BUKAN layar — scan lanjut, tidak dipercepat';
+  if (sharpness < FAIR_SHARPNESS) return 'layar terlihat, tapi terlalu buram';
+  if (sharpness < GOOD_SHARPNESS) return 'layar terlihat, cukup tajam';
+  return 'layak dipercepat';
 }
 
 const files = process.argv.slice(2);
-let triggered = 0;
+if (files.length === 0) {
+  console.error('pakai: node diag-sharpness.js <foto.jpg> [foto2.jpg ...]');
+  process.exit(1);
+}
 
+let usable = 0;
 for (const file of files) {
   const decoded = jpeg.decode(fs.readFileSync(file), { useTArray: true });
   const sharpness = measureSharpness(decoded.data, decoded.width, decoded.height);
-  const bright = brightRatio(decoded.data, decoded.width, decoded.height);
-  const verdict = classify(sharpness);
-  if (sharpness >= GOOD_SHARPNESS) triggered += 1;
+  const bright = measureBrightRatio(decoded.data, decoded.width, decoded.height);
+  const v = verdict(sharpness, bright);
+  if (v === 'layak dipercepat') usable += 1;
   console.log(
     `${path.basename(file).padEnd(22)} ketajaman=${String(Math.round(sharpness)).padStart(6)} ` +
-    `terang=${(bright * 100).toFixed(1)}%  -> ${verdict}`
+    `terang=${(bright * 100).toFixed(1).padStart(5)}%  -> ${v}`
   );
 }
 
-console.log(`\n${files.length} frame diuji, ${triggered} di antaranya dianggap "jelas"`);
-if (triggered > 0) {
-  console.log('KESIMPULAN: ambang memicu kirim-lebih-awal pada frame TANPA bukti bayar.');
-} else {
-  console.log('KESIMPULAN: ambang tidak salah picu pada frame ini.');
-}
+console.log(`\n${files.length} frame diuji, ${usable} layak dipercepat`);
+console.log('(frame yang tidak layak membuat pemindaian lanjut sampai jendela waktu habis)');
