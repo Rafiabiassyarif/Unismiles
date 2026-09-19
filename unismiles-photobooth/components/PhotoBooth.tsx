@@ -13,7 +13,7 @@ import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
   SUBMIT_POLL_TIMEOUT_MS, SUBMIT_POLL_INTERVAL_MS,
   keepBestFrames, orderFramesForUpload, shouldSubmitBatch,
-  scanStatusText, CHECKING_TEXT,
+  scanStatusText, CHECKING_TEXT, isSettledDecision, isServiceFailure,
   guideFrameStyle, SCAN_GUIDE,
 } from '../services/scanWindow';
 import {
@@ -1663,8 +1663,17 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   /**
    * Kirim satu batch, lalu tunggu penilaiannya.
    *
-   * Dipakai oleh loop pemindaian. Mengembalikan keputusan supaya pemanggil bisa
-   * memutuskan: lanjut memindai, atau berhenti karena hasilnya final.
+   * PENTING soal keputusan backend. Backend mengembalikan pasangan status+decision:
+   *   verified      -> status 'verified', decision 'verified'
+   *   belum terbaca -> status 'failed',   decision 'needs_retry'
+   *   ditolak       -> status 'rejected', decision 'rejected'
+   *   layanan gagal -> status 'error',    decision 'manual_review'   <-- mudah terlewat
+   *
+   * Versi sebelumnya hanya mengenali decision 'error', padahal backend menulis
+   * 'manual_review'. Keputusan itu jadi tidak dikenali, loop menunggu sampai
+   * penjaga waktu habis (20 detik) baru mengulang. Terukur di produksi: tiap
+   * percobaan berjarak 24 detik, jadi 4 percobaan memakan ~96 detik tanpa
+   * kemajuan — pengunjung melihat "scan lama sekali".
    */
   const submitAndAwaitDecision = useCallback(async (
     frames: Blob[],
@@ -1672,7 +1681,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   ): Promise<{ verified: boolean; reasonCodes: string[]; error?: string }> => {
     setVerificationStatus('processing');
     setScanActive(false);
-    setScanningHint('Memeriksa bukti pembayaran...');
+    setScanningHint(CHECKING_TEXT);
 
     let attemptId: string;
     try {
@@ -1692,28 +1701,31 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
       try {
         const data = await getPaymentVerificationStatus(sessionCode, attemptId);
-        const decision = String(data.decision || data.status || '');
+        const decision = String(data.decision || '').toLowerCase();
+        const status = String(data.status || '').toLowerCase();
+        const reasonCodes: string[] = Array.isArray(data.reason_codes) ? data.reason_codes : [];
 
-        if (decision === 'verified') return { verified: true, reasonCodes: [] };
+        // Belum ada keputusan: statusnya masih diproses. Lanjut menunggu.
+        if (!isSettledDecision(decision, status)) continue;
 
-        // Ditolak = final (bukti tidak sah / sudah dipakai). Mengulang tidak
-        // menolong karena ini bukan soal posisi kamera.
+        if (decision === 'verified' || status === 'verified') {
+          return { verified: true, reasonCodes: [] };
+        }
+
+        // Layanan pemeriksaan gagal (status 'error' + decision 'manual_review'):
+        // mengulang cepat tidak menolong, jadi hentikan dan jelaskan. Tanpa cabang
+        // ini, keputusan manual_review tidak dikenali dan loop menunggu sia-sia.
+        if (isServiceFailure(decision, status, reasonCodes)) {
+          return { verified: false, reasonCodes: reasonCodes.length ? reasonCodes : ['INTERNAL_ERROR'], error: 'INTERNAL_ERROR' };
+        }
+
+        // Bukti ditolak sebagai tidak sah / sudah dipakai: final.
         if (decision === 'rejected') {
-          return { verified: false, reasonCodes: data.reason_codes || [] };
+          return { verified: false, reasonCodes };
         }
 
-        // Belum terbaca jelas: pemanggil akan lanjut memindai.
-        if (decision === 'needs_retry') {
-          return { verified: false, reasonCodes: data.reason_codes || [] };
-        }
-
-        if (decision === 'error') {
-          return {
-            verified: false,
-            reasonCodes: data.reason_codes || ['INTERNAL_ERROR'],
-            error: 'INTERNAL_ERROR',
-          };
-        }
+        // needs_retry dan sisanya: pemanggil akan lanjut memindai.
+        return { verified: false, reasonCodes };
       } catch (err) {
         console.error('Polling status error:', err);
       }
@@ -1876,7 +1888,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         setScanActive(false);
         setVerificationStatus('needs_retry');
         setVerificationReasonCodes(result.reasonCodes);
-        setFlowError('Layanan pemeriksaan bukti bayar sedang bermasalah. Tekan "Coba Scan Lagi".');
+        // Jelaskan apa adanya: ini bukan soal posisi bukti bayar, jadi jangan
+        // menyuruh pengunjung mengatur posisi lagi.
+        setFlowError('Layanan pemeriksaan bukti bayar sedang bermasalah di server. Tekan "Coba Scan Lagi" atau hubungi petugas.');
         return;
       }
 

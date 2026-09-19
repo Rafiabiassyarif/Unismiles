@@ -9,7 +9,7 @@ import {
   MAX_FRAMES_TO_SEND, MAX_SUBMIT_ROUNDS,
   SUBMIT_POLL_TIMEOUT_MS, SUBMIT_POLL_INTERVAL_MS,
   shouldSubmitBatch, keepBestFrames, orderFramesForUpload,
-  scanStatusText, CHECKING_TEXT,
+  scanStatusText, CHECKING_TEXT, isSettledDecision, isServiceFailure,
   SCAN_GUIDE, guideFrameStyle,
 } from './scanWindow.ts';
 
@@ -55,6 +55,52 @@ test('status yang ditampilkan jujur dan menyebut percobaan ke-berapa', () => {
   assert.match(afterFail, /Belum terbaca/i, 'akui belum terbaca, jangan mengklaim berhasil');
   assert.match(afterFail, new RegExp(`2/${MAX_SUBMIT_ROUNDS}`), 'tunjukkan percobaan berjalan');
   assert.match(CHECKING_TEXT, /Sedang membaca/i);
+});
+
+// ---------------------------------------------------------------------------
+// Keputusan backend: pasangan status+decision tidak seragam, jangan sampai
+// ada nilai yang tidak dikenali. Bug nyata: 'manual_review' terlewat sehingga
+// tiap percobaan menunggu 20 detik sia-sia (terukur 24 detik per percobaan).
+// ---------------------------------------------------------------------------
+
+test('semua keputusan final backend dikenali', () => {
+  // verified
+  assert.strictEqual(isSettledDecision('verified', 'verified'), true);
+  // belum terbaca
+  assert.strictEqual(isSettledDecision('needs_retry', 'failed'), true);
+  // ditolak
+  assert.strictEqual(isSettledDecision('rejected', 'rejected'), true);
+  // layanan gagal -> inilah yang dulu terlewat
+  assert.strictEqual(isSettledDecision('manual_review', 'error'), true);
+  // masih diproses
+  assert.strictEqual(isSettledDecision('processing', 'received'), false);
+  assert.strictEqual(isSettledDecision('', ''), false);
+  assert.strictEqual(isSettledDecision(undefined, undefined), false);
+});
+
+test('manual_review dikenali sebagai kegagalan layanan', () => {
+  assert.strictEqual(isServiceFailure('manual_review', 'error', ['INTERNAL_ERROR']), true);
+  // Hanya statusnya yang error, decision kosong
+  assert.strictEqual(isServiceFailure('', 'error', []), true);
+  // Reason code menandai kegagalan internal
+  assert.strictEqual(isServiceFailure('needs_retry', 'failed', ['INTERNAL_ERROR']), true);
+  // Belum terbaca bukan kegagalan layanan
+  assert.strictEqual(isServiceFailure('needs_retry', 'failed', ['IMAGE_BLURRY']), false);
+  assert.strictEqual(isServiceFailure('rejected', 'rejected', ['DUPLICATE_REFERENCE']), false);
+});
+
+test('komponen memakai fungsi keputusan bersama, bukan logika sebaris', () => {
+  assert.match(componentSource, /isSettledDecision\(decision, status\)/);
+  assert.match(componentSource, /isServiceFailure\(decision, status, reasonCodes\)/);
+  assert.ok(
+    !/decision === 'manual_review'/.test(componentSource),
+    'jangan menyalin logika keputusan di komponen'
+  );
+});
+
+test('pesan kegagalan layanan tidak menyalahkan posisi bukti bayar', () => {
+  assert.match(componentSource, /bermasalah di server/,
+    'jelaskan bahwa masalahnya di server, bukan posisi kamera');
 });
 
 // ---------------------------------------------------------------------------

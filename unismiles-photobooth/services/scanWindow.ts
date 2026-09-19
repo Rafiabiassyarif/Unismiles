@@ -109,7 +109,7 @@ export function orderFramesForUpload<T extends FrameLike>(frames: T[]): T[] {
  * Pesan status yang HONEST — tidak mengklaim sesuatu yang tidak kita ketahui.
  *
  * Tidak ada lagi "terbaca jelas" / "tangkapan bagus", karena kita memang tidak
- * bisa tahu dari gambar. Yang bisa dikatakan hanya apa yang sedang terjadi.
+ * bisa menilai keterbacaan dari gambar (dua metrik sudah terbukti menipu).
  */
 export function scanStatusText(rounds: number, maxRounds: number): string {
   if (rounds <= 0) return 'Arahkan bukti bayar (layar sukses) ke kamera';
@@ -118,3 +118,33 @@ export function scanStatusText(rounds: number, maxRounds: number): string {
 
 /** Pesan saat sedang memeriksa. */
 export const CHECKING_TEXT = 'Sedang membaca bukti bayar...';
+
+/**
+ * Apakah ini keputusan yang sudah final dari backend.
+ *
+ * Backend memakai pasangan status+decision, dan nilainya TIDAK seragam:
+ *   verified      -> status 'verified', decision 'verified'
+ *   belum terbaca -> status 'failed',   decision 'needs_retry'
+ *   ditolak       -> status 'rejected', decision 'rejected'
+ *   layanan gagal -> status 'error',    decision 'manual_review'
+ *
+ * `manual_review` mudah terlewat: versi lama hanya memeriksa decision 'error',
+ * sehingga keputusan ini tidak dikenali, loop menunggu sampai penjaga waktu habis
+ * (20 detik) lalu mengulang tanpa kemajuan. Terukur di produksi: tiap percobaan
+ * berjarak 24 detik, jadi 4 percobaan ≈ 96 detik dan pengunjung melihat "scan
+ * lama sekali" padahal tidak ada perubahan apa pun.
+ */
+export function isSettledDecision(decision: unknown, status: unknown): boolean {
+  const d = String(decision || '').toLowerCase();
+  const s = String(status || '').toLowerCase();
+  return d === 'verified' || d === 'rejected' || d === 'needs_retry' || d === 'manual_review'
+    || s === 'verified' || s === 'error' || s === 'rejected';
+}
+
+/** Apakah keputusan ini berarti layanan pemeriksaan gagal (bukan soal posisi kamera). */
+export function isServiceFailure(decision: unknown, status: unknown, reasonCodes: unknown): boolean {
+  const d = String(decision || '').toLowerCase();
+  const s = String(status || '').toLowerCase();
+  const codes = Array.isArray(reasonCodes) ? reasonCodes : [];
+  return s === 'error' || d === 'manual_review' || codes.includes('INTERNAL_ERROR');
+}
