@@ -1,94 +1,70 @@
 /**
  * Kebijakan pemindaian bukti bayar.
  *
- * Model yang dipakai sekarang: TIDAK ADA BATAS WAKTU.
+ * PELAJARAN PENTING — jangan ulangi kesalahan ini.
  *
- * Prinsipnya: kalau tangkapannya sudah benar, di situ berarti berhasil dan
- * pengunjung lanjut ke halaman berikutnya. Tidak ada "gagal karena waktu habis",
- * jadi pengunjung boleh mengatur posisi sesuka hatinya.
+ * Dua kali sebelumnya "kualitas gambar" dipakai sebagai ukuran keberhasilan, dan
+ * dua-duanya menipu:
+ *   1. Ketajaman (variance Laplacian). Diukur di kamera nyata: ruangan kosong
+ *      1694-1955, struk 590. Ruangan kosong justru menang, jadi sistem
+ *      menyimpulkan "sudah jelas" padahal tidak ada bukti bayar.
+ *   2. Kecerahan (bagian piksel terang). Diukur di Mac: struk 97%, ruangan 1,6%.
+ *      Tetapi pada kamera kiosk yang menghadap lingkungan terang, ambang ini
+ *      lolos TANPA bukti bayar. Ditambah lagi diukur setelah filter
+ *      kontras/kecerahan diterapkan, sehingga semakin bias ke terang.
  *
- * Ini sekaligus menghapus sumber masalah sebelumnya. Dulu pemindaian dibatasi
- * 15 detik lalu dikirim sekali; akibatnya salah menilai "sudah jelas" membuat
- * pengunjung kehilangan kesempatan (keluhan: "ngescan cepat banget, ngatur
- * posisi aja susah"). Sekarang kirim terlalu awal tidak merugikan: hasilnya
- * dievaluasi, kalau belum cocok pemindaian LANJUT lagi tanpa menghukum siapa pun.
+ * Kesimpulan: dari gambar saja, kita TIDAK bisa tahu apakah bukti bayar terbaca
+ * atau tidak. Satu-satunya sumber kebenaran adalah hasil OCR dari backend.
  *
- * Dipisah dari komponen supaya bisa diuji tanpa browser.
+ * Karena itu kebijakan di sini sengaja bodoh:
+ *   - Kirim batch secara berkala (tidak menunggu "kelihatan bagus").
+ *   - Berhasil = backend bilang nominalnya cocok. Titik.
+ *   - Tidak ada klaim "terbaca jelas" ke pengunjung, karena kita tidak tahu.
+ *
+ * Efek sampingnya justru menyelesaikan keluhan "lama sekali ngescan": pengiriman
+ * berjalan dengan tempo tetap dan berhenti pada keputusan final, bukan berputar
+ * mengejar kondisi gambar yang mungkin tidak pernah tercapai.
  */
 
-/** Jeda antar percobaan frame. Cukup cepat agar terasa real-time. */
+/** Jeda antar pengambilan frame. */
 export const SCAN_FRAME_GAP_MS = 400;
 
 /**
- * Jeda sebelum frame pertama diambil, sejak layar pemindaian terbuka.
- *
- * Kamera butuh waktu menyesuaikan exposure, dan pengunjung butuh waktu sejenak
- * mengangkat HP ke depan lensa.
+ * Jeda sebelum frame pertama diambil, sejak layar terbuka.
+ * Kamera butuh menyesuaikan exposure, dan pengunjung butuh waktu mengangkat HP.
  */
 export const SCAN_READ_DELAY_MS = 1500;
 
-/** Batas frame per kiriman, supaya unggahan dan OCR tetap ringan. */
-export const MAX_FRAMES_TO_SEND = 6;
-
 /**
- * Cukup frame layak sebelum satu batch dikirim untuk dinilai.
+ * Tempo pengiriman batch ke backend.
  *
- * Dua, bukan satu: satu frame bisa kebetulan lolos penilaian padahal gambarnya
- * tidak mewakili. Karena tidak ada batas waktu, menunggu frame kedua tidak
- * merugikan pengunjung.
+ * Dikirim berkala supaya ada kemajuan pasti, tanpa menunggu kondisi gambar yang
+ * tidak bisa dipercaya. 2,5 detik cukup untuk mengumpulkan beberapa frame dan
+ * cukup cepat terasa responsif.
  */
-export const TARGET_USABLE_FRAMES = 2;
+export const SUBMIT_INTERVAL_MS = 2500;
+
+/** Jumlah frame yang disimpan per batch, supaya unggahan dan OCR tetap ringan. */
+export const MAX_FRAMES_TO_SEND = 4;
 
 /**
- * Batas jumlah kiriman per sesi.
+ * Batas jumlah pengiriman per sesi.
  *
- * Backend membatasi 6 percobaan per sesi. Sisakan dua untuk tombol "Coba Scan
- * Lagi", supaya pengunjung tidak bisa mengunci dirinya sendiri di jalan buntu.
+ * Backend membatasi 6 percobaan per sesi. Sisakan dua untuk tombol
+ * "Coba Scan Lagi", supaya pengunjung tidak bisa mengunci diri di jalan buntu.
  */
 export const MAX_SUBMIT_ROUNDS = 4;
 
-/**
- * Batas menunggu jawaban vision service untuk satu kiriman.
- *
- * Ini BUKAN batas waktu pengunjung: ini hanya menjaga agar layar tidak
- * menggantung selamanya kalau layanan OCR bermasalah.
- */
-export const SUBMIT_POLL_TIMEOUT_MS = 25_000;
-
-/** Jeda antar frame saat menunggu jawaban, supaya UI tetap responsif. */
+/** Penjaga agar layar tidak menggantung kalau layanan OCR bermasalah. */
+export const SUBMIT_POLL_TIMEOUT_MS = 20_000;
 export const SUBMIT_POLL_INTERVAL_MS = 1000;
-
-/**
- * Ambang ketajaman (variance Laplacian).
- *
- * PENTING: nilai ini HANYA untuk memberi tahu pengunjung apakah gambar sudah
- * jelas, dan dipasangkan dengan deteksi keberadaan layar.
- *
- * Pengukuran pada frame kamera nyata menunjukkan ukuran ini tidak bisa berdiri
- * sendiri:
- *   kamera menghadap ruangan, TANPA bukti bayar -> ketajaman 1694-1955
- *   kamera menghadap struk                      -> ketajaman 590
- * Ruangan penuh tekstur justru bernilai lebih tinggi, jadi ketajaman saja pernah
- * membuat sistem menyimpulkan "sudah jelas" padahal tidak ada bukti bayar.
- */
-export const GOOD_SHARPNESS = 300;
-export const FAIR_SHARPNESS = 120;
-
-/**
- * Bagian piksel yang terang. Penanda yang benar untuk "ada layar HP di depan
- * kamera": diukur pada frame nyata, menghadap struk = 97% piksel terang,
- * menghadap ruangan = 1,6%.
- */
-export const SCREEN_BRIGHT_RATIO = 0.12;
 
 /**
  * Geometri bingkai panduan yang DIGAMBAR di layar.
  *
- * Murni panduan visual supaya pengunjung tahu kira-kira di mana meletakkan HP.
- * Ini BUKAN area yang dipotong dari kamera: memotong berdasarkan tebakan posisi
- * pernah membuat 63% area kamera terbuang dan struk terpotong, jadi frame
- * dikirim utuh dan pemotongan dilakukan di vision service lewat deteksi area
- * terang.
+ * Murni panduan visual. Ini BUKAN area yang dipotong dari kamera: memotong
+ * berdasarkan tebakan posisi pernah membuat 63% area kamera terbuang dan struk
+ * terpotong. Frame dikirim utuh; pemotongan dilakukan di vision service.
  */
 export const SCAN_GUIDE = {
   widthRatio: 0.62,
@@ -103,82 +79,42 @@ export function guideFrameStyle(): { width: string; height: string } {
   };
 }
 
-export type FrameQuality = 'good' | 'fair' | 'poor';
-
 export interface FrameLike {
   sharpness: number;
-  /** Bagian piksel terang (0-1). Ada layar HP di depan kamera kalau nilainya tinggi. */
-  brightRatio?: number;
-}
-
-/** Apakah frame ini benar-benar memuat layar HP (bukan hanya ruangan). */
-export function hasScreen(frame: FrameLike | null | undefined): boolean {
-  if (!frame || typeof frame.brightRatio !== 'number') return false;
-  return frame.brightRatio >= SCREEN_BRIGHT_RATIO;
-}
-
-export function classifyFrame(sharpness: number): FrameQuality {
-  if (sharpness >= GOOD_SHARPNESS) return 'good';
-  if (sharpness >= FAIR_SHARPNESS) return 'fair';
-  return 'poor';
 }
 
 /**
- * Frame yang layak (layar HP terlihat) DAN cukup tajam.
+ * Apakah sudah waktunya mengirim batch.
  *
- * Dua syarat, keduanya perlu: ketajaman saja menipu (lihat catatan
- * GOOD_SHARPNESS), sedangkan keberadaan layar saja tidak cukup karena layar bisa
- * jauh atau buram.
+ * Hanya berbasis jumlah frame dan waktu — TIDAK ada penilaian kualitas gambar,
+ * karena itu terbukti tidak bisa dipercaya.
  */
-export function isFrameUsable(frame: FrameLike): boolean {
-  return hasScreen(frame) && classifyFrame(frame.sharpness) !== 'poor';
+export function shouldSubmitBatch(frames: FrameLike[], msSinceLastSubmit: number): boolean {
+  if (!frames || frames.length === 0) return false;
+  return msSinceLastSubmit >= SUBMIT_INTERVAL_MS;
 }
 
-export function countGoodFrames(frames: FrameLike[]): number {
-  return (frames || []).filter(isFrameUsable).length;
-}
-
-/**
- * Apakah batch sekarang sudah layak dikirim untuk dinilai.
- *
- * Karena tidak ada batas waktu, hanya ini yang menentukan kapan kirim. Tidak ada
- * jalur "gagal karena kehabisan waktu".
- */
-export function shouldSubmitBatch(frames: FrameLike[]): boolean {
-  return countGoodFrames(frames) >= TARGET_USABLE_FRAMES;
-}
-
-/**
- * Pesan panduan sesuai kondisi gambar saat ini.
- *
- * Pengunjung perlu tahu apakah bingkainya sudah tepat: tanpa umpan balik, satu-
- * satunya tanda yang mereka lihat adalah kegagalan di akhir.
- */
-export function scanHint(frame: FrameLike | null, hasAnyFrame: boolean): string {
-  if (!hasAnyFrame || !frame) return 'Arahkan bukti bayar (layar sukses) ke kamera';
-  if (!hasScreen(frame)) return 'Layar HP belum terlihat — dekatkan ke area scan';
-  switch (classifyFrame(frame.sharpness)) {
-    case 'good':
-      return 'Tangkapan bagus! Memeriksa bukti bayar...';
-    case 'fair':
-      return 'Posisikan bukti bayar di dalam area scan';
-    default:
-      return 'Tahan lebih stabil, gambar masih kurang tajam';
-  }
-}
-
-/**
- * Simpan hanya N frame terbaik menurut ketajaman.
- *
- * Pemindaian berjalan terus-menerus, jadi tanpa pembatasan ini ratusan frame
- * akan menumpuk di memori dan ikut terunggah.
- */
+/** Simpan hanya N frame terbaik menurut ketajaman, supaya memori terkendali. */
 export function keepBestFrames<T extends FrameLike>(frames: T[], incoming: T, max = MAX_FRAMES_TO_SEND): T[] {
   const next = [...(frames || []), incoming].sort((a, b) => b.sharpness - a.sharpness);
   return next.slice(0, max);
 }
 
-/** Frame dikirim paling tajam lebih dulu, sisanya sebagai cadangan. */
+/** Frame paling tajam dikirim lebih dulu, sisanya sebagai cadangan. */
 export function orderFramesForUpload<T extends FrameLike>(frames: T[]): T[] {
   return [...(frames || [])].sort((a, b) => b.sharpness - a.sharpness);
 }
+
+/**
+ * Pesan status yang HONEST — tidak mengklaim sesuatu yang tidak kita ketahui.
+ *
+ * Tidak ada lagi "terbaca jelas" / "tangkapan bagus", karena kita memang tidak
+ * bisa tahu dari gambar. Yang bisa dikatakan hanya apa yang sedang terjadi.
+ */
+export function scanStatusText(rounds: number, maxRounds: number): string {
+  if (rounds <= 0) return 'Arahkan bukti bayar (layar sukses) ke kamera';
+  return `Belum terbaca — tahan bukti bayar di area scan (percobaan ${rounds + 1}/${maxRounds})`;
+}
+
+/** Pesan saat sedang memeriksa. */
+export const CHECKING_TEXT = 'Sedang membaca bukti bayar...';

@@ -12,8 +12,8 @@ import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/i
 import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
   SUBMIT_POLL_TIMEOUT_MS, SUBMIT_POLL_INTERVAL_MS,
-  classifyFrame, scanHint, keepBestFrames, orderFramesForUpload,
-  shouldSubmitBatch,
+  keepBestFrames, orderFramesForUpload, shouldSubmitBatch,
+  scanStatusText, CHECKING_TEXT,
   guideFrameStyle, SCAN_GUIDE,
 } from '../services/scanWindow';
 import {
@@ -80,19 +80,6 @@ const SIGNAGE_HOME_URL = SIGNAGE_URL;
 // pengunjung apakah posisinya sudah tepat; keputusan berhasil/gagal diambil
 // vision service dari teks yang benar-benar terbaca.
 
-// Label & warna indikator mutu bingkai di layar pemindaian, supaya pengunjung
-// tahu apakah posisi bukti bayarnya sudah tepat.
-const SCAN_QUALITY_LABELS: Record<'good' | 'fair' | 'poor', string> = {
-  good: 'Terbaca jelas',
-  fair: 'Cukup jelas',
-  poor: 'Cari posisi',
-};
-
-const SCAN_QUALITY_STYLES: Record<'good' | 'fair' | 'poor', string> = {
-  good: 'border-emerald-400/60 text-emerald-300 bg-emerald-500/15',
-  fair: 'border-amber-400/60 text-amber-300 bg-amber-500/15',
-  poor: 'border-white/25 text-white/70 bg-white/10',
-};
 
 interface PersistedPrintJob {
   sessionCode: string;
@@ -882,7 +869,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   // Status pemindaian otomatis di layar pembayaran. Tidak ada hitungan waktu:
   // pemindaian berjalan sampai tangkapannya bagus dan buktinya terverifikasi.
   const [scanActive, setScanActive] = useState<boolean>(false);
-  const [scanQuality, setScanQuality] = useState<'good' | 'fair' | 'poor'>('poor');
+  // Percobaan ke-berapa, ditampilkan apa adanya supaya pengunjung tahu
+  // sistem masih mencoba (bukan mengklaim gambar sudah bagus).
+  const [submitRound, setSubmitRound] = useState<number>(0);
   // Keep email sending and the automatic upload on the same promise. Without
   // this, a visitor can submit the email while the backend still has no photo
   // attached to the session.
@@ -1572,36 +1561,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   // diperkecil seperlunya agar unggahan tetap ringan. Pemotongan yang aman
   // dilakukan di vision service: di sana crop berbasis DETEKSI area terang,
   // bukan tebakan posisi, dan gambar asli tetap tersedia sebagai cadangan.
-  /**
-   * Bagian piksel terang dari sebuah frame (0-1).
-   *
-   * Ini penanda yang benar untuk "ada layar HP di depan kamera": pada frame nyata,
-   * kamera menghadap struk = ~97% piksel terang, menghadap ruangan = ~1,6%.
-   *
-   * Ketajaman (variance Laplacian) TIDAK bisa dipakai untuk ini — ruangan penuh
-   * tekstur justru bernilai lebih tinggi daripada struk, sehingga pemindaian
-   * pernah berhenti dalam ~1 detik padahal tidak ada bukti bayar.
-   */
-  const measureBrightRatio = useCallback((source: HTMLCanvasElement): number => {
-    const w = 240;
-    const h = Math.max(1, Math.round((source.height / source.width) * w));
-    const small = document.createElement('canvas');
-    small.width = w;
-    small.height = h;
-    const ctx = small.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return 0;
-    ctx.drawImage(source, 0, 0, w, h);
-    const { data } = ctx.getImageData(0, 0, w, h);
 
-    let bright = 0;
-    for (let i = 0; i < w * h; i += 1) {
-      const lum = 0.299 * data[i * 4] + 0.587 * data[i * 4 + 1] + 0.114 * data[i * 4 + 2];
-      if (lum >= 180) bright += 1;
-    }
-    return bright / Math.max(1, w * h);
-  }, []);
-
-  const captureFrameCandidate = useCallback((): Promise<{ blob: Blob; sharpness: number; brightRatio: number } | null> => {
+  const captureFrameCandidate = useCallback((): Promise<{ blob: Blob; sharpness: number } | null> => {
     return new Promise((resolve) => {
       const video = videoRef.current;
       if (!video) {
@@ -1630,11 +1591,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         ctx.drawImage(video, 0, 0, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
         ctx.filter = 'none';
         const sharpness = measureSharpness(tempCanvas);
-        // Bagian piksel terang: penanda keberadaan layar HP di depan kamera.
-        // Dipakai untuk memutuskan kapan berhenti memindai — lihat scanWindow.ts.
-        const brightRatio = measureBrightRatio(tempCanvas);
         tempCanvas.toBlob(
-          (blob) => resolve(blob ? { blob, sharpness, brightRatio } : null),
+          (blob) => resolve(blob ? { blob, sharpness } : null),
           'image/jpeg',
           0.96,
         );
@@ -1642,7 +1600,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         resolve(null);
       }
     });
-  }, [measureBrightRatio]);
+  }, []);
 
   const formatVerificationReason = (code: string): string => {
     switch (code) {
@@ -1679,7 +1637,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setScanningProgress(0);
     setScanningHint('');
     setScanActive(false);
-    setScanQuality('poor');
+    setSubmitRound(0);
     setScanningProgress(0);
   };
 
@@ -1834,8 +1792,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setVerificationReasonCodes([]);
     setFlowError(null);
     setScanActive(true);
-    setScanQuality('poor');
-    setScanningHint(scanHint(null, false));
+    setSubmitRound(0);
+    setScanningHint(scanStatusText(0, MAX_SUBMIT_ROUNDS));
     setScanningProgress(0);
 
     // Kamera mungkin baru menyala; beri kesempatan agar tidak langsung memotret
@@ -1856,7 +1814,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
     let rounds = 0;
     let lastReasonCodes: string[] = [];
-    let kept: { blob: Blob; sharpness: number; brightRatio: number }[] = [];
+    let kept: { blob: Blob; sharpness: number }[] = [];
+    let lastSubmitAt = Date.now();
 
     // Tidak ada batas waktu. Jalan keluar: terverifikasi, bukti ditolak, layanan
     // bermasalah, jatah kiriman habis, atau pengunjung menekan tombol.
@@ -1868,14 +1827,15 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
       if (shot && shot.blob.size > 0) {
         kept = keepBestFrames(kept, shot);
-        setScanQuality(classifyFrame(shot.sharpness));
-        setScanningHint(scanHint(shot, true));
       }
 
-      // Kirim hanya kalau sudah ada cukup frame layak (layar HP terlihat DAN
-      // cukup tajam). Kalau belum, lanjut memotret — tidak ada istilah "waktu
-      // habis", jadi pengunjung bebas mengatur posisi.
-      if (!shouldSubmitBatch(kept)) {
+      // Kirim berkala, TIDAK menunggu gambar "kelihatan bagus".
+      //
+      // Kita tidak punya cara yang bisa dipercaya untuk menilai dari gambar
+      // apakah bukti bayar terbaca (dua metrik sebelumnya menipu: ketajaman dan
+      // kecerahan). Satu-satunya penilai yang benar adalah OCR di backend, jadi
+      // batch dikirim dengan tempo tetap.
+      if (!shouldSubmitBatch(kept, Date.now() - lastSubmitAt)) {
         await new Promise((r) => setTimeout(r, SCAN_FRAME_GAP_MS));
         continue;
       }
@@ -1888,6 +1848,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         return;
       }
 
+      setScanningHint(CHECKING_TEXT);
       const ordered = orderFramesForUpload(kept).map((c) => c.blob);
       const result = await submitAndAwaitDecision(ordered, isStale);
       if (isStale()) return;
@@ -1924,9 +1885,11 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       rounds += 1;
       lastReasonCodes = result.reasonCodes;
       kept = [];
+      lastSubmitAt = Date.now();
       setScanActive(true);
+      setSubmitRound(rounds);
       setVerificationStatus('');
-      setScanningHint('Belum terbaca jelas — tahan bukti bayar di area scan, mencoba lagi...');
+      setScanningHint(scanStatusText(rounds, MAX_SUBMIT_ROUNDS));
       await new Promise((r) => setTimeout(r, SCAN_FRAME_GAP_MS));
     }
   }, [captureFrameCandidate, submitAndAwaitDecision]);
@@ -3045,26 +3008,20 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                 <canvas ref={processingCanvasRef} className="w-full h-full object-cover transform scale-x-[-1]" />
                 
                 {/* Bingkai panduan: ukurannya dihitung dari SCAN_GUIDE yang sama
-                    dengan area foto, jadi keduanya tidak mungkin lagi berbeda. */}
+                    dengan area foto, jadi keduanya tidak mungkin lagi berbeda.
+                    Warnanya TIDAK berubah menurut "mutu" — kita tidak bisa tahu
+                    mutu dari gambar, jadi jangan mengklaim apa pun ke pengunjung. */}
                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                   <div
-                    className={`border-4 rounded-[1.6rem] relative transition-colors duration-300 flex items-center justify-center ${
-                      !scanActive
-                        ? 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)]'
-                        : scanQuality === 'good'
-                          ? 'border-solid border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.55)] animate-pulse'
-                          : scanQuality === 'fair'
-                            ? 'border-solid border-amber-400 shadow-[0_0_30px_rgba(251,191,36,0.45)]'
-                            : 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse'
+                    className={`border-4 rounded-[1.6rem] relative flex items-center justify-center ${
+                      scanActive
+                        ? 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse'
+                        : 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)]'
                     }`}
                     style={guideFrameStyle()}
                   >
                     <span className="text-[11px] sm:text-xs text-center font-black uppercase text-white bg-black/80 px-3.5 py-1.5 rounded-full tracking-wider shadow-lg backdrop-blur-sm border border-white/20">
-                      {scanQuality === 'good'
-                        ? 'Terbaca jelas, tahan posisi'
-                        : scanActive
-                          ? 'Posisikan bukti bayar di area ini'
-                          : 'Area scan bukti bayar'}
+                      {scanActive ? 'Posisikan bukti bayar di area ini' : 'Area scan bukti bayar'}
                     </span>
                   </div>
                 </div>
@@ -3151,8 +3108,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                     <p className="text-[11px] sm:text-xs font-semibold text-gray-200 leading-snug">{scanningHint}</p>
 
                     <div className="flex items-center justify-center gap-2 pt-0.5">
-                      <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border ${SCAN_QUALITY_STYLES[scanQuality]}`}>
-                        {SCAN_QUALITY_LABELS[scanQuality]}
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-[#f6cd46]/50 text-[#f6cd46] bg-[#f6cd46]/10">
+                        Percobaan {Math.min(submitRound + 1, MAX_SUBMIT_ROUNDS)} dari {MAX_SUBMIT_ROUNDS}
                       </span>
                     </div>
 
