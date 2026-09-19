@@ -14,6 +14,15 @@ export const SCAN_WINDOW_MS = 15_000;
 /** Jeda antar percobaan frame. Cukup cepat agar terasa real-time. */
 export const SCAN_FRAME_GAP_MS = 400;
 
+/**
+ * Jeda sebelum frame pertama diambil, sejak layar pemindaian terbuka.
+ *
+ * Kamera butuh waktu menyesuaikan exposure, dan pengunjung butuh waktu sejenak
+ * mengangkat HP ke depan lensa. Tanpa jeda ini, frame-frame pertama hampir pasti
+ * kosong dan hanya membuang bagian awal jendela waktu.
+ */
+export const SCAN_READ_DELAY_MS = 1500;
+
 /** Batas frame yang dikirim ke vision service, supaya unggahan tetap ringan. */
 export const MAX_FRAMES_TO_SEND = 6;
 
@@ -147,22 +156,16 @@ export function scanHint(frame: FrameLike | null, hasAnyFrame: boolean): string 
 }
 
 /**
- * Kapan frame dikirim ke vision service.
+ * Dihapus dengan sengaja: TIDAK ADA pengiriman dipercepat.
  *
- * Dua jalan keluar, sengaja keduanya ada:
- *  - cukup frame yang benar-benar memuat layar HP -> kirim lebih awal
- *  - jendela waktu habis -> kirim frame terbaik yang sempat terkumpul, supaya
- *    upaya pengunjung tidak dibuang hanya karena gambarnya tidak sempurna.
- *
- * Ketajaman TIDAK dipakai sendiri untuk mempercepat: ruangan tanpa bukti bayar
- * bisa bernilai ketajaman lebih tinggi daripada struk, dan itu pernah membuat
- * pemindaian berhenti dalam ~1 detik walau tidak ada bukti bayar.
+ * Versi sebelumnya punya `shouldSubmit()` yang mengirim lebih awal begitu
+ * "bukti bayar terlihat jelas". Jalur itu berulang kali menghentikan pemindaian
+ * sebelum pengunjung selesai mengatur posisi, dan menilai "sudah jelas" dari
+ * gambar terbukti rapuh (frame ruangan kosong bisa dinilai lebih tajam daripada
+ * frame berisi struk). Jendela waktu 15 detik sudah pendek dan hasil kirimannya
+ * sama, jadi percepatan itu hanya menambah risiko. Jangan dikembalikan tanpa
+ * pengukuran pada kamera kiosk yang sebenarnya.
  */
-export function shouldSubmit(frames: FrameLike[], elapsedMs: number): boolean {
-  if (!frames || frames.length === 0) return false;
-  if (countGoodFrames(frames) >= TARGET_GOOD_FRAMES) return true;
-  return isWindowOver(elapsedMs);
-}
 
 /**
  * Simpan hanya N frame terbaik menurut ketajaman.

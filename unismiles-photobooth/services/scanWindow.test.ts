@@ -1,13 +1,23 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import {
   SCAN_WINDOW_MS, SCAN_FRAME_GAP_MS, MAX_FRAMES_TO_SEND, TARGET_GOOD_FRAMES,
-  GOOD_SHARPNESS, FAIR_SHARPNESS,
+  GOOD_SHARPNESS, FAIR_SHARPNESS, SCREEN_BRIGHT_RATIO,
   remainingMs, isWindowOver, progressPercent, remainingSeconds,
-  classifyFrame, countGoodFrames, scanHint, shouldSubmit,
+  classifyFrame, countGoodFrames, scanHint,
   keepBestFrames, orderFramesForUpload,
-  SCAN_GUIDE, guideFrameStyle, SCREEN_BRIGHT_RATIO, hasScreen, isFrameUsable,
+  SCAN_GUIDE, guideFrameStyle, hasScreen, isFrameUsable,
+  SCAN_READ_DELAY_MS,
 } from './scanWindow.ts';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const componentSource = fs.readFileSync(
+  path.join(here, '..', 'components', 'PhotoBooth.tsx'), 'utf8'
+);
 
 const frame = (sharpness, brightRatio) => ({ sharpness, brightRatio });
 
@@ -52,47 +62,55 @@ test('klasifikasi ketajaman sesuai kalibrasi OCR', () => {
   assert.strictEqual(classifyFrame(0), 'poor');
 });
 
-// Bagian paling berisiko: berhenti terlalu cepat membuat pengunjung kehilangan
-// kesempatan, padahal permintaannya justru "jangan terburu-buru".
-test('jangan pernah mengirim frame sebelum ada frame sama sekali', () => {
-  assert.strictEqual(shouldSubmit([], 0), false);
-  assert.strictEqual(shouldSubmit([], SCAN_WINDOW_MS), false);
-  assert.strictEqual(shouldSubmit(null, 0), false);
-});
-
-test('frame buram TIDAK memicu pengiriman dini', () => {
-  const blurry = [screenFrame(40), screenFrame(80), screenFrame(100)];
-  assert.strictEqual(shouldSubmit(blurry, 1_000), false, 'harus tetap menunggu');
-  assert.strictEqual(shouldSubmit(blurry, SCAN_WINDOW_MS - 1), false);
-});
-
-// Keluhan nyata: "kok cepat banget ngescannya padahal tidak ada bukti bayar".
-// Penyebabnya ketajaman saja dipakai untuk mempercepat, padahal ruangan penuh
-// tekstur bernilai ketajaman LEBIH TINGGI daripada struk (diukur: ruangan
-// 1694-1955, struk 590). Jadi frame tanpa bukti bayar justru dianggap "jelas".
-test('frame ruangan tanpa bukti bayar TIDAK mempercepat pemindaian', () => {
-  const ruangan = [
-    frame(1955, 0.016),  // diukur: kamera menghadap ruangan
-    frame(1694, 0.018),
-    frame(1707, 0.016),
-  ];
-  assert.strictEqual(hasScreen(ruangan[0]), false, 'ruangan bukan layar HP');
-  assert.strictEqual(countGoodFrames(ruangan), 0, 'tidak ada frame yang layak');
-  assert.strictEqual(
-    shouldSubmit(ruangan, 1_500), false,
-    'pemindaian harus tetap berjalan sampai jendela waktu habis'
+// Keluhan berulang: "ngescan cepat banget sedangkan ngatur posisi aja susah".
+// Penyebabnya ada jalur keluar lebih awal dari loop pemindaian. Setiap jalan
+// keluar selain waktu habis harus dihapus, jadi ini dijaga ketat.
+test('tidak ada jalur keluar lebih awal di loop pemindaian', () => {
+  assert.ok(
+    !/shouldSubmit/.test(componentSource),
+    'tidak boleh ada pemanggilan shouldSubmit di komponen'
+  );
+  assert.ok(
+    !/while \(true\)/.test(componentSource),
+    'loop harus dibatasi kondisi waktu, bukan while(true) dengan break lain'
+  );
+  assert.match(
+    componentSource,
+    /while \(remainingMs\(Date\.now\(\) - startedAt\) > 0\)/,
+    'loop harus berjalan selama sisa jendela waktu masih ada'
   );
 });
 
-test('frame dengan layar HP terang mempercepat pemindaian', () => {
-  const layar = [screenFrame(), screenFrame(GOOD_SHARPNESS + 50)];
-  assert.strictEqual(hasScreen(layar[0]), true);
-  assert.strictEqual(countGoodFrames(layar), TARGET_GOOD_FRAMES);
-  assert.strictEqual(shouldSubmit(layar, 1_200), true);
+test('tidak ada fungsi pengiriman-dipercepat di kebijakan', () => {
+  const policy = fs.readFileSync(path.join(here, 'scanWindow.ts'), 'utf8');
+  assert.ok(
+    !/export function shouldSubmit/.test(policy),
+    'shouldSubmit sudah dihapus; jangan dikembalikan tanpa pengukuran di kiosk'
+  );
 });
 
-test('layar terlihat tapi gambar terlalu buram belum layak', () => {
-  // Layar terang tapi sangat buram: jangan dianggap siap.
+test('pengunjung diberi jeda sebelum frame pertama diambil', () => {
+  assert.ok(SCAN_READ_DELAY_MS >= 1000, `jeda minimal 1 detik, dapat ${SCAN_READ_DELAY_MS}`);
+  assert.match(
+    componentSource,
+    /setTimeout\(r,\s*SCAN_READ_DELAY_MS\)/,
+    'komponen harus memakai jeda dari SCAN_READ_DELAY_MS'
+  );
+});
+
+test('frame ruangan tanpa bukti bayar bukan frame layak', () => {
+  // Angka dari pengukuran kamera nyata.
+  const ruangan = [frame(1955, 0.016), frame(1694, 0.018), frame(1707, 0.016)];
+  assert.strictEqual(hasScreen(ruangan[0]), false);
+  assert.strictEqual(countGoodFrames(ruangan), 0);
+});
+
+test('frame dengan layar HP terang dihitung layak', () => {
+  assert.strictEqual(hasScreen(screenFrame()), true);
+  assert.strictEqual(countGoodFrames([screenFrame(), screenFrame(900)]), TARGET_GOOD_FRAMES);
+});
+
+test('layar terlihat tapi terlalu buram belum layak', () => {
   assert.strictEqual(isFrameUsable(frame(50, 0.5)), false);
   assert.strictEqual(isFrameUsable(frame(150, 0.5)), true);
 });
@@ -101,21 +119,6 @@ test('frame tanpa brightRatio tidak dianggap memuat layar', () => {
   assert.strictEqual(hasScreen({ sharpness: 5000 }), false);
   assert.strictEqual(hasScreen(null), false);
   assert.strictEqual(hasScreen(undefined), false);
-});
-
-test('cukup frame layar mempercepat pengiriman', () => {
-  const good = [screenFrame(GOOD_SHARPNESS), screenFrame(GOOD_SHARPNESS + 50)];
-  assert.strictEqual(countGoodFrames(good), TARGET_GOOD_FRAMES);
-  assert.strictEqual(shouldSubmit(good, 1_200), true);
-});
-
-test('satu frame layar saja belum cukup: beri kesempatan frame kedua', () => {
-  assert.strictEqual(shouldSubmit([screenFrame()], 1_200), false);
-});
-
-test('saat jendela habis, frame terbaik yang ada tetap dikirim', () => {
-  const blurry = [frame(60, 0.02), frame(90, 0.03)];
-  assert.strictEqual(shouldSubmit(blurry, SCAN_WINDOW_MS), true, 'jangan buang usaha pengunjung');
 });
 
 test('hint membedakan layar belum terlihat dari gambar kurang tajam', () => {
@@ -146,9 +149,6 @@ test('daftar frame kosong tidak melempar error', () => {
   assert.strictEqual(countGoodFrames(null), 0);
 });
 
-// Regresi penyebab utama kegagalan scan di lapangan: bingkai di layar dan area
-// yang difoto berasal dari angka berbeda, sehingga hanya ~37% area kamera yang
-// dikirim ke OCR dan struk yang terlihat "sudah pas" terpotong.
 test('bingkai panduan dihitung dari SCAN_GUIDE, tidak dikarang di JSX', () => {
   const style = guideFrameStyle();
   assert.strictEqual(style.width, `${SCAN_GUIDE.widthRatio * 100}%`);

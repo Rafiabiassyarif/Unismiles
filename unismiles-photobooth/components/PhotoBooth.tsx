@@ -10,9 +10,9 @@ import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
-  SCAN_WINDOW_MS, SCAN_FRAME_GAP_MS,
+  SCAN_WINDOW_MS, SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS,
   remainingMs, progressPercent, remainingSeconds,
-  classifyFrame, scanHint, shouldSubmit, keepBestFrames, orderFramesForUpload,
+  classifyFrame, scanHint, keepBestFrames, orderFramesForUpload,
   guideFrameStyle, SCAN_GUIDE,
 } from '../services/scanWindow';
 import {
@@ -1776,9 +1776,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setScanningProgress(progressPercent(0));
     setScanRemainingSeconds(Math.ceil(SCAN_WINDOW_MS / 1000));
 
-    // Kamera mungkin baru menyala; beri kesempatan satu detik agar tidak
-    // langsung memotret frame hitam.
-    await new Promise((r) => setTimeout(r, 1000));
+    // Kamera mungkin baru menyala; beri kesempatan agar tidak langsung memotret
+    // frame hitam. Nilainya dari SCAN_READ_DELAY_MS supaya sejalan dengan UI dan
+    // bisa diperiksa test.
+    await new Promise((r) => setTimeout(r, SCAN_READ_DELAY_MS));
 
     // Minta fokus ulang tepat saat pengunjung menahan bukti bayar. Fokus
     // kontinu saja tidak cukup: lensa bisa masih terpaku ke latar ruangan.
@@ -1793,9 +1794,19 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     const startedAt = Date.now();
     const isStale = () => scanCancelRef.current || activeScanRunRef.current !== runId;
 
-    let kept: { blob: Blob; sharpness: number }[] = [];
+    let kept: { blob: Blob; sharpness: number; brightRatio: number }[] = [];
 
-    while (true) {
+    // Satu-satunya jalan keluar adalah WAKTU habis.
+    //
+    // Sebelumnya ada jalan keluar lebih awal ("bukti bayar sudah terlihat jelas").
+    // Jalur itu berulang kali berhenti terlalu cepat — pengunjung belum sempat
+    // mengatur posisi (keluhan: "ngescan cepat banget, ngatur posisi aja susah").
+    // Penyebabnya: menilai "sudah jelas" dari gambar jauh lebih rapuh daripada
+    // kelihatannya (frame ruangan kosong pernah dinilai lebih tajam daripada
+    // frame berisi struk). Karena waktu tunggu 15 detik itu pendek dan hasil
+    // pengiriman tidak berubah, percepatan ini hanya menambah risiko tanpa
+    // memberi manfaat. Sekarang pemindaian selalu memakai jendela penuh.
+    while (remainingMs(Date.now() - startedAt) > 0) {
       const elapsed = Date.now() - startedAt;
       // Progres dihitung dari WAKTU, jadi bar selalu bergerak walau frame buram
       // dan tidak ada yang tersimpan.
@@ -1813,11 +1824,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         setScanningHint(scanHint(shot, true));
       }
 
-      if (shouldSubmit(kept, elapsed)) break;
-      if (remainingMs(elapsed) <= 0) break;
-
       // Jeda dipotong supaya tidak melewati sisa jendela waktu.
-      await new Promise((r) => setTimeout(r, Math.min(SCAN_FRAME_GAP_MS, remainingMs(elapsed))));
+      const left = remainingMs(Date.now() - startedAt);
+      if (left <= 0) break;
+      await new Promise((r) => setTimeout(r, Math.min(SCAN_FRAME_GAP_MS, left)));
       if (isStale()) return;
     }
 
