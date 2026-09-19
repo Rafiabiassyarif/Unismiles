@@ -83,6 +83,17 @@ app.get('/', (req, res) => {
 const apiLimiter = createRateLimiter({ windowMs: 60_000, max: 300 });
 app.use('/api/', apiLimiter);
 
+// Penanda versi: dipakai untuk MEMBUKTIKAN proses mana yang sedang melayani API.
+//
+// Sempat terjadi: perbaikan kode tidak berpengaruh sama sekali karena proses lama
+// (diluncurkan manual dari root monorepo, dengan .env yang salah) masih menahan
+// port 5017, sementara proses baru crash-loop dengan EADDRINUSE. Tanpa penanda
+// ini, mustahil membedakan "kode belum jalan" dari "kode jalan tapi masih salah".
+const BUILD_MARKER = 'unismiles-backend/verify-error-logging-1';
+app.get('/api/v1/public/__build', (req, res) => {
+  res.json({ build: BUILD_MARKER, pid: process.pid, cwd: process.cwd() });
+});
+
 app.use('/api/v1/public', publicRoutes);
 app.use('/api/v1/kiosk', kioskRoutes);
 app.use('/api/v1/admin', adminRoutes);
