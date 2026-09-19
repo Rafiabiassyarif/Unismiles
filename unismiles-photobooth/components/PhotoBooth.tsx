@@ -13,7 +13,7 @@ import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
   SUBMIT_POLL_TIMEOUT_MS, SUBMIT_POLL_INTERVAL_MS,
   keepBestFrames, orderFramesForUpload, shouldSubmitBatch,
-  scanStatusText, CHECKING_TEXT, isSettledDecision, isServiceFailure,
+  scanStatusText, CHECKING_TEXT, isSettledDecision, isServiceFailure, isRoundLimitReached,
   guideFrameStyle, SCAN_GUIDE,
 } from '../services/scanWindow';
 import {
@@ -1852,7 +1852,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         continue;
       }
 
-      if (rounds >= MAX_SUBMIT_ROUNDS) {
+      // Batas percobaan mati secara default (MAX_SUBMIT_ROUNDS = 0): pengunjung
+      // bebas mencoba sampai buktinya terbaca. Tempo kirim + penjaga waktu tunggu
+      // sudah cukup menjaga server.
+      if (isRoundLimitReached(rounds)) {
         setScanActive(false);
         setVerificationStatus('needs_retry');
         setVerificationReasonCodes(lastReasonCodes);
@@ -3123,7 +3126,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
                     <div className="flex items-center justify-center gap-2 pt-0.5">
                       <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border border-[#f6cd46]/50 text-[#f6cd46] bg-[#f6cd46]/10">
-                        Percobaan {Math.min(submitRound + 1, MAX_SUBMIT_ROUNDS)} dari {MAX_SUBMIT_ROUNDS}
+                        {submitRound > 0 ? `Percobaan ke-${submitRound + 1} · tanpa batas` : 'Siap memindai'}
                       </span>
                     </div>
 

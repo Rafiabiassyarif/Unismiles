@@ -292,14 +292,23 @@ const PaymentVerificationController = {
 
       // Batas percobaan per sesi.
       //
-      // Dinaikkan dari 3 ke 6 karena pemindaian sekarang berjalan OTOMATIS saat
-      // halaman pembayaran terbuka. Dengan batas 3, satu pengiriman otomatis
-      // langsung memakan sepertiga jatah dan pengunjung hanya menyisakan 2
-      // percobaan manual — padahal mereka belum sempat mengatur posisi.
-      // Batas tetap ada supaya penyalahgunaan (spam unggahan) masih tertahan.
-      const MAX_SCAN_ATTEMPTS = 6;
+      // DISETEL KE 0 = TANPA BATAS, sesuai permintaan: pengunjung bebas mencoba
+      // sampai bukti bayarnya terbaca. Sebelumnya 6, dan itu membuat pengunjung
+      // mentok di tengah jalan padahal bukti aslinya sah.
+      //
+      // Pengaman yang tetap berlaku (bukan batas jumlah percobaan):
+      //  - tembolok memori untuk unggahan dibatasi ukuran & jumlah berkas
+      //  - anti-replay: bukti dengan nomor referensi sama tidak bisa dipakai dua kali
+      //  - sesi tetap punya masa kedaluwarsa pembayaran
+      //  - rate limiter /api/ (300 per menit per IP) menahan banjir permintaan
+      const envLimit = Number(process.env.PAYMENT_MAX_SCAN_ATTEMPTS);
+      const MAX_SCAN_ATTEMPTS = Number.isFinite(envLimit) && envLimit > 0 ? envLimit : 0;
+
+      // Dihitung sekali: dipakai untuk menegakkan batas (kalau diaktifkan) dan
+      // untuk nomor percobaan.
       const attemptCount = await PaymentVerificationModel.countAttempts(session.session_id);
-      if (attemptCount >= MAX_SCAN_ATTEMPTS) {
+
+      if (MAX_SCAN_ATTEMPTS > 0 && attemptCount >= MAX_SCAN_ATTEMPTS) {
         return res.status(429).json({ success: false, message: `Batas maksimum scan bukti pembayaran (${MAX_SCAN_ATTEMPTS} kali) telah tercapai.` });
       }
 

@@ -10,6 +10,7 @@ import {
   SUBMIT_POLL_TIMEOUT_MS, SUBMIT_POLL_INTERVAL_MS,
   shouldSubmitBatch, keepBestFrames, orderFramesForUpload,
   scanStatusText, CHECKING_TEXT, isSettledDecision, isServiceFailure,
+  isRoundLimitReached,
   SCAN_GUIDE, guideFrameStyle,
 } from './scanWindow.ts';
 
@@ -49,11 +50,11 @@ test('UI tidak mengklaim gambar sudah jelas', () => {
   }
 });
 
-test('status yang ditampilkan jujur dan menyebut percobaan ke-berapa', () => {
+test('status yang ditampilkan jujur, tanpa batas percobaan palsu', () => {
   assert.match(scanStatusText(0, MAX_SUBMIT_ROUNDS), /Arahkan bukti bayar/i);
   const afterFail = scanStatusText(1, MAX_SUBMIT_ROUNDS);
   assert.match(afterFail, /Belum terbaca/i, 'akui belum terbaca, jangan mengklaim berhasil');
-  assert.match(afterFail, new RegExp(`2/${MAX_SUBMIT_ROUNDS}`), 'tunjukkan percobaan berjalan');
+  assert.match(afterFail, /masih mencoba/i, 'tegaskan sistem terus mencoba');
   assert.match(CHECKING_TEXT, /Sedang membaca/i);
 });
 
@@ -127,10 +128,30 @@ test('tidak ada batas waktu pemindaian', () => {
   assert.match(componentSource, /while \(true\) \{/, 'loop sampai hasil final');
 });
 
-test('jatah kiriman per sesi dibatasi agar tidak mengunci diri', () => {
-  // Backend membatasi 6 percobaan; sisakan dua untuk "Coba Scan Lagi".
-  assert.ok(MAX_SUBMIT_ROUNDS >= 2 && MAX_SUBMIT_ROUNDS <= 5, `dapat ${MAX_SUBMIT_ROUNDS}`);
-  assert.match(componentSource, /rounds >= MAX_SUBMIT_ROUNDS/);
+test('jatah kiriman per sesi tidak dibatasi (permintaan: bebas scan berkali-kali)', () => {
+  // 0 = tanpa batas. Pengunjung harus bisa mencoba sebanyak yang diperlukan.
+  assert.strictEqual(MAX_SUBMIT_ROUNDS, 0, 'batas jumlah percobaan harus dimatikan');
+  assert.strictEqual(isRoundLimitReached(0), false);
+  assert.strictEqual(isRoundLimitReached(5), false);
+  assert.strictEqual(isRoundLimitReached(50), false);
+  assert.strictEqual(isRoundLimitReached(999), false);
+  assert.match(componentSource, /isRoundLimitReached\(rounds\)/, 'komponen memakai helper batas');
+  assert.ok(
+    !/rounds >= MAX_SUBMIT_ROUNDS/.test(componentSource),
+    'jangan membandingkan langsung, karena 0 berarti tanpa batas'
+  );
+});
+
+test('batas masih bisa diaktifkan lewat konfigurasi kalau diperlukan', () => {
+  assert.strictEqual(isRoundLimitReached(3, 5), false);
+  assert.strictEqual(isRoundLimitReached(5, 5), true);
+  assert.strictEqual(isRoundLimitReached(9, 5), true);
+});
+
+test('teks status tidak menyebut "X dari Y" saat tanpa batas', () => {
+  const text = scanStatusText(3, 0);
+  assert.match(text, /masih mencoba/i);
+  assert.ok(!/\d+\s*dari\s*\d+/.test(text), `jangan tampilkan batas palsu: ${text}`);
 });
 
 test('ada penjaga agar layar tidak menggantung saat layanan bermasalah', () => {

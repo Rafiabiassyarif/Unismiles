@@ -8,25 +8,40 @@ const source = fs.readFileSync(
   'utf8'
 );
 
-// Pemindaian sekarang otomatis saat halaman pembayaran terbuka. Kalau batas
-// percobaan tetap 3, satu pengiriman otomatis memakan sepertiga jatah dan
-// pengunjung hampir tidak punya kesempatan mencoba ulang.
-test('batas percobaan scan dinaikkan untuk pemindaian otomatis', () => {
-  const match = source.match(/const MAX_SCAN_ATTEMPTS = (\d+);/);
-  assert.ok(match, 'batas harus didefinisikan sebagai konstanta bernama');
-  const limit = Number(match[1]);
-  assert.ok(limit >= 6, `batas minimal 6 untuk auto-scan, dapat ${limit}`);
-  assert.ok(limit <= 20, `batas harus tetap membatasi penyalahgunaan, dapat ${limit}`);
+// Permintaan: pengunjung bebas scan berkali-kali. Batas 6 membuat mereka mentok
+// di tengah jalan padahal bukti aslinya sah. Batas jumlah percobaan dimatikan;
+// pengaman lain (ukuran unggahan, anti-replay, kedaluwarsa sesi, rate limit)
+// tetap berlaku.
+test('batas jumlah percobaan scan dimatikan secara default', () => {
+  assert.match(source, /PAYMENT_MAX_SCAN_ATTEMPTS/, 'harus bisa diatur lewat env');
+  assert.match(
+    source,
+    /Number\.isFinite\(envLimit\) && envLimit > 0 \? envLimit : 0/,
+    'tanpa env yang sah, batasnya 0 (tanpa batas)'
+  );
+  assert.ok(
+    !/MAX_SCAN_ATTEMPTS = 6/.test(source),
+    'batas keras 6 tidak boleh dikembalikan'
+  );
 });
 
-test('batas tetap ditegakkan, bukan dihapus', () => {
-  assert.match(source, /if \(attemptCount >= MAX_SCAN_ATTEMPTS\)/, 'pemeriksaan batas harus ada');
-  assert.match(source, /status\(429\)/, 'harus menjawab 429 saat batas tercapai');
+test('batas hanya ditegakkan kalau memang diaktifkan', () => {
+  assert.match(source, /if \(MAX_SCAN_ATTEMPTS > 0 && attemptCount >= MAX_SCAN_ATTEMPTS\)/);
+  assert.match(source, /status\(429\)/, 'jawaban 429 tetap ada untuk mode berbatas');
 });
 
-// Pengaman anti-pemakaian-ulang dan validasi nominal tidak boleh ikut longgar.
-test('validasi inti pembayaran tidak dilonggarkan', () => {
-  assert.match(source, /DUPLICATE_REFERENCE/, 'pengaman anti-replay harus tetap ada');
-  assert.match(source, /AMOUNT_MISMATCH/, 'validasi nominal harus tetap ada');
-  assert.match(source, /payment_status === 'verified'/, 'sesi yang sudah lunas harus ditolak ulang');
+test('nomor percobaan tetap dihitung untuk pelacakan', () => {
+  assert.match(source, /attempt_number: attemptNum/, 'nomor percobaan tetap dicatat');
+  assert.match(source, /const attemptNum = attemptCount \+ 1/);
+});
+
+// Anti-replay TIDAK boleh ikut dimatikan: itu pengaman pemakaian ulang bukti.
+test('anti-replay tetap berlaku walau batas percobaan dimatikan', () => {
+  assert.match(source, /DUPLICATE_REFERENCE/, 'bukti yang sama tidak boleh dipakai dua kali');
+  assert.match(source, /referenceHmac/, 'pemeriksaan nomor referensi harus tetap ada');
+});
+
+// Pengaman ukuran unggahan tetap ada supaya memori server aman.
+test('batas ukuran unggahan tetap berlaku', () => {
+  assert.match(source, /limits:\s*\{[^}]*fileSize/, 'ukuran berkas harus tetap dibatasi');
 });

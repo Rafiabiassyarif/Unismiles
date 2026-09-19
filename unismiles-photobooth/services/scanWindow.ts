@@ -50,10 +50,22 @@ export const MAX_FRAMES_TO_SEND = 4;
 /**
  * Batas jumlah pengiriman per sesi.
  *
- * Backend membatasi 6 percobaan per sesi. Sisakan dua untuk tombol
- * "Coba Scan Lagi", supaya pengunjung tidak bisa mengunci diri di jalan buntu.
+ * DISETEL KE 0 = TANPA BATAS, sesuai permintaan: pengunjung bebas mencoba
+ * sebanyak yang diperlukan sampai buktinya terbaca.
+ *
+ * Pengaman yang tetap ada (bukan batas jumlah):
+ *  - tempo kirim 2,5 detik, jadi tidak mungkin membanjiri server
+ *  - penjaga waktu tunggu, supaya layar tidak menggantung kalau OCR bermasalah
+ *  - batas ukuran unggahan, supaya memori server aman
+ *  - anti-replay di backend, supaya bukti yang sama tidak dipakai dua kali
  */
-export const MAX_SUBMIT_ROUNDS = 4;
+export const MAX_SUBMIT_ROUNDS = 0;
+
+/** Apakah batas percobaan masih berlaku (0 = tanpa batas). */
+export function isRoundLimitReached(rounds: number, maxRounds = MAX_SUBMIT_ROUNDS): boolean {
+  if (!Number.isFinite(maxRounds) || maxRounds <= 0) return false;
+  return rounds >= maxRounds;
+}
 
 /** Penjaga agar layar tidak menggantung kalau layanan OCR bermasalah. */
 export const SUBMIT_POLL_TIMEOUT_MS = 20_000;
@@ -110,9 +122,13 @@ export function orderFramesForUpload<T extends FrameLike>(frames: T[]): T[] {
  *
  * Tidak ada lagi "terbaca jelas" / "tangkapan bagus", karena kita memang tidak
  * bisa menilai keterbacaan dari gambar (dua metrik sudah terbukti menipu).
+ * Saat batas percobaan dimatikan, jangan tampilkan "X dari Y" yang menyesatkan.
  */
 export function scanStatusText(rounds: number, maxRounds: number): string {
   if (rounds <= 0) return 'Arahkan bukti bayar (layar sukses) ke kamera';
+  if (!Number.isFinite(maxRounds) || maxRounds <= 0) {
+    return 'Belum terbaca — tahan bukti bayar di area scan, masih mencoba...';
+  }
   return `Belum terbaca — tahan bukti bayar di area scan (percobaan ${rounds + 1}/${maxRounds})`;
 }
 
