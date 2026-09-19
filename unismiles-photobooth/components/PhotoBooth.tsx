@@ -10,9 +10,10 @@ import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
-  SCAN_WINDOW_MS, SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS,
-  remainingMs, progressPercent, remainingSeconds,
+  SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
+  SUBMIT_POLL_TIMEOUT_MS, SUBMIT_POLL_INTERVAL_MS,
   classifyFrame, scanHint, keepBestFrames, orderFramesForUpload,
+  shouldSubmitBatch,
   guideFrameStyle, SCAN_GUIDE,
 } from '../services/scanWindow';
 import {
@@ -878,9 +879,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const [verificationReasonCodes, setVerificationReasonCodes] = useState<string[]>([]);
   const [scanningProgress, setScanningProgress] = useState<number>(0);
   const [scanningHint, setScanningHint] = useState<string>('');
-  // Status jendela pemindaian otomatis di layar pembayaran.
+  // Status pemindaian otomatis di layar pembayaran. Tidak ada hitungan waktu:
+  // pemindaian berjalan sampai tangkapannya bagus dan buktinya terverifikasi.
   const [scanActive, setScanActive] = useState<boolean>(false);
-  const [scanRemainingSeconds, setScanRemainingSeconds] = useState<number>(SCAN_WINDOW_MS / 1000);
   const [scanQuality, setScanQuality] = useState<'good' | 'fair' | 'poor'>('poor');
   // Keep email sending and the automatic upload on the same promise. Without
   // this, a visitor can submit the email while the backend still has no photo
@@ -1677,9 +1678,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setFlowError(null);
     setScanningProgress(0);
     setScanningHint('');
-    setScanRemainingSeconds(SCAN_WINDOW_MS / 1000);
     setScanActive(false);
     setScanQuality('poor');
+    setScanningProgress(0);
   };
 
   // Kirim frame bukti bayar ke backend lalu pantau hasil verifikasinya.
@@ -1699,6 +1700,68 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       setStep('PAYMENT_SCAN');
       setFlowError(err.message || 'Gagal mengirim verifikasi pembayaran.');
     }
+  }, [sessionCode, challengeId]);
+
+  /**
+   * Kirim satu batch, lalu tunggu penilaiannya.
+   *
+   * Dipakai oleh loop pemindaian. Mengembalikan keputusan supaya pemanggil bisa
+   * memutuskan: lanjut memindai, atau berhenti karena hasilnya final.
+   */
+  const submitAndAwaitDecision = useCallback(async (
+    frames: Blob[],
+    isStale: () => boolean,
+  ): Promise<{ verified: boolean; reasonCodes: string[]; error?: string }> => {
+    setVerificationStatus('processing');
+    setScanActive(false);
+    setScanningHint('Memeriksa bukti pembayaran...');
+
+    let attemptId: string;
+    try {
+      const data = await submitPaymentEvidence(sessionCode, frames, challengeId);
+      attemptId = data.attempt_id;
+      setVerificationAttemptId(attemptId);
+    } catch (err: any) {
+      return { verified: false, reasonCodes: [], error: err?.message || 'SUBMIT_FAILED' };
+    }
+
+    // Penjaga agar layar tidak menggantung kalau layanan OCR bermasalah. Ini
+    // BUKAN batas waktu pengunjung.
+    const deadline = Date.now() + SUBMIT_POLL_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, SUBMIT_POLL_INTERVAL_MS));
+      if (isStale()) return { verified: false, reasonCodes: [] };
+
+      try {
+        const data = await getPaymentVerificationStatus(sessionCode, attemptId);
+        const decision = String(data.decision || data.status || '');
+
+        if (decision === 'verified') return { verified: true, reasonCodes: [] };
+
+        // Ditolak = final (bukti tidak sah / sudah dipakai). Mengulang tidak
+        // menolong karena ini bukan soal posisi kamera.
+        if (decision === 'rejected') {
+          return { verified: false, reasonCodes: data.reason_codes || [] };
+        }
+
+        // Belum terbaca jelas: pemanggil akan lanjut memindai.
+        if (decision === 'needs_retry') {
+          return { verified: false, reasonCodes: data.reason_codes || [] };
+        }
+
+        if (decision === 'error') {
+          return {
+            verified: false,
+            reasonCodes: data.reason_codes || ['INTERNAL_ERROR'],
+            error: 'INTERNAL_ERROR',
+          };
+        }
+      } catch (err) {
+        console.error('Polling status error:', err);
+      }
+    }
+
+    return { verified: false, reasonCodes: [], error: 'TIMEOUT' };
   }, [sessionCode, challengeId]);
 
   const pollVerificationStatus = (attemptId: string) => {
@@ -1773,12 +1836,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setScanActive(true);
     setScanQuality('poor');
     setScanningHint(scanHint(null, false));
-    setScanningProgress(progressPercent(0));
-    setScanRemainingSeconds(Math.ceil(SCAN_WINDOW_MS / 1000));
+    setScanningProgress(0);
 
     // Kamera mungkin baru menyala; beri kesempatan agar tidak langsung memotret
-    // frame hitam. Nilainya dari SCAN_READ_DELAY_MS supaya sejalan dengan UI dan
-    // bisa diperiksa test.
+    // frame hitam, dan pengunjung sempat mengangkat HP.
     await new Promise((r) => setTimeout(r, SCAN_READ_DELAY_MS));
 
     // Minta fokus ulang tepat saat pengunjung menahan bukti bayar. Fokus
@@ -1791,27 +1852,16 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       }
     } catch (_) { /* kamera tanpa kontrol fokus: tetap lanjut */ }
 
-    const startedAt = Date.now();
     const isStale = () => scanCancelRef.current || activeScanRunRef.current !== runId;
 
+    let rounds = 0;
+    let lastReasonCodes: string[] = [];
     let kept: { blob: Blob; sharpness: number; brightRatio: number }[] = [];
 
-    // Satu-satunya jalan keluar adalah WAKTU habis.
-    //
-    // Sebelumnya ada jalan keluar lebih awal ("bukti bayar sudah terlihat jelas").
-    // Jalur itu berulang kali berhenti terlalu cepat — pengunjung belum sempat
-    // mengatur posisi (keluhan: "ngescan cepat banget, ngatur posisi aja susah").
-    // Penyebabnya: menilai "sudah jelas" dari gambar jauh lebih rapuh daripada
-    // kelihatannya (frame ruangan kosong pernah dinilai lebih tajam daripada
-    // frame berisi struk). Karena waktu tunggu 15 detik itu pendek dan hasil
-    // pengiriman tidak berubah, percepatan ini hanya menambah risiko tanpa
-    // memberi manfaat. Sekarang pemindaian selalu memakai jendela penuh.
-    while (remainingMs(Date.now() - startedAt) > 0) {
-      const elapsed = Date.now() - startedAt;
-      // Progres dihitung dari WAKTU, jadi bar selalu bergerak walau frame buram
-      // dan tidak ada yang tersimpan.
-      setScanningProgress(progressPercent(elapsed));
-      setScanRemainingSeconds(remainingSeconds(elapsed));
+    // Tidak ada batas waktu. Jalan keluar: terverifikasi, bukti ditolak, layanan
+    // bermasalah, jatah kiriman habis, atau pengunjung menekan tombol.
+    while (true) {
+      if (isStale()) return;
 
       const shot = await captureFrameCandidate();
       if (isStale()) return;
@@ -1819,38 +1869,67 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       if (shot && shot.blob.size > 0) {
         kept = keepBestFrames(kept, shot);
         setScanQuality(classifyFrame(shot.sharpness));
-        // Hint memakai objek frame (butuh brightRatio) supaya bisa membedakan
-        // "layar HP belum terlihat" dari "gambar kurang tajam".
         setScanningHint(scanHint(shot, true));
       }
 
-      // Jeda dipotong supaya tidak melewati sisa jendela waktu.
-      const left = remainingMs(Date.now() - startedAt);
-      if (left <= 0) break;
-      await new Promise((r) => setTimeout(r, Math.min(SCAN_FRAME_GAP_MS, left)));
+      // Kirim hanya kalau sudah ada cukup frame layak (layar HP terlihat DAN
+      // cukup tajam). Kalau belum, lanjut memotret — tidak ada istilah "waktu
+      // habis", jadi pengunjung bebas mengatur posisi.
+      if (!shouldSubmitBatch(kept)) {
+        await new Promise((r) => setTimeout(r, SCAN_FRAME_GAP_MS));
+        continue;
+      }
+
+      if (rounds >= MAX_SUBMIT_ROUNDS) {
+        setScanActive(false);
+        setVerificationStatus('needs_retry');
+        setVerificationReasonCodes(lastReasonCodes);
+        setFlowError('Belum berhasil membaca bukti bayar. Tekan "Coba Scan Lagi".');
+        return;
+      }
+
+      const ordered = orderFramesForUpload(kept).map((c) => c.blob);
+      const result = await submitAndAwaitDecision(ordered, isStale);
       if (isStale()) return;
+
+      if (result.verified) {
+        setVerificationStatus('verified');
+        setScanningHint('Pembayaran terverifikasi! Memulai sesi foto...');
+        setTimeout(() => {
+          if (activeScanRunRef.current === runId) setStep('CAPTURE');
+        }, 1000);
+        return;
+      }
+
+      // Bukti ditolak sebagai tidak sah / sudah dipakai: mengulang tidak menolong
+      // karena ini bukan soal posisi kamera.
+      if (result.reasonCodes.includes('DUPLICATE_REFERENCE')) {
+        setScanActive(false);
+        setVerificationStatus('rejected');
+        setVerificationReasonCodes(result.reasonCodes);
+        setFlowError('Bukti pembayaran ini sudah pernah digunakan.');
+        return;
+      }
+
+      if (result.error === 'INTERNAL_ERROR') {
+        setScanActive(false);
+        setVerificationStatus('needs_retry');
+        setVerificationReasonCodes(result.reasonCodes);
+        setFlowError('Layanan pemeriksaan bukti bayar sedang bermasalah. Tekan "Coba Scan Lagi".');
+        return;
+      }
+
+      // Belum terbaca jelas: buang frame lama supaya tidak mengirim gambar yang
+      // sama berulang kali, lalu lanjut memindai. Pengunjung cukup menahan HP.
+      rounds += 1;
+      lastReasonCodes = result.reasonCodes;
+      kept = [];
+      setScanActive(true);
+      setVerificationStatus('');
+      setScanningHint('Belum terbaca jelas — tahan bukti bayar di area scan, mencoba lagi...');
+      await new Promise((r) => setTimeout(r, SCAN_FRAME_GAP_MS));
     }
-
-    if (isStale()) return;
-
-    setScanActive(false);
-    setScanningProgress(100);
-
-    if (kept.length === 0) {
-      setVerificationStatus('error');
-      setScanningProgress(0);
-      setFlowError('Kamera tidak menghasilkan gambar. Tekan "Coba Scan Lagi".');
-      return;
-    }
-
-    // Frame paling tajam dikirim lebih dulu; sisanya jadi cadangan di vision
-    // service. Tidak ada penolakan berdasarkan ketajaman di sisi kiosk:
-    // keputusan berhasil/gagal diambil vision service dari teks yang benar-benar
-    // terbaca, supaya pembayaran sah tidak hilang hanya karena gambarnya redup.
-    const ordered = orderFramesForUpload(kept).map((c) => c.blob);
-    setStep('PAYMENT_CHECKING');
-    processVerification(ordered);
-  }, [captureFrameCandidate, processVerification]);
+  }, [captureFrameCandidate, submitAndAwaitDecision]);
 
   const startScanningSequence = () => {
     if (scanActive) return;
@@ -2990,18 +3069,15 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                   </div>
                 </div>
 
-                {/* Progress bar overlay if active */}
-                {scanningProgress > 0 && (
-                  <div className="absolute bottom-3 left-3 right-3 bg-black/85 backdrop-blur-md p-3 rounded-2xl border border-white/15 space-y-1.5">
-                    <div className="flex justify-between items-center text-xs font-black text-white uppercase tracking-wider">
+                {/* Indikator saat bukti bayar sedang diperiksa layanan OCR.
+                    Tidak ada bar persen atau hitungan waktu: pemindaian berjalan
+                    sampai tangkapannya bagus, jadi tidak ada "progres menuju
+                    gagal" yang perlu ditampilkan. */}
+                {verificationStatus === 'processing' && (
+                  <div className="absolute bottom-3 left-3 right-3 bg-black/85 backdrop-blur-md p-3 rounded-2xl border border-white/15">
+                    <div className="flex items-center justify-center gap-2 text-xs font-black text-white uppercase tracking-wider">
+                      <Loader2 size={14} className="animate-spin text-[#f6cd46]" />
                       <span className="animate-pulse">{scanningHint}</span>
-                      <span>{scanningProgress}%</span>
-                    </div>
-                    <div className="w-full bg-white/15 h-2 rounded-full overflow-hidden">
-                      <div 
-                        className="bg-[#f6cd46] h-full rounded-full transition-all duration-300"
-                        style={{ width: `${scanningProgress}%` }}
-                      />
                     </div>
                   </div>
                 )}
@@ -3059,8 +3135,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                     <p className="text-[10px] text-gray-400 mt-1">Mohon tunggu, jangan tutup halaman ini.</p>
                   </div>
                 ) : (
-                  /* Pemindaian berjalan otomatis: status + sisa waktu, bukan tombol
-                     yang harus ditekan pengunjung setiap kali. */
+                  /* Pemindaian berjalan otomatis tanpa batas waktu: pengunjung
+                     bebas mengatur posisi sampai tangkapannya bagus. Tidak ada
+                     hitungan detik, jadi tidak ada kesan "hampir gagal". */
                   <div className="w-full bg-[#f6cd46]/10 border border-[#f6cd46]/40 p-3.5 rounded-2xl text-center space-y-2 shadow-lg backdrop-blur-md">
                     <div className="flex items-center justify-center gap-2 text-[#f6cd46] font-black text-xs sm:text-sm uppercase tracking-wider">
                       <span className="flex gap-1">
@@ -3068,20 +3145,20 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                         <span className="w-1.5 h-1.5 rounded-full bg-[#f6cd46] animate-bounce" style={{ animationDelay: '150ms' }} />
                         <span className="w-1.5 h-1.5 rounded-full bg-[#f6cd46] animate-bounce" style={{ animationDelay: '300ms' }} />
                       </span>
-                      <span>{scanActive ? 'Mencari bukti pembayaran...' : 'Bersiap memindai...'}</span>
+                      <span>{scanActive ? 'Sedang membaca bukti bayar...' : 'Bersiap memindai...'}</span>
                     </div>
 
                     <p className="text-[11px] sm:text-xs font-semibold text-gray-200 leading-snug">{scanningHint}</p>
 
-                    {/* Sisa waktu: pengunjung tahu masih ada kesempatan mengatur posisi */}
                     <div className="flex items-center justify-center gap-2 pt-0.5">
-                      <span className={`text-2xl font-black tabular-nums ${scanRemainingSeconds <= 5 ? 'text-red-400' : 'text-[#f6cd46]'}`}>
-                        {scanRemainingSeconds}s
-                      </span>
-                      <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${SCAN_QUALITY_STYLES[scanQuality]}`}>
+                      <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full border ${SCAN_QUALITY_STYLES[scanQuality]}`}>
                         {SCAN_QUALITY_LABELS[scanQuality]}
                       </span>
                     </div>
+
+                    <p className="text-[10px] text-gray-400 leading-snug">
+                      Ambil waktu Anda — sistem akan terus membaca sampai berhasil.
+                    </p>
                   </div>
                 )}
               </div>
