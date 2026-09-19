@@ -13,6 +13,7 @@ import {
   SCAN_WINDOW_MS, SCAN_FRAME_GAP_MS,
   remainingMs, progressPercent, remainingSeconds,
   classifyFrame, scanHint, shouldSubmit, keepBestFrames, orderFramesForUpload,
+  guideFrameStyle, SCAN_GUIDE,
 } from '../services/scanWindow';
 import {
   startSession, completeSession, uploadPhoto, sendPhotoByEmail, fetchPaymentProfile,
@@ -1556,6 +1557,20 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     return Math.max(0, sumSq / count - mean * mean);
   };
 
+  // Ambil frame dari kamera untuk dikirim ke vision service.
+  //
+  // PENTING: crop buta di sisi kiosk sudah DIHAPUS.
+  //
+  // Sebelumnya frame dipotong ke tengah (rasio 0.78 + inset 4%), sehingga hanya
+  // ~37% area kamera yang dikirim dan ~63% dibuang. Konsekuensinya fatal: posisi
+  // HP tidak bisa diprediksi, jadi struk yang terlihat "sudah pas" di bingkai
+  // tetap terpotong, dan OCR hanya menerima gambar tanpa teks (di produksi:
+  // skor 0,0,0 dengan teks kosong).
+  //
+  // Menebak posisi dengan rasio apa pun tetap rapuh. Jadi frame dikirim UTUH,
+  // diperkecil seperlunya agar unggahan tetap ringan. Pemotongan yang aman
+  // dilakukan di vision service: di sana crop berbasis DETEKSI area terang,
+  // bukan tebakan posisi, dan gambar asli tetap tersedia sebagai cadangan.
   const captureFrameCandidate = (): Promise<{ blob: Blob; sharpness: number } | null> => {
     return new Promise((resolve) => {
       const video = videoRef.current;
@@ -1565,24 +1580,14 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       }
       const sourceWidth = video.videoWidth || 1920;
       const sourceHeight = video.videoHeight || 1080;
-      // The preview is a portrait phone frame rendered with object-fit: cover.
-      // Crop the same centered portrait area before OCR so receipt text is not
-      // reduced by the unused sides of the landscape camera frame.
-      const previewAspect = 0.78;
-      let cropWidth = sourceWidth;
-      let cropHeight = sourceHeight;
-      if (sourceWidth / sourceHeight > previewAspect) {
-        cropWidth = Math.round(sourceHeight * previewAspect);
-      } else {
-        cropHeight = Math.round(sourceWidth / previewAspect);
-      }
-      const inset = 0.04;
-      cropWidth = Math.round(cropWidth * (1 - inset * 2));
-      cropHeight = Math.round(cropHeight * (1 - inset * 2));
-      const cropX = Math.round((sourceWidth - cropWidth) / 2);
-      const cropY = Math.round((sourceHeight - cropHeight) / 2);
-      const outputWidth = 1400;
-      const outputHeight = Math.round(outputWidth / previewAspect);
+
+      // Perkecil hanya kalau perlu: sisi terpanjang dijaga di sekitar 1400 px
+      // supaya teks struk tetap tajam tanpa membuat berkas terlalu besar.
+      const longSide = Math.max(sourceWidth, sourceHeight);
+      const scale = longSide > 1400 ? 1400 / longSide : 1;
+      const outputWidth = Math.max(1, Math.round(sourceWidth * scale));
+      const outputHeight = Math.max(1, Math.round(sourceHeight * scale));
+
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = outputWidth;
       tempCanvas.height = outputHeight;
@@ -1592,7 +1597,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         ctx.imageSmoothingQuality = 'high';
         // Kontras dinaikkan supaya angka struk lebih tegas bagi OCR.
         ctx.filter = 'contrast(1.24) brightness(1.04) saturate(0.9)';
-        ctx.drawImage(video, cropX, cropY, cropWidth, cropHeight, 0, 0, outputWidth, outputHeight);
+        ctx.drawImage(video, 0, 0, sourceWidth, sourceHeight, 0, 0, outputWidth, outputHeight);
         ctx.filter = 'none';
         const sharpness = measureSharpness(tempCanvas);
         tempCanvas.toBlob((blob) => resolve(blob ? { blob, sharpness } : null), 'image/jpeg', 0.96);
@@ -2901,22 +2906,32 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                 </p>
               </div>
 
-              {/* Center Camera Preview - Tall Elongated Smartphone Shape */}
-              <div className="w-[280px] sm:w-[320px] md:w-[340px] h-[370px] sm:h-[410px] md:h-[440px] max-h-[48vh] bg-black/60 border-2 border-white/20 rounded-[2.2rem] relative overflow-hidden shadow-[0_15px_35px_rgba(0,0,0,0.6)] flex items-center justify-center">
+              {/* Center Camera Preview.
+                  Rasio kotaknya dibuat sama dengan rasio area panduan (widthRatio:
+                  heightRatio) dan isinya memakai object-cover. Dengan begitu
+                  bingkai yang dilihat pengunjung memetakan PERSIS ke area yang
+                  difoto, sehingga "posisikan di dalam bingkai" benar-benar akurat. */}
+              <div
+                className="w-[300px] sm:w-[330px] md:w-[350px] max-h-[52vh] bg-black/60 border-2 border-white/20 rounded-[2.2rem] relative overflow-hidden shadow-[0_15px_35px_rgba(0,0,0,0.6)] flex items-center justify-center"
+                style={{ aspectRatio: `${SCAN_GUIDE.widthRatio} / ${SCAN_GUIDE.heightRatio}` }}
+              >
                 <canvas ref={processingCanvasRef} className="w-full h-full object-cover transform scale-x-[-1]" />
                 
-                {/* Panduan area scan: bingkai berubah warna sesuai mutu tangkapan,
-                    jadi pengunjung langsung tahu apakah posisinya sudah tepat. */}
-                <div className="absolute inset-0 border-[10px] sm:border-[12px] border-black/55 pointer-events-none flex items-center justify-center">
-                  <div className={`w-[88%] h-[92%] border-4 rounded-[2rem] relative transition-colors duration-300 flex items-center justify-center ${
-                    !scanActive
-                      ? 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)]'
-                      : scanQuality === 'good'
-                        ? 'border-solid border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.55)] animate-pulse'
-                        : scanQuality === 'fair'
-                          ? 'border-solid border-amber-400 shadow-[0_0_30px_rgba(251,191,36,0.45)]'
-                          : 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse'
-                  }`}>
+                {/* Bingkai panduan: ukurannya dihitung dari SCAN_GUIDE yang sama
+                    dengan area foto, jadi keduanya tidak mungkin lagi berbeda. */}
+                <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                  <div
+                    className={`border-4 rounded-[1.6rem] relative transition-colors duration-300 flex items-center justify-center ${
+                      !scanActive
+                        ? 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)]'
+                        : scanQuality === 'good'
+                          ? 'border-solid border-emerald-400 shadow-[0_0_35px_rgba(52,211,153,0.55)] animate-pulse'
+                          : scanQuality === 'fair'
+                            ? 'border-solid border-amber-400 shadow-[0_0_30px_rgba(251,191,36,0.45)]'
+                            : 'border-dashed border-[#f6cd46] shadow-[0_0_30px_rgba(246,205,70,0.3)] animate-pulse'
+                    }`}
+                    style={guideFrameStyle()}
+                  >
                     <span className="text-[11px] sm:text-xs text-center font-black uppercase text-white bg-black/80 px-3.5 py-1.5 rounded-full tracking-wider shadow-lg backdrop-blur-sm border border-white/20">
                       {scanQuality === 'good'
                         ? 'Terbaca jelas, tahan posisi'

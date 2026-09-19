@@ -28,9 +28,15 @@ async function getWorker() {
  * Pass 2: OCR ulang pada gambar yang sudah diperbaiki.
  *
  * Hanya dijalankan kalau pass 1 gagal menemukan nominal tagihan, sehingga jalur
- * cepat tetap cepat. Blur diperbaiki dengan penajaman tepi (unsharp mask) dan
- * frame dipusatkan ke layar HP lewat auto-crop; lihat preprocess.js untuk
- * catatan teknik mana yang diukur berguna dan mana yang sengaja tidak dipakai.
+ * cepat tetap cepat.
+ *
+ * Dua perlakuan dijalankan, bukan satu, karena crop bisa salah:
+ *  1. auto-crop + kontras + penajaman — paling kuat ketika layar HP berhasil
+ *     dideteksi (struk jadi mendominasi gambar, teks lebih besar bagi OCR).
+ *  2. penuh tanpa crop + kontras + penajaman — cadangan ketika deteksi layar
+ *     gagal (mis. pencahayaan ruangan juga terang). Tanpa ini, crop yang salah
+ *     justru membuang teks struk dan pass 2 tidak menolong sama sekali.
+ * Lihat preprocess.js untuk catatan teknik mana yang diukur berguna.
  */
 async function retryWithPreprocessing(worker, files, expected) {
   const texts = [];
@@ -41,11 +47,16 @@ async function retryWithPreprocessing(worker, files, expected) {
     } catch (err) {
       continue;
     }
-    const prepared = prepareForOcr(decoded.data, decoded.width, decoded.height);
-    const rgba = grayToRgba(prepared.gray, prepared.width, prepared.height);
-    const buffer = jpeg.encode({ data: rgba, width: prepared.width, height: prepared.height }, 95).data;
-    const result = await worker.recognize(buffer);
-    texts.push(result?.data?.text || '');
+
+    const cropped = prepareForOcr(decoded.data, decoded.width, decoded.height, { crop: true });
+    const full = prepareForOcr(decoded.data, decoded.width, decoded.height, { crop: false });
+
+    for (const prepared of [cropped, full]) {
+      const rgba = grayToRgba(prepared.gray, prepared.width, prepared.height);
+      const buffer = jpeg.encode({ data: rgba, width: prepared.width, height: prepared.height }, 95).data;
+      const result = await worker.recognize(buffer);
+      texts.push(result?.data?.text || '');
+    }
   }
   return texts;
 }

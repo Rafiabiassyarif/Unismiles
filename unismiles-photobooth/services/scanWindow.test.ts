@@ -6,6 +6,7 @@ import {
   remainingMs, isWindowOver, progressPercent, remainingSeconds,
   classifyFrame, countGoodFrames, scanHint, shouldSubmit,
   keepBestFrames, orderFramesForUpload,
+  SCAN_GUIDE, guideFrameStyle,
 } from './scanWindow.ts';
 
 const frame = (sharpness) => ({ sharpness });
@@ -102,4 +103,22 @@ test('daftar frame kosong tidak melempar error', () => {
   assert.strictEqual(keepBestFrames([], frame(5)).length, 1);
   assert.strictEqual(countGoodFrames([]), 0);
   assert.strictEqual(countGoodFrames(null), 0);
+});
+
+// Regresi penyebab utama kegagalan scan di lapangan: bingkai di layar dan area
+// yang difoto berasal dari angka berbeda, sehingga hanya ~37% area kamera yang
+// dikirim ke OCR dan struk yang terlihat "sudah pas" terpotong.
+test('bingkai panduan dihitung dari SCAN_GUIDE, tidak dikarang di JSX', () => {
+  const style = guideFrameStyle();
+  assert.strictEqual(style.width, `${SCAN_GUIDE.widthRatio * 100}%`);
+  assert.strictEqual(style.height, `${SCAN_GUIDE.heightRatio * 100}%`);
+});
+
+test('bingkai panduan tetap di dalam area preview', () => {
+  assert.ok(SCAN_GUIDE.widthRatio > 0 && SCAN_GUIDE.widthRatio < 1);
+  assert.ok(SCAN_GUIDE.heightRatio > 0 && SCAN_GUIDE.heightRatio < 1);
+});
+
+test('bingkai panduan lebih tinggi daripada lebar (bentuk layar HP)', () => {
+  assert.ok(SCAN_GUIDE.heightRatio > SCAN_GUIDE.widthRatio);
 });

@@ -33,6 +33,28 @@ export const FAIR_SHARPNESS = 120;
  */
 export const TARGET_GOOD_FRAMES = 2;
 
+/**
+ * Geometri bingkai panduan yang DIGAMBAR di layar.
+ *
+ * Bingkai ini murni panduan visual supaya pengunjung tahu kira-kira di mana
+ * meletakkan HP. Ini BUKAN area yang dipotong dari kamera: memotong berdasarkan
+ * tebakan posisi pernah membuat 63% area kamera terbuang dan struk terpotong,
+ * jadi frame sekarang dikirim utuh dan pemotongan dilakukan di vision service
+ * lewat deteksi area terang.
+ */
+export const SCAN_GUIDE = {
+  widthRatio: 0.62,
+  heightRatio: 0.8,
+} as const;
+
+/** Style CSS bingkai panduan di layar. */
+export function guideFrameStyle(): { width: string; height: string } {
+  return {
+    width: `${SCAN_GUIDE.widthRatio * 100}%`,
+    height: `${SCAN_GUIDE.heightRatio * 100}%`,
+  };
+}
+
 export type FrameQuality = 'good' | 'fair' | 'poor';
 
 export interface FrameLike {

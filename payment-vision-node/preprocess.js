@@ -187,18 +187,23 @@ function grayToRgba(gray, width, height) {
 }
 
 /**
- * Satu varian gambar siap-OCR: auto-crop, regangkan kontras, lalu tajamkan.
- * Dipakai sebagai percobaan KEDUA setelah OCR mentah gagal, sehingga jalur
- * cepat tetap cepat dan tidak pernah lebih buruk dari sebelumnya.
+ * Satu varian gambar siap-OCR: regangkan kontras lalu tajamkan tepinya.
+ *
+ * @param crop true (default) memusatkan gambar ke layar HP lewat deteksi area
+ *   terang. Setel false untuk memakai seluruh gambar — dipakai sebagai cadangan,
+ *   karena deteksi bisa salah saat ruangan juga terang dan crop yang keliru akan
+ *   membuang teks struk.
+ * Dipakai sebagai percobaan KEDUA setelah OCR mentah gagal, sehingga jalur cepat
+ * tetap cepat dan tidak pernah lebih buruk dari sebelumnya.
  */
-function prepareForOcr(rgba, width, height, { sharpen = true } = {}) {
+function prepareForOcr(rgba, width, height, { crop = true, sharpen = true } = {}) {
   const gray = toGrayscale(rgba, width, height);
-  const cropped = autoCrop(gray, width, height);
-  let prepared = stretchContrast(cropped.gray);
+  const region = crop ? autoCrop(gray, width, height) : { gray, width, height, cropped: false };
+  let prepared = stretchContrast(region.gray);
   if (sharpen) {
-    prepared = unsharpMask(prepared, cropped.width, cropped.height, { radius: 1, amount: 1.1 });
+    prepared = unsharpMask(prepared, region.width, region.height, { radius: 1, amount: 1.1 });
   }
-  return { gray: prepared, width: cropped.width, height: cropped.height, cropped: cropped.cropped };
+  return { gray: prepared, width: region.width, height: region.height, cropped: region.cropped };
 }
 
 module.exports = {
