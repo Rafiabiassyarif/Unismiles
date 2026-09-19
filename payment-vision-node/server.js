@@ -9,7 +9,9 @@ const app = express();
 // Kiosk mengirim beberapa jepretan supaya frame blur bisa dibuang; batas
 // dinaikkan dari 3 agar tidak ditolak multer sebelum dinilai.
 const upload = multer({ limits: { files: 8, fileSize: 8 * 1024 * 1024 } });
-const port = Number(process.env.PORT || 5018);
+// Default port mengikuti port runtime KroomBox untuk site ini, supaya nilai di
+// server tidak perlu diubah manual setiap kali deploy.
+const port = Number(process.env.PORT || 5013);
 const token = process.env.PAYMENT_VISION_SERVICE_TOKEN || '';
 let workerPromise;
 let busy = false;
