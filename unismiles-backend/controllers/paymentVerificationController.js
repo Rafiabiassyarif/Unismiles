@@ -227,11 +227,26 @@ async function processVerificationInBackground(attemptId, sessionCode, kioskId, 
       }
     }
   } catch (error) {
-    console.error(`[Background-Verify] Error during processing:`, error);
+    // Pesan error asli disimpan ke DB, bukan hanya dicetak ke log.
+    //
+    // Sebelumnya hanya `reason_codes: ['INTERNAL_ERROR']` yang tersimpan, jadi
+    // penyebab sebenarnya tidak bisa dilihat dari panel (log PM2 situs ini tidak
+    // terjangkau) dan diagnosa jadi menebak-nebak. Sekarang pesan ringkasnya ikut
+    // masuk ke review_reason supaya bisa dibaca langsung di Admin.
+    const detail = [
+      `${error?.name || 'Error'}: ${String(error?.message || error).slice(0, 160)}`,
+      error?.code ? `code=${error.code}` : null,
+      error?.sqlMessage ? `sql=${String(error.sqlMessage).slice(0, 120)}` : null,
+      error?.cause?.code ? `cause=${error.cause.code}` : null,
+    ].filter(Boolean).join(' | ');
+
+    console.error(`[Background-Verify] Error during processing:`, detail, error);
+
     await PaymentVerificationModel.update(attemptId, {
       status: 'error',
       decision: 'manual_review',
-      reason_codes: ['INTERNAL_ERROR']
+      reason_codes: ['INTERNAL_ERROR'],
+      review_reason: detail.slice(0, 255)
     });
   }
 }
