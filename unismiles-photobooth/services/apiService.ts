@@ -158,11 +158,25 @@ export class KioskApiError extends Error {
 const toKioskApiError = (error: any, fallbackMessage: string): KioskApiError => {
   const status = error?.response?.status;
   const responseData = error?.response?.data;
-  const message = responseData?.message
+  const code = responseData?.code;
+  const serverMessage = responseData?.message
     || responseData?.error
     || responseData?.detail
-    || (typeof responseData === 'string' ? responseData : '')
-    || fallbackMessage;
+    || (typeof responseData === 'string' ? responseData : '');
+
+  // Email belum dikonfigurasi bukan "backend tidak dapat diakses".
+  //
+  // Backend menjawab 503 + code EMAIL_NOT_CONFIGURED, tetapi pesan generik
+  // membuat pengunjung (dan operator) mengira koneksi yang bermasalah, sehingga
+  // dicari-cari masalah jaringan padahal SMTP memang belum diisi.
+  if (code === 'EMAIL_NOT_CONFIGURED') {
+    return new KioskApiError(
+      'Fitur kirim email belum diaktifkan di server. Hubungi petugas untuk mengaktifkannya.',
+      status,
+    );
+  }
+
+  const message = serverMessage || fallbackMessage;
   return new KioskApiError(message, status);
 };
 
