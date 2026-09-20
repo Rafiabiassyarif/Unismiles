@@ -5,12 +5,60 @@ import api from '../lib/api';
 import { cn } from '../lib/utils';
 import { useAuth } from './AuthProvider';
 
-const ADAPTERS = ['disabled', 'cups', 'windows', 'mock'] as const;
-const PAPER_SIZES = [
-  'Instax Mini (54 × 86 mm)', '2 Strip 5 × 15 cm', '3 Strip 5 × 15 cm', 
-  '4 Strip 5 × 15 cm', '2×2 Grid 10 × 10 cm', '2×3 Grid 10 × 15 cm'
+/**
+ * Adapter yang bisa dipilih dari Admin.
+ *
+ * `thermal` untuk printer label termal (mis. NIIMBOT B1 Pro): lebar cetak
+ * efektif 48 mm, tinggi 8-350 mm, dua warna (merah & hitam).
+ */
+const ADAPTERS = ['disabled', 'cups', 'windows', 'thermal', 'mock'] as const;
+
+/** Preset ukuran foto lama — dipertahankan supaya konfigurasi yang ada tidak rusak. */
+const PHOTO_PRESETS = [
+  'Instax Mini (54 × 86 mm)', 'Polaroid 6 × 9 cm (2R)', '2 Strip 5 × 15 cm',
+  '3 Strip 5 × 15 cm', '4 Strip 5 × 15 cm', '2×2 Grid 10 × 10 cm', '2×3 Grid 10 × 15 cm',
 ] as const;
+
+/**
+ * Preset termal. Semua lebarnya <= 48 mm supaya tidak terpotong printer label.
+ * Angka tinggi mengikuti jumlah foto dalam satu strip.
+ */
+const THERMAL_PRESETS = [
+  'Termal 40 × 60 mm (2 foto)',
+  'Termal 40 × 90 mm (3 foto)',
+  'Termal 40 × 120 mm (4 foto)',
+  'Termal 48 × 150 mm (strip panjang)',
+  'Termal 30 × 40 mm (label kecil)',
+] as const;
+
+const PAPER_SIZES = [...PHOTO_PRESETS, ...THERMAL_PRESETS] as const;
+
+/** Batas printer termal, untuk memandu pengisian ukuran kustom. */
+const THERMAL_LIMITS = { maxPrintWidthMm: 48, minHeightMm: 8, maxHeightMm: 350, dpi: 300 };
+
 const ORIENTATIONS = ['portrait', 'landscape'] as const;
+
+/** Pola ukuran kustom, sama dengan yang divalidasi backend. */
+const CUSTOM_PATTERN = /^CUSTOM\s+(\d{1,3})\s*[X×]\s*(\d{1,3})\s*MM$/i;
+
+/**
+ * Ukuran kustom yang diminta pengguna masih dalam batas printer termal?
+ * Dipakai untuk memberi peringatan lebih awal di panel, supaya pengguna tidak
+ * menyimpan ukuran yang pasti ditolak backend.
+ */
+function customSizeProblem(value: string): string | null {
+  const match = String(value || '').trim().match(CUSTOM_PATTERN);
+  if (!match) return 'Format: CUSTOM <lebar>X<tinggi> MM (contoh: CUSTOM 48X150 MM)';
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  if (width > THERMAL_LIMITS.maxPrintWidthMm) {
+    return `Lebar ${width} mm melebihi lebar cetak printer termal (${THERMAL_LIMITS.maxPrintWidthMm} mm)`;
+  }
+  if (height < THERMAL_LIMITS.minHeightMm || height > THERMAL_LIMITS.maxHeightMm) {
+    return `Tinggi harus ${THERMAL_LIMITS.minHeightMm}-${THERMAL_LIMITS.maxHeightMm} mm (diminta ${height} mm)`;
+  }
+  return null;
+}
 
 type PrinterConfig = {
   printing_enabled: boolean;
@@ -79,6 +127,26 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
   const canEnable = adapterSupported && Boolean(config.printer_name);
   const setField = (field: keyof PrinterConfig, value: any) => setConfig(current => ({ ...current, [field]: value }));
 
+  // Ukuran kustom: pengguna mengetik sendiri lebar x tinggi. Draft disimpan
+  // terpisah supaya teks yang sedang diketik tidak hilang saat belum valid.
+  const isCustomSize = /^custom\s/i.test(String(config.paper_size || ''));
+  const [customDraft, setCustomDraft] = useState<string>(isCustomSize ? config.paper_size : 'CUSTOM 48X150 MM');
+  useEffect(() => { if (isCustomSize) setCustomDraft(config.paper_size); }, [isCustomSize, config.paper_size]);
+
+  const customProblem = isCustomSize ? customSizeProblem(config.paper_size) : null;
+
+  /**
+   * Ukuran gambar dalam piksel untuk 300 dpi. Ditampilkan supaya jelas bahwa
+   * ukuran kertas menentukan resolusi yang perlu dikirim ke printer — bukan
+   * sekadar label.
+   */
+  const thermalPixels = useMemo(() => {
+    const match = String(config.paper_size || '').match(/CUSTOM\s+(\d{1,3})\s*[X×]\s*(\d{1,3})\s*MM/i);
+    if (!match) return null;
+    const px = (mm: number) => Math.round((mm / 25.4) * THERMAL_LIMITS.dpi);
+    return `${px(Number(match[1]))} × ${px(Number(match[2]))} px`;
+  }, [config.paper_size]);
+
   const handleToggle = () => {
     if (!config.printing_enabled) {
       if (!canEnable) {
@@ -94,6 +162,12 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
   const handleSave = async () => {
     if (config.printing_enabled && !canEnable) {
       toast.error('Printing hanya dapat diaktifkan jika adapter dan printer valid tersedia.');
+      return;
+    }
+    // Ukuran kustom yang di luar batas printer akan ditolak backend; tolak lebih
+    // awal di panel supaya pengguna tidak menunggu request yang pasti gagal.
+    if (isCustomSize && customProblem) {
+      toast.error(customProblem);
       return;
     }
     setSaving(true);
@@ -234,7 +308,48 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
             <input type="text" className={fieldClass} placeholder="Ketik nama printer..." value={config.printer_name || ''} disabled={!canEdit || config.adapter === 'disabled'} onChange={e => setField('printer_name', e.target.value || null)} />
           )}
         </label>
-        <label className="space-y-2"><span className="label">Paper Size</span><select className={fieldClass} value={config.paper_size} disabled={!canEdit} onChange={e => setField('paper_size', e.target.value)}>{PAPER_SIZES.map(size => <option key={size}>{size}</option>)}</select></label>
+        <label className="space-y-2">
+          <span className="label">Paper Size</span>
+          {/* Preset + opsi ukuran kustom. Saat "custom" dipilih, muncul kolom
+              untuk mengisi lebar x tinggi dalam mm; batas printer termal
+              ditampilkan supaya tidak menyimpan ukuran yang pasti ditolak. */}
+          <select
+            className={fieldClass}
+            value={isCustomSize ? '__custom__' : config.paper_size}
+            disabled={!canEdit}
+            onChange={e => {
+              const value = e.target.value;
+              if (value === '__custom__') { setField('paper_size', customDraft || 'CUSTOM 48X150 MM'); return; }
+              setField('paper_size', value);
+            }}
+          >
+            <optgroup label="Foto (printer tinta)">
+              {PHOTO_PRESETS.map(size => <option key={size} value={size}>{size}</option>)}
+            </optgroup>
+            <optgroup label={`Termal / label (lebar maks ${THERMAL_LIMITS.maxPrintWidthMm} mm)`}>
+              {THERMAL_PRESETS.map(size => <option key={size} value={size}>{size}</option>)}
+            </optgroup>
+            <option value="__custom__">Ukuran kustom…</option>
+          </select>
+          {isCustomSize && (
+            <div className="space-y-1.5 pt-1">
+              <input
+                className={fieldClass}
+                type="text"
+                placeholder="CUSTOM 48X150 MM"
+                value={customDraft}
+                disabled={!canEdit}
+                onChange={e => { setCustomDraft(e.target.value); setField('paper_size', e.target.value); }}
+              />
+              <p className={cn('text-[10px] font-bold', customProblem ? 'text-amber-300' : 'text-muted')}>
+                {customProblem || `OK — ${thermalPixels || 'ukuran dalam batas printer'}`}
+              </p>
+              <p className="text-[10px] text-muted font-bold">
+                Lebar maks {THERMAL_LIMITS.maxPrintWidthMm} mm · tinggi {THERMAL_LIMITS.minHeightMm}-{THERMAL_LIMITS.maxHeightMm} mm · {THERMAL_LIMITS.dpi} dpi
+              </p>
+            </div>
+          )}
+        </label>
           <label className="space-y-2">
             <span className="label">Allowed Layout</span>
             <select 

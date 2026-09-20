@@ -1,8 +1,15 @@
-const ADAPTERS = ['disabled', 'cups', 'windows', 'mock'];
-const PAPER_SIZES = [
-  'Instax Mini (54 × 86 mm)', 'Polaroid 6 × 9 cm (2R)', '2 Strip 5 × 15 cm', '3 Strip 5 × 15 cm', 
-  '4 Strip 5 × 15 cm', '2×2 Grid 10 × 10 cm', '2×3 Grid 10 × 15 cm'
-];
+const { PAPER_SIZES, isKnownPaperSize, validateCustomSize, isThermalSize } = require('./paperSizes');
+
+/**
+ * Adapter yang dikenal.
+ *
+ * `thermal` ditambahkan untuk printer label termal (mis. NIIMBOT B1 Pro). Di
+ * sistem operasi, printer itu tetap terpasang sebagai printer biasa (CUPS di
+ * macOS, spooler di Windows), jadi adapter thermal melakukan hal yang sama
+ * seperti adapter OS — bedanya ukuran kertas dan orientasinya mengikuti batas
+ * printer label, bukan ukuran foto.
+ */
+const ADAPTERS = ['disabled', 'cups', 'windows', 'mock', 'thermal'];
 const ORIENTATIONS = ['portrait', 'landscape'];
 const FORBIDDEN_FIELDS = new Set(['command', 'shell_command', 'executable_path', 'script', 'driver_command']);
 const ALLOWED_FIELDS = new Set([
@@ -67,8 +74,16 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
   if (!ADAPTERS.includes(adapter)) {
     throw new PrintingConfigValidationError(`adapter must be one of: ${ADAPTERS.join(', ')}.`);
   }
-  if (!PAPER_SIZES.includes(merged.paper_size)) {
-    throw new PrintingConfigValidationError(`paper_size must be one of: ${PAPER_SIZES.join(', ')}.`);
+  // Ukuran kertas: preset foto, preset termal, atau ukuran kustom "CUSTOM LxT MM".
+  // Ukuran kustom divalidasi terhadap batas fisik printer termal supaya tidak ada
+  // ukuran yang diterima sistem tetapi pasti terpotong di printer.
+  if (!isKnownPaperSize(merged.paper_size)) {
+    const custom = validateCustomSize(merged.paper_size);
+    if (!custom.ok) {
+      throw new PrintingConfigValidationError(
+        custom.message || `paper_size must be one of: ${PAPER_SIZES.join(', ')}, atau ukuran kustom.`
+      );
+    }
   }
   if (!ORIENTATIONS.includes(merged.orientation)) {
     throw new PrintingConfigValidationError('orientation must be portrait or landscape.');

@@ -2,7 +2,8 @@ const { io } = require('socket.io-client');
 const hardware = require('./hardware');
 const logger = require('./logger');
 const { downloadImage, cleanupDownloadedImage } = require('./imageDownloader');
-const { createPrinterAdapter, supportedAdapters, discoverPrinters } = require('./printerAdapterFactory');
+const { createPrinterAdapter, supportedAdapters, discoverPrinters, SUPPORTED_ADAPTER_NAMES } = require('./printerAdapterFactory');
+const { isSupportedPaperSize } = require('./paperSizes');
 
 /**
  * WebSocket & Socket.IO Client Manager for Kiosk Agent
@@ -470,18 +471,7 @@ class KioskWSClient {
       error.code = 'INVALID_COPIES';
       throw error;
     }
-    if (![
-      '2R', '3R', '4R', 'STRIP', '6R',
-      'POLAROID', 'STRIP 2', 'STRIP 3', 'STRIP 4',
-      'GRID', 'GRID 2X2', 'GRID 2X3', 'GRID 3X3',
-      'INSTAX MINI (54 × 86 MM)',
-      'POLAROID 6 × 9 CM (2R)',
-      '2 STRIP 5 × 15 CM',
-      '3 STRIP 5 × 15 CM',
-      '4 STRIP 5 × 15 CM',
-      '2×2 GRID 10 × 10 CM',
-      '2×3 GRID 10 × 15 CM'
-    ].includes(paperSize)) {
+    if (!isSupportedPaperSize(paperSize)) {
       const error = new Error(`paper_size tidak didukung: ${paperSize}`);
       error.code = 'INVALID_PAPER_SIZE';
       throw error;
@@ -745,21 +735,10 @@ class KioskWSClient {
       retryCount: Number(config.retry_count ?? this.printerConfig.retryCount ?? 2),
     };
 
-    if (!['disabled', 'cups', 'windows', 'mock'].includes(nextConfig.adapter)) throw new Error('Unsupported printer adapter received from backend');
+    if (!SUPPORTED_ADAPTER_NAMES.includes(nextConfig.adapter)) throw new Error('Unsupported printer adapter received from backend');
     if (nextConfig.adapter !== 'disabled' && !supportedAdapters().includes(nextConfig.adapter)) throw new Error(`Printer adapter ${nextConfig.adapter} is not supported by this agent`);
     if (nextConfig.enabled && !nextConfig.printerName) throw new Error('Enabled printer configuration has no printer name');
-    if (![
-      '2R', '3R', '4R', 'STRIP', '6R',
-      'POLAROID', 'STRIP 2', 'STRIP 3', 'STRIP 4',
-      'GRID', 'GRID 2X2', 'GRID 2X3', 'GRID 3X3',
-      'INSTAX MINI (54 × 86 MM)',
-      'POLAROID 6 × 9 CM (2R)',
-      '2 STRIP 5 × 15 CM',
-      '3 STRIP 5 × 15 CM',
-      '4 STRIP 5 × 15 CM',
-      '2×2 GRID 10 × 10 CM',
-      '2×3 GRID 10 × 15 CM'
-    ].includes(nextConfig.paperSize)) throw new Error('Unsupported paper size received from backend');
+    if (!isSupportedPaperSize(nextConfig.paperSize)) throw new Error('Unsupported paper size received from backend');
     if (!['portrait', 'landscape'].includes(nextConfig.orientation)) throw new Error('Unsupported printer orientation received from backend');
     if (!Number.isInteger(nextConfig.copiesLimit) || nextConfig.copiesLimit < 1 || nextConfig.copiesLimit > 10) throw new Error('Invalid printer copies limit received from backend');
     if (!Number.isInteger(nextConfig.timeoutMs) || nextConfig.timeoutMs < 5000 || nextConfig.timeoutMs > 300000) throw new Error('Invalid printer timeout received from backend');
