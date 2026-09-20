@@ -673,6 +673,17 @@ class KioskWSClient {
       this.reportedState.allowedLayouts = printing.allowed_layouts;
     }
 
+    // Ukuran kertas dari Admin HARUS ikut dilaporkan ke photobooth.
+    //
+    // Sebelumnya baris ini tidak ada: applyPrintingConfig menyimpan paper_size ke
+    // this.printerConfig (dipakai saat mencetak), tetapi reportedState.paperSize
+    // tidak pernah diperbarui dari sana. Akibatnya photobooth selalu meminta
+    // '4R' walau Admin sudah memilih ukuran lain — jadi ukuran kertas tidak
+    // pernah benar-benar dinamis.
+    if (printing && printing.paper_size) {
+      this.reportedState.paperSize = printing.paper_size;
+    }
+
     if (printing) {
       await this.applyPrintingConfig(printing);
     }

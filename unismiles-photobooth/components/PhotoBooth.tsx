@@ -38,6 +38,17 @@ const getCaptureDurationSeconds = (slotCount: number): number => {
   return (slotCount + 2) * 60;
 };
 
+/**
+ * Ukuran kertas per layout — DIPAKAI HANYA SEBAGAI CADANGAN.
+ *
+ * Sumber utama ukuran kertas adalah pengaturan Admin (Kiosk Manager → Printer
+ * Configuration → Paper Size), yang dikirim ke kiosk lewat kiosk-agent.
+ *
+ * Sebelumnya fungsi ini tidak pernah dipanggil sama sekali: kode langsung memakai
+ * kioskPaperSize yang selalu bernilai '4R', sehingga layout 1x1 dan strip pun
+ * meminta kertas 4R. Fungsi ini dipakai lagi sebagai cadangan supaya permintaan
+ * ukuran kertas tetap masuk akal kalau Admin belum mengatur apa pun.
+ */
 const getPaperSizeForLayout = (layoutId: string | null): string => {
   switch(layoutId) {
     case '1x1': return '3R';
@@ -2542,10 +2553,19 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
           const printConfig = getEffectiveLayoutConfig(processedFrame || selectedFrame, selectedLayoutId);
           const idempotencyKey = makeIdempotencyKey();
+
+          // Ukuran kertas mengikuti pengaturan Admin. Kalau Admin belum mengatur
+          // (masih nilai bawaan), pakai pemetaan per layout supaya tidak selalu
+          // meminta 4R untuk semua layout.
+          const adminPaperSize = String(kioskPaperSize || '').trim();
+          const paperSize = adminPaperSize && adminPaperSize.toUpperCase() !== '4X6'
+              ? adminPaperSize
+              : getPaperSizeForLayout(selectedLayoutId);
+
           const job = await queuePrintJob(sessionCode, {
               image_url: imageUrl,
               copies: 1,
-              paper_size: String(kioskPaperSize),
+              paper_size: paperSize,
               orientation: printConfig.width > printConfig.height ? 'landscape' : 'portrait',
               idempotency_key: idempotencyKey
           });
