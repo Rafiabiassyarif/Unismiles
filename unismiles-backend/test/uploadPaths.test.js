@@ -39,13 +39,19 @@ test('berkas statis disajikan dengan path absolut', () => {
 test('folder uploads dihitung dari lokasi berkas, bukan CWD', () => {
   assert.match(server, /const uploadsDir = path\.join\(__dirname, 'uploads'\)/,
     'folder statis harus relatif terhadap __dirname');
+
   // uploadMiddleware memakai nama `uploadDir` dan menulis ke sana.
   assert.match(uploadMiddleware, /const uploadDir = path\.join\(__dirname, '\.\.\/uploads'\)/,
     'folder tulis harus relatif terhadap __dirname');
   assert.match(uploadMiddleware, /cb\(null, uploadDir\)/,
     'multer harus menulis ke path absolut');
+
+  // Periksa hanya baris kode: komentar penjelas juga menyebut 'uploads/'.
+  const codeLines = uploadMiddleware
+    .split('\n')
+    .filter(l => !l.trim().startsWith('//'));
   assert.ok(
-    !/cb\(null, 'uploads\/'\)/.test(uploadMiddleware),
+    !codeLines.some(l => /cb\(null, 'uploads\/'\)/.test(l)),
     "path relatif 'uploads/' akan menulis ke folder yang tidak disajikan"
   );
 });
