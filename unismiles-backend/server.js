@@ -151,4 +151,20 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 5017;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Uni-Smiles REST API & WebSocket Server is running on port ${PORT}`);
+
+  // Ringkasan status konfigurasi saat start.
+  //
+  // Kenapa dicetak: kegagalan konfigurasi sebelumnya hanya terlihat sebagai
+  // gejala di fitur (mis. "Email gagal dikirim", logout paksa) sehingga
+  // penyebabnya sulit ditemukan. Satu baris di log langsung menunjukkan apa
+  // yang belum terpasang. Tidak ada nilai rahasia yang dicetak — hanya
+  // "terpasang/belum".
+  const isSet = (value) => Boolean(String(value ?? '').trim());
+  const emailReady = isSet(process.env.SMTP_USER) && isSet(process.env.SMTP_PASS);
+  console.log(
+    '[Config] email=' + (emailReady ? 'aktif' : 'BELUM (SMTP_USER/SMTP_PASS kosong)') +
+    ' | vision=' + (process.env.PAYMENT_VISION_SERVICE_URL || 'deteksi otomatis port') +
+    ' | jwt=' + (isSet(process.env.JWT_SECRET) ? 'ok' : 'KOSONG') +
+    ' | base=' + (process.env.PUBLIC_BASE_URL || 'kosong')
+  );
 });
