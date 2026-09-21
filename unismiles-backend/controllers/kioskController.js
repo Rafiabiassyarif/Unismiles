@@ -390,14 +390,18 @@ const kioskController = {
         }
 
         const parseJSON = (val, fallback = []) => parseJson(val, fallback);
-        const layoutConfig = parseJSON(r.layout_config, {});
+        let layoutConfig = parseJSON(r.layout_config, {});
+
+        // Gambar dari daftar aset disimpan sebagai asset_id, dan kolom image_url
+        // sering kosong. API Admin sudah menyuntikkan overlayUrl dari asset_id di
+        // frameTemplateController.getTemplates, tetapi endpoint kiosk ini belum —
+        // akibatnya Admin menampilkan gambar sementara kiosk tidak.
+        if (r.asset_file_url) {
+          layoutConfig.overlayUrl = layoutConfig.overlayUrl || layoutConfig.overlay_url || r.asset_file_url;
+        }
 
         // Sumber gambar, berurutan: kolom image_url, lalu overlayUrl di
-        // layout_config, lalu berkas aset yang dipilih lewat asset_id.
-        //
-        // frame_type 'png' dengan image_url kosong adalah kasus nyata: gambar
-        // sudah dipilih di Frame Editor tetapi tersimpan sebagai asset_id saja,
-        // sehingga tanpa cadangan ini kiosk menerima template tanpa gambar.
+        // layout_config (termasuk hasil asset_id di atas), lalu berkas aset.
         const rawUrl = (r.image_url && r.image_url.trim())
           || layoutConfig.overlayUrl || layoutConfig.overlay_url
           || r.asset_file_url || '';
