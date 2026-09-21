@@ -64,9 +64,23 @@ test('pengirim email membaca kredensial dari environment', () => {
 
 test('status konfigurasi dicetak saat start tanpa membocorkan rahasia', () => {
   assert.match(server, /\[Config\]/, 'ringkasan konfigurasi harus dicetak saat start');
-  // Yang dicetak hanya "ada/tidak ada" — pastikan tidak ada nilai SMTP yang ikut.
-  const configLine = server.split('\n').filter((l) => l.includes('[Config]')).join('\n');
-  assert.ok(!/SMTP_PASS\s*\+|\+\s*process\.env\.SMTP_PASS/.test(configLine),
-    'nilai rahasia tidak boleh dicetak ke log');
   assert.match(server, /emailReady/, 'status email harus disimpulkan dari ada/tidaknya kredensial');
+
+  // Yang boleh dicetak hanya "ada/belum". Cara amannya: nilai rahasia HANYA
+  // dipakai sebagai argumen isSet(), yang mengembalikan boolean — bukan nilainya.
+  // Menyebut NAMANYA di teks pesan (mis. "SMTP_PASS kosong") tidak membocorkan apa pun.
+  const block = server.slice(server.indexOf('[Config]') - 400);
+  const secretRefs = block.match(/process\.env\.(?:SMTP_PASS|SMTP_USER|JWT_SECRET)/g) || [];
+  assert.ok(secretRefs.length > 0, 'blok konfigurasi harus memeriksa kredensial');
+
+  for (const ref of secretRefs) {
+    const at = block.indexOf(ref);
+    const before = block.slice(Math.max(0, at - 12), at);
+    assert.match(before, /isSet\($/, `${ref} harus dibungkus isSet(), bukan dicetak langsung`);
+  }
+
+  assert.ok(
+    !/['"`][^'"`]*\$\{process\.env\.(?:SMTP_PASS|SMTP_USER|JWT_SECRET)\}/.test(block),
+    'nilai rahasia tidak boleh diinterpolasi ke dalam teks log',
+  );
 });
