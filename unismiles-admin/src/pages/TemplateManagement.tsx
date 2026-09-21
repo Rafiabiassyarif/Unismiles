@@ -587,13 +587,22 @@ const FrameEditorModal: React.FC<FrameEditorModalProps> = ({
   }));
 
   useEffect(() => {
-    fetchReusableAssets('logo').then(list => {
-      setAssets(list);
-      if (existingAssetId) {
-        const selected = list.find(asset => String(asset.id) === String(existingAssetId));
-        if (selected) update({ overlayAssetUrl: selected.url });
-      }
-    }).catch(() => undefined);
+    // Ambil KEDUA jenis aset, bukan hanya 'logo'.
+    //
+    // Sebelumnya di sini hanya 'logo', padahal gambar frame yang di-upload lewat
+    // "Upload Image" disimpan sebagai 'overlay'. Akibatnya gambar berhasil
+    // tersimpan tetapi tidak pernah muncul di daftar — pengguna melihat seolah
+    // upload-nya gagal.
+    Promise.all([fetchReusableAssets('logo'), fetchReusableAssets('overlay')])
+      .then(([logos, overlays]) => {
+        const list = [...overlays, ...logos];
+        setAssets(list);
+        if (existingAssetId) {
+          const selected = list.find(asset => String(asset.id) === String(existingAssetId));
+          if (selected) update({ overlayAssetUrl: selected.url });
+        }
+      })
+      .catch(() => undefined);
   }, [existingAssetId]);
 
   const update = (patch: Partial<EditorState>) => setState(s => ({ ...s, ...patch }));

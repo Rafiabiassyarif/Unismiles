@@ -11,7 +11,13 @@ if (!fs.existsSync(uploadDir)) {
 // Configure multer storage
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/');
+    // Path ABSOLUT, bukan relatif.
+    //
+    // `cb(null, 'uploads/')` diselesaikan terhadap CWD proses. Backend dijalankan
+    // dari root monorepo, jadi berkas tertulis ke <root>/uploads — bukan
+    // <root>/unismiles-backend/uploads tempat berkas statis disajikan. Akibatnya
+    // upload berhasil tetapi gambarnya 404.
+    cb(null, uploadDir);
   },
   filename: function (req, file, cb) {
     // Generate a unique filename using Date and a random number to prevent overwriting

@@ -60,13 +60,22 @@ app.use(requestId);
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ limit: '2mb', extended: true }));
-app.use('/uploads', express.static('uploads', {
+// Berkas statis disajikan dengan path ABSOLUT, bukan relatif.
+//
+// Kenapa: proses backend dijalankan dari root monorepo, sehingga `express.static('uploads')`
+// menunjuk ke <root>/uploads — folder yang tidak ada. Padahal multer menulis ke
+// <root>/unismiles-backend/uploads. Akibatnya semua URL gambar mengembalikan 404:
+// gambar frame yang di-upload tersimpan di disk dan tercatat di database, tetapi
+// tidak bisa ditampilkan di Admin maupun diambil kiosk.
+const uploadsDir = path.join(__dirname, 'uploads');
+
+app.use('/uploads', express.static(uploadsDir, {
   setHeaders: (res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   }
 }));
-app.use('/assets', express.static('uploads/assets', {
+app.use('/assets', express.static(path.join(uploadsDir, 'assets'), {
   setHeaders: (res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
@@ -96,9 +105,18 @@ app.get('/api/v1/public/__build', (req, res) => {
 
 app.use('/api/v1/public', publicRoutes);
 app.use('/api/v1/kiosk', kioskRoutes);
-app.use('/api/v1/admin', adminRoutes);
-// Kept as a separate router so asset uploads have stricter PNG validation.
+
+// PENTING soal urutan: route yang lebih spesifik harus dipasang LEBIH DULU.
+//
+// Express mencocokkan berurutan, jadi `app.use('/api/v1/admin', adminRoutes)`
+// akan menangkap SEMUA /api/v1/admin/* termasuk /api/v1/admin/assets. Akibatnya
+// router aset di bawah ini tidak pernah tercapai, dan upload gambar di Frame
+// Editor gagal dengan 404 walau berkasnya sudah terkirim.
+//
+// Ini penyebab nyata "gambar berhasil di-upload tapi tidak muncul di Admin".
 app.use('/api/v1/admin/assets', assetRoutes);
+// Router terpisah supaya upload aset punya validasi PNG yang lebih ketat.
+app.use('/api/v1/admin', adminRoutes);
 app.get('/api/kiosk-status', (req, res) => {
   res.status(200).json({
     success: true,
