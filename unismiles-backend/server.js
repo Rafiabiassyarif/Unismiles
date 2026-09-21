@@ -82,6 +82,16 @@ app.use('/assets', express.static(path.join(uploadsDir, 'assets'), {
   }
 }));
 
+// Aset lama disimpan langsung di /uploads (bukan /uploads/assets) sebelum folder
+// aset dibuat. URL-nya masih tersimpan di database, jadi tanpa cadangan ini
+// gambar lama tampil rusak (404) walau berkasnya masih ada di disk.
+app.use('/uploads/assets', express.static(path.join(uploadsDir, 'assets'), {
+  setHeaders: (res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
+}));
+
 const downloadController = require('./controllers/downloadController');
 app.get('/download/:session_code', createRateLimiter({ windowMs: 60_000, max: 20, keyGenerator: req => `download:${req.ip}` }), downloadController.serveDownloadPage);
 

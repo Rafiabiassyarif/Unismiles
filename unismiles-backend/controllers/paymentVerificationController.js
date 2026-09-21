@@ -12,6 +12,14 @@ const { decideVerification } = require('../utils/paymentDecision');
 
 const privateUploadsDir = path.join(__dirname, '../private_uploads');
 
+/**
+ * Perpanjangan masa berlaku sesi setiap kali bukti bayar diterima (menit).
+ *
+ * Cukup panjang untuk satu ronde pengambilan + pemindaian, tapi tetap terbatas
+ * supaya sesi yang benar-benar ditinggalkan bisa dibersihkan.
+ */
+const PAYMENT_ACTIVE_WINDOW_MINUTES = 15;
+
 // Ensure private uploads directory exists
 fs.mkdir(privateUploadsDir, { recursive: true }).catch(console.error);
 
@@ -279,9 +287,27 @@ const PaymentVerificationController = {
         return res.status(400).json({ success: false, message: 'Pembayaran untuk sesi ini sudah terverifikasi' });
       }
 
-      if (session.payment_expires_at && Date.now() > new Date(session.payment_expires_at).getTime()) {
-        return res.status(400).json({ success: false, message: 'Sesi pembayaran sudah kadaluwarsa' });
-      }
+      // Kedaluwarsa TIDAK lagi memblokir pengunjung yang sedang memindai.
+      //
+      // Masa berlaku lama dihitung sejak sesi dibuat — dan sesi dibuat saat
+      // pengunjung MEMILIH LAYOUT, sebelum berfoto. Dengan durasi foto 4-5 menit
+      // dan masa berlaku bawaan 5 menit, sesi sudah habis sebelum pengunjung
+      // sampai ke layar pembayaran. Akibatnya setiap unggahan bukti dijawab
+      // HTTP 400 "Sesi pembayaran sudah kadaluwarsa" — persis keluhan di kiosk.
+      //
+      // Sesuai keputusan pemilik: pemindaian tanpa batas waktu. Pengunjung yang
+      // sedang mengirim bukti jelas sedang aktif memakai kiosk, bukan
+      // meninggalkannya, jadi tidak ada alasan menolaknya.
+      //
+      // Pembersihan sesi yang benar-benar ditinggal tetap berjalan lewat query
+      // di sessionController (menandai sesi kedaluwarsa jadi 'expired'). Supaya
+      // sesi yang sedang aktif tidak ikut dibersihkan, masa berlakunya
+      // diperpanjang di sini setiap kali bukti diterima.
+      await pool.query(
+        `UPDATE sessions SET payment_expires_at = DATE_ADD(NOW(), INTERVAL ? MINUTE)
+         WHERE session_code = ?`,
+        [PAYMENT_ACTIVE_WINDOW_MINUTES, sessionCode]
+      );
 
       // Batas percobaan per sesi.
       //
