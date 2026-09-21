@@ -351,12 +351,19 @@ const kioskController = {
   getKioskTemplates: async (req, res) => {
     try {
       const userId = req.kiosk.user_id;
+      // `asset_id` ikut diambil: gambar frame yang dipilih dari daftar aset
+      // (hasil "Upload Image" di Frame Editor) disimpan sebagai asset_id, dan
+      // kolom image_url-nya sering KOSONG. Tanpa join ke admin_assets, kiosk
+      // menerima template tanpa gambar sama sekali.
       const [rows] = await pool.query(
-        `SELECT id, name, price, image_url, slot_count, layout_config, layout_id, bg_color, accent_color,
-                frame_type, gradient_stops, gradient_angle, gradient_style, text_elements
-         FROM frame_templates
-         WHERE (user_id = ? OR user_id IS NULL) AND is_active = 1 AND deleted_at IS NULL
-         ORDER BY created_at DESC`,
+        `SELECT ft.id, ft.name, ft.price, ft.image_url, ft.slot_count, ft.layout_config, ft.layout_id,
+                ft.bg_color, ft.accent_color, ft.frame_type, ft.gradient_stops, ft.gradient_angle,
+                ft.gradient_style, ft.text_elements,
+                a.file_url AS asset_file_url
+         FROM frame_templates ft
+         LEFT JOIN admin_assets a ON a.id = ft.asset_id AND a.is_active = 1
+         WHERE (ft.user_id = ? OR ft.user_id IS NULL) AND ft.is_active = 1 AND ft.deleted_at IS NULL
+         ORDER BY ft.created_at DESC`,
         [userId]
       );
 
@@ -385,7 +392,15 @@ const kioskController = {
         const parseJSON = (val, fallback = []) => parseJson(val, fallback);
         const layoutConfig = parseJSON(r.layout_config, {});
 
-        const rawUrl = r.image_url ? r.image_url.trim() : (layoutConfig.overlayUrl || layoutConfig.overlay_url || '');
+        // Sumber gambar, berurutan: kolom image_url, lalu overlayUrl di
+        // layout_config, lalu berkas aset yang dipilih lewat asset_id.
+        //
+        // frame_type 'png' dengan image_url kosong adalah kasus nyata: gambar
+        // sudah dipilih di Frame Editor tetapi tersimpan sebagai asset_id saja,
+        // sehingga tanpa cadangan ini kiosk menerima template tanpa gambar.
+        const rawUrl = (r.image_url && r.image_url.trim())
+          || layoutConfig.overlayUrl || layoutConfig.overlay_url
+          || r.asset_file_url || '';
         const imageUrl = rawUrl
           ? (rawUrl.startsWith('http') ? rawUrl : `${publicBaseUrl(req)}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`)
           : null;

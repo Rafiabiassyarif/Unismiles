@@ -69,6 +69,18 @@ test('template yang dikirim ke kiosk menyertakan URL gambar absolut', () => {
     'alamat publik harus dipakai menyusun URL gambar');
 });
 
+test('gambar dari daftar aset ikut terkirim ke kiosk', () => {
+  const kioskController = fs.readFileSync(
+    path.join(backendRoot, 'controllers', 'kioskController.js'), 'utf8'
+  );
+  // Kasus nyata: template frame_type 'png' dengan image_url KOSONG karena
+  // gambarnya dipilih dari daftar aset (tersimpan sebagai asset_id).
+  assert.match(kioskController, /LEFT JOIN admin_assets/,
+    'template harus di-join ke admin_assets supaya gambar hasil upload ikut terbaca');
+  assert.match(kioskController, /asset_file_url/,
+    'berkas aset harus dipakai sebagai cadangan kalau image_url kosong');
+});
+
 test('template dikirim dengan gambar DAN konfigurasi overlay', () => {
   const kioskController = fs.readFileSync(
     path.join(backendRoot, 'controllers', 'kioskController.js'), 'utf8'
