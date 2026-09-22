@@ -310,6 +310,36 @@ export class NiimbotPrinter {
     return { device: dipilih, alasan: 'printer tersimpan pertama' };
   }
 
+  /**
+   * Kosongkan sisa byte yang tertinggal dari operasi sebelumnya.
+   *
+   * KENAPA PERLU
+   *
+   * `disconnect()` di library hanya memutus GATT dan menghentikan heartbeat —
+   * `packetBuf` TIDAK ikut dikosongkan (diperiksa di
+   * niimbluelib/dist/cjs/client/abstract_client.js: buffer hanya dibersihkan di
+   * dalam `processRawPacket`). Kalau operasi sebelumnya berhenti di tengah
+   * paket, sisa byte-nya masih ada.
+   *
+   * Sisa itu menempel ke notifikasi berikutnya sehingga buffer tidak lagi
+   * berawalan header paket, dan library membuang seluruh isinya:
+   *
+   *   Dropping invalid buffer 00 00 00 00
+   *
+   * Akibatnya bisa lebih dari sekadar pesan: paket pertama sesi berikutnya
+   * ikut terbuang, dan yang hilang bisa berupa balasan yang sedang ditunggu.
+   * Karena itu dibersihkan SEBELUM setiap cetak, bukan hanya sebelum sambung.
+   */
+  private clearStalePacketBuffer(): void {
+    const c = this.client as unknown as { packetBuf?: Uint8Array } | null;
+    if (!c) return;
+    const sisa = c.packetBuf?.length ?? 0;
+    if (sisa > 0 && typeof console !== 'undefined') {
+      console.info(`[Printer] Membuang ${sisa} byte sisa dari operasi sebelumnya.`);
+    }
+    c.packetBuf = new Uint8Array();
+  }
+
   /** Bagian connect() setelah sambungan terbentuk. */
   private async finishConnect(): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
     const info = this.client!.getPrinterInfo();
@@ -485,6 +515,10 @@ export class NiimbotPrinter {
   ): Promise<void> {
     if (!this.client) throw new Error('Printer belum tersambung.');
     if (!this.client.isConnected()) throw new Error('Sambungan printer terputus. Sambungkan ulang.');
+
+    // Sisa byte dari cetak sebelumnya dibuang dulu: kalau tidak, ia menempel ke
+    // notifikasi pertama dan seluruh buffer ikut terbuang sebagai "invalid".
+    this.clearStalePacketBuffer();
 
     const canvas = await this.prepareCanvas(image, size, adj);
     const meta = this.client.getModelMetadata();

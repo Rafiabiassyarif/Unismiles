@@ -17,6 +17,7 @@
 import assert from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -143,12 +144,32 @@ test('pengaturan Admin dipakai di jalur Bluetooth', () => {
 test('kalibrasi termal datang dari agent, jadi Admin benar-benar berpengaruh', () => {
   // Tanpa langganan ini, kepekatan dan geser selalu nilai netral dan pengaturan
   // Admin terlihat tersimpan tanpa efek.
-  assert.match(BOOTH, /setThermalDensity\(num\(agentState\.thermalDensity, 3\)\)/,
-    'kepekatan harus dibaca dari laporan agent');
-  assert.match(BOOTH, /setThermalOffsetYPx\(num\(agentState\.thermalOffsetYPx, 0\)\)/,
-    'geser vertikal harus dibaca dari laporan agent');
+  assert.match(BOOTH, /setThermalDensity\(dens\)/, 'kepekatan dibaca dari laporan agent');
+  assert.match(BOOTH, /setThermalOffsetYPx\(oy\)/, 'geser vertikal dibaca dari laporan agent');
   assert.match(BOOTH, /setKioskPaperSize\(agentState\.paperSize\)/,
-    'ukuran kertas harus dibaca dari laporan agent');
+    'ukuran kertas dibaca dari laporan agent');
+  // Dan nilainya harus diperiksa dulu: siaran pertama membawa undefined untuk
+  // hal yang tidak dilaporkan, sedangkan bawaannya TIDAK netral.
+  assert.match(BOOTH, /if \(dens !== null\) setThermalDensity\(dens\)/,
+    'agent tidak boleh menimpa dengan nilai kosong');
+  assert.match(BOOTH, /if \(oy !== null\) setThermalOffsetYPx\(oy\)/,
+    'agent tidak boleh menimpa dengan nilai kosong');
+});
+
+test('bridge agent tidak menimpa setelan backend dengan bawaannya', () => {
+  // Bawaan bridge bukan netral: paperSize '4R', fitMode 'fit', kepekatan 3.
+  // Kalau diterapkan tanpa syarat, pengaturan dari backend yang sudah masuk
+  // akan tertimpa balik, dan cetakan berikutnya salah ukuran.
+  const BRIDGE = readFileSync(path.join(ROOT, 'services', 'kioskAgentBridge.ts'), 'utf8');
+  assert.match(BRIDGE, /photoBrightness\?: number/,
+    'field yang tidak dilaporkan harus bertipe opsional (undefined = tidak dilaporkan)');
+  assert.match(BOOTH, /if \(agentState\.paperSize\)/,
+    'ukuran kertas hanya diterapkan kalau ada');
+});
+
+test('konfigurasi cetak diambil berkala, karena bridge tidak dipakai', () => {
+  assert.match(BOOTH, /setInterval\(\(\) => \{ void apply\(\); \}, 30_000\)/,
+    'tanpa bridge, perubahan Admin hanya sampai kalau halaman dimuat ulang');
 });
 
 test('status printer dilaporkan ke Admin supaya panel tidak kosong', () => {
@@ -327,4 +348,43 @@ test('izin Bluetooth dijelaskan per-alamat saat tidak ada perangkat', () => {
   // Penyebab paling sering saat getDevices() kosong, dan bukan kesalahan kode.
   assert.match(PRINTER, /PER-ORIGIN|per alamat|alamat ini/,
     'sebabkan dengan jelas: izin tersimpan per origin');
+});
+
+// --- Sisa byte dari operasi sebelumnya ---
+
+test('sisa buffer dibuang SEBELUM cetak, bukan hanya sebelum sambung', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  // `disconnect()` di library tidak mengosongkan packetBuf (diperiksa di
+  // niimbluelib/dist/cjs/client/abstract_client.js), jadi sisa byte dari cetak
+  // sebelumnya menempel ke notifikasi berikutnya dan seluruh buffer dibuang
+  // sebagai "invalid" — yang hilang bisa balasan yang sedang ditunggu.
+  assert.match(PRINTER, /clearStalePacketBuffer/,
+    'harus ada pembersih sisa buffer');
+  const print = PRINTER.slice(PRINTER.indexOf('async print('));
+  assert.match(print.slice(0, 900), /this\.clearStalePacketBuffer\(\)/,
+    'pembersihan harus di AWAL print(), sebelum paket apa pun dikirim');
+});
+
+test('pembersih buffer benar-benar mengosongkan packetBuf', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const start = PRINTER.indexOf('private clearStalePacketBuffer');
+  const fn = PRINTER.slice(start, PRINTER.indexOf('private async rememberDeviceName', start));
+  assert.match(fn, /packetBuf\s*=\s*new Uint8Array\(\)/,
+    'harus menulis ulang packetBuf dengan array kosong');
+  // Dan menyebutkan berapa byte yang dibuang: tanpa itu, kejadian ini tidak
+  // pernah terlihat di konsol kiosk.
+  assert.match(fn, /console\.info/, 'jumlah byte yang dibuang harus dilaporkan');
+});
+
+// --- Berkas mati yang pernah ikut ter-commit ---
+
+test('berkas sekali-pakai tidak ikut ter-commit', () => {
+  // Ini beberapa kali terulang: skrip pengukuran dan cadangan ikut masuk repo.
+  // Diperiksa dari daftar git, bukan dari disk, karena yang bermasalah adalah
+  // apa yang TERKIRIM, bukan apa yang ada di mesin ini.
+  const dilacak = execSync('git ls-files', { cwd: ROOT, encoding: 'utf8' }).split('\n');
+  const terlarang = dilacak.filter(f => /\.(zip|bak|log)$/.test(f)
+    || /^(tes|test|ukur|cek|mv|v|f|p)\.(ts|mts|js)$/.test(path.basename(f)));
+  assert.deepStrictEqual(terlarang, [],
+    'berkas sekali-pakai/cadangan harus dihapus dari repo: ' + terlarang.join(', '));
 });

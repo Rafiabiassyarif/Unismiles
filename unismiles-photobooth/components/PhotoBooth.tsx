@@ -953,28 +953,45 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   };
 
   useEffect(() => {
+      /**
+       * KENAPA HANYA MENIMPA KALAU AGENT BENAR-BENAR MELAPORKAN
+       *
+       * Bridge menyiarkan keadaan awalnya segera saat layar berlangganan, dan
+       * bawaannya BUKAN netral: paperSize '4R', fitMode 'fit', kepekatan 3,
+       * geser 0. Kalau itu diterapkan, ia MENIMPA pengaturan dari backend yang
+       * mungkin sudah masuk lebih dulu — kertas kembali ke 4R dan cetakan
+       * berikutnya memakai ukuran dan margin yang salah.
+       *
+       * Jadi agent hanya diterapkan kalau nilainya ADA. Bridge menyiarkan
+       * `undefined` untuk hal yang tidak dilaporkannya (lihat `currentState`
+       * di kioskAgentBridge.ts), dan itulah penanda yang dipakai.
+       */
       const unsubscribe = kioskAgentBridge.subscribe((agentState) => {
-          // Penyesuaian tampilan foto dari Admin. Diterapkan hanya kalau
-          // angkanya sah, supaya nilai rusak tidak merusak seluruh render.
-          const num = (v: unknown, fallback: number) => {
+          const num = (v: unknown): number | null => {
+            if (v === undefined || v === null || v === '') return null;
             const n = Number(v);
-            return Number.isFinite(n) ? n : fallback;
+            return Number.isFinite(n) ? n : null;
           };
-          setPhotoAdjust({
-            brightness: num(agentState.photoBrightness, 100),
-            contrast: num(agentState.photoContrast, 100),
-            saturation: num(agentState.photoSaturation, 100),
-            fitMode: agentState.photoFitMode === 'stretch' ? 'stretch' : 'fit',
-          });
+
+          const b = num(agentState.photoBrightness);
+          const c = num(agentState.photoContrast);
+          const sat = num(agentState.photoSaturation);
+          if (b !== null || c !== null || sat !== null || agentState.photoFitMode !== undefined) {
+            setPhotoAdjust(prev => ({
+              brightness: b ?? prev.brightness,
+              contrast: c ?? prev.contrast,
+              saturation: sat ?? prev.saturation,
+              // Agent hanya mengenal fit|stretch; 'cover' datang dari backend.
+              fitMode: agentState.photoFitMode === 'stretch' ? 'stretch' : prev.fitMode,
+            }));
+          }
           if (agentState.paperSize) {
               setKioskPaperSize(agentState.paperSize);
           }
-          if (agentState.thermalDensity !== undefined) {
-              setThermalDensity(num(agentState.thermalDensity, 3));
-          }
-          if (agentState.thermalOffsetYPx !== undefined) {
-              setThermalOffsetYPx(num(agentState.thermalOffsetYPx, 0));
-          }
+          const dens = num(agentState.thermalDensity);
+          if (dens !== null) setThermalDensity(dens);
+          const oy = num(agentState.thermalOffsetYPx);
+          if (oy !== null) setThermalOffsetYPx(oy);
       });
       return () => unsubscribe();
   }, []);
@@ -1017,9 +1034,18 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       }));
     };
     void apply();
-    // Sekali saja saat layar siap: pengaturan cetak jarang berubah, dan
-    // pengambilan berulang hanya membebani kiosk.
-    return () => { cancelled = true; };
+    // DIAMBIL BERKALA, bukan sekali.
+    //
+    // Dulu ini hanya sekali saat layar siap, dan itu cukup karena bridge agent
+    // yang mendorong perubahan berikutnya. Di kiosk ini bridge memang dimatikan
+    // (printer dijangkau langsung lewat Web Bluetooth), jadi tanpa pengambilan
+    // berkala setiap perubahan di Admin — kepekatan, kalibrasi, margin — baru
+    // berlaku setelah halaman dimuat ulang. Admin terlihat tersimpan tanpa efek.
+    //
+    // Ambang 30 detik: cukup responsif untuk kiosk yang jarang diubah
+    // pengaturannya, dan jauh lebih ringan daripada soket yang gagal terus.
+    const iv = window.setInterval(() => { void apply(); }, 30_000);
+    return () => { cancelled = true; window.clearInterval(iv); };
   }, []);
   
   const [customSubtitle, setCustomSubtitle] = useState('');
