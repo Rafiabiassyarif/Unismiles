@@ -9,7 +9,7 @@
 
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { labelSize, mmToPx, labelMmFromPaperSize, drawRect, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+import { labelSize, mmToPx, labelMmFromPaperSize, drawRect, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
 
 test('konstanta kepala cetak sesuai pengukuran di kertas, bukan tabel library', () => {
   assert.strictEqual(B1_PRO_PRINTHEAD_PX, 576);
@@ -239,4 +239,48 @@ test('ukuran gambar rusak tidak menghasilkan NaN', () => {
       assert.ok(Number.isFinite(v), `mode ${mode}: ${k} harus angka, dapat ${v}`);
     }
   }
+});
+
+// --- Area cetak: hanya isi slot, bukan seluruh kanvas layout ---
+// Slot bawaan 1x1 dari storageService: { x: 40, y: 40, width: 628, height: 782 }
+// di kanvas 708 x 1062. Inilah area yang dibingkai frame saat foto diambil.
+const SLOT_1X1 = [{ x: 40, y: 40, width: 628, height: 782 }];
+
+test('area cetak memakai ukuran slot, bukan seluruh kanvas layout', () => {
+  const slot = firstSlot(SLOT_1X1);
+  assert.deepEqual(slot, { width: 628, height: 782 });
+  // Kanvas layout 708x1062; kalau yang tercetak kanvas penuh, bagian luar
+  // bingkai ikut terbawa — itulah keluhan "seluruh bagian foto ter-print".
+  assert.notStrictEqual(slot!.width, 708, 'tidak boleh memakai lebar kanvas layout');
+  assert.notStrictEqual(slot!.height, 1062, 'tidak boleh memakai tinggi kanvas layout');
+  assert.ok(slot!.width < 708 && slot!.height < 1062, 'harus lebih kecil dari kanvas');
+});
+
+test('rasio area cetak mengikuti slot, bukan rasio kanvas', () => {
+  const slot = firstSlot(SLOT_1X1)!;
+  const rasioSlot = slot.width / slot.height;      // 0,803
+  const rasioKanvas = 708 / 1062;                  // 0,667
+  assert.ok(Math.abs(rasioSlot - rasioKanvas) > 0.1,
+    'rasio slot dan kanvas memang berbeda — itu sebabnya harus memakai slot');
+  // Dan slot harus mendekati rasio kertas label, supaya tidak gepeng.
+  const s = labelSize(54, 67);
+  assert.ok(Math.abs(rasioSlot - s.widthPx / s.heightPx) < 0.01,
+    `rasio slot ${rasioSlot.toFixed(3)} harus dekat rasio label ${(s.widthPx / s.heightPx).toFixed(3)}`);
+});
+
+test('slot rusak tidak menghasilkan area cetak', () => {
+  // null dikembalikan supaya pemanggil memakai cadangan, bukan mencetak
+  // seluruh kanvas tanpa disadari.
+  for (const bad of [null, undefined, [], [{ width: 0, height: 100 }],
+                     [{ width: 100, height: 0 }], [{ width: -5, height: 100 }],
+                     [{ width: 'x', height: 100 }]]) {
+    assert.strictEqual(firstSlot(bad as any), null, `slot ${JSON.stringify(bad)} harus ditolak`);
+  }
+});
+
+test('ukuran slot dibulatkan ke piksel utuh', () => {
+  const slot = firstSlot([{ x: 40.4, y: 39.6, width: 628.5, height: 782.4 }]);
+  assert.deepEqual(slot, { width: 629, height: 782 });
+  assert.ok(Number.isInteger(slot!.width) && Number.isInteger(slot!.height),
+    'canvas.width/height harus bilangan bulat');
 });

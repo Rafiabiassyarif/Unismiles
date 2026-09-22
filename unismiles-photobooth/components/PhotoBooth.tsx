@@ -8,7 +8,7 @@ import { FrameLayout, FrameStyle, PhotoFilter, GridLayoutId, VirtualBackground, 
 import { getStoredFilters, getLayoutConfig, getStoredBackgrounds, getAppConfig } from '../services/storageService';
 import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
-import { NiimbotPrinter, labelSize as computeLabelSize, labelMmFromPaperSize, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
+import { NiimbotPrinter, labelSize as computeLabelSize, labelMmFromPaperSize, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
@@ -621,6 +621,88 @@ const getSlotBorderConfig = (style: FrameStyle | null | undefined) => {
     return { color, width: Number.isFinite(width) && width > 0 ? width : 2 };
 };
 
+/** Muat gambar jadi elemen, dengan batas waktu supaya render tidak menggantung. */
+const loadImageElement = (src: string): Promise<HTMLImageElement> =>
+    new Promise((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
+        const timeoutId = window.setTimeout(() => reject(new Error('Render image load timeout')), RENDER_IMAGE_TIMEOUT_MS);
+        img.onload = () => {
+            window.clearTimeout(timeoutId);
+            resolve(img);
+        };
+        img.onerror = () => {
+            window.clearTimeout(timeoutId);
+            reject(new Error('Render image load error'));
+        };
+        img.src = src;
+    });
+
+/**
+ * Gambar `img` mengisi dx/dy/dw/dh dengan perilaku "cover": rasio dipertahankan
+ * dan kelebihan dipotong, bukan digepengkan.
+ */
+const drawCoverInto = (
+    ctx: CanvasRenderingContext2D,
+    img: HTMLImageElement,
+    dx: number, dy: number, dw: number, dh: number,
+) => {
+    const ir = img.naturalWidth / img.naturalHeight;
+    const sr = dw / dh;
+    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
+    if (ir > sr) { sw = sh * sr; sx = (img.naturalWidth - sw) / 2; }
+    else         { sh = sw / sr; sy = (img.naturalHeight - sh) / 2; }
+    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+};
+
+/**
+ * Gambar yang DICETAK: isi slot frame, tanpa frame-nya.
+ *
+ * Kenapa terpisah dari `generateCompositeImage`:
+ *  - `generateCompositeImage` menghasilkan gambar tampilan lengkap — background,
+ *    artwork frame, border slot, dan elemen teks. Itu yang benar untuk pratinjau
+ *    dan untuk berkas yang diunduh pengguna.
+ *  - Kertas label sudah punya desain tercetak, jadi mengirim gambar lengkap ke
+ *    printer membuat frame muncul dua kali.
+ *  - Lebih penting lagi: yang boleh tercetak hanya bagian yang MEMANG dibatasi
+ *    frame saat pengambilan foto. Mengirim gambar lengkap berarti bagian luar
+ *    bingkai slot ikut tercetak — persis keluhan "seluruh bagian foto ter-print".
+ *
+ * Geometri slot diambil dari konfigurasi layout yang sama dengan pratinjau, jadi
+ * area yang tercetak sama persis dengan area yang dibingkai di layar.
+ */
+const generatePrintImage = async (
+    photo: string,
+    frame: FrameStyle | null | undefined,
+    layoutId: GridLayoutId | null | undefined,
+): Promise<string | null> => {
+    if (!photo) return null;
+    try {
+        const config = getEffectiveLayoutConfig(frame, layoutId);
+        const slot = firstSlot(config.slots);
+        if (!slot) return null;
+
+        const img = await loadImageElement(photo);
+        const canvas = document.createElement('canvas');
+        canvas.width = slot.width;
+        canvas.height = slot.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return null;
+
+        // Latar putih supaya sisa label tidak hitam kalau rasio foto berbeda.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Isi slot secara penuh, rasio foto dipertahankan (sama seperti pratinjau).
+        drawCoverInto(ctx, img, 0, 0, canvas.width, canvas.height);
+
+        return canvas.toDataURL('image/png');
+    } catch (e) {
+        console.warn('Gambar cetak gagal disiapkan, memakai foto mentah:', e);
+        return null;
+    }
+};
+
 // --- Detailed Frame Thumbnail ---
 const FrameThumbnail: React.FC<{ style: FrameStyle, layoutId: string }> = ({ style, layoutId }) => {
     const config = getEffectiveLayoutConfig(style, layoutId);
@@ -809,18 +891,20 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setBtPrintState('connecting');
 
     try {
-      // Yang dicetak hanya FOTONYA, tanpa frame.
+      // Yang dicetak: isi slot frame — area yang MEMANG dibatasi frame saat
+      // pengambilan foto — tanpa frame-nya sendiri.
       //
-      // Kertas label sudah punya desain tercetak, jadi menambahkan frame Admin
-      // di atasnya salah dua kali: (1) desain muncul dua kali, dan (2) frame itu
-      // kanvas layout (mis. 708 x 1062 px) yang harus diperkecil ke lebar kepala
-      // cetak 576 px, sehingga foto di dalamnya ikut menyusut dan menyisakan
-      // tepi kosong — itulah "tidak tercetak semua".
+      // Kertas label sudah ada desain tercetak, jadi mengirim gambar lengkap
+      // membuat frame muncul dua kali. Dan yang lebih penting: gambar lengkap
+      // mencakup bagian DI LUAR bingkai slot, sehingga seluruh bidang kamera
+      // ikut tercetak, bukan hanya bagian yang dibingkai di layar.
       //
-      // Foto mentah berukuran penuh, jadi `prepareCanvas` bisa melebar-kannya
-      // mengisi label dengan utuh.
+      // Cadangan disusun berlapis: isi slot -> hasil akhir -> gambar lengkap.
+      // Lapis terakhir hanya terpakai kalau geometri slot tidak terbaca.
       const rawPhoto = capturedPhotos[0] || null;
-      const image = rawPhoto
+      const frameForPrint = processedFrame || selectedFrame;
+      const image = (rawPhoto ? await generatePrintImage(rawPhoto, frameForPrint, selectedLayoutId) : null)
+        || rawPhoto
         || (finalUploadedUrl?.startsWith('http') || finalUploadedUrl?.startsWith('data:') ? finalUploadedUrl : null)
         || await generateCompositeImage();
       if (!image) throw new Error('Foto final belum tersedia.');
@@ -2323,36 +2407,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     const frameToUse = processedFrame || selectedFrame;
     const config = getEffectiveLayoutConfig(frameToUse, selectedLayoutId);
 
-    const loadImg = (src: string): Promise<HTMLImageElement> =>
-      new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.referrerPolicy = 'no-referrer';
-        const timeoutId = window.setTimeout(() => reject(new Error('Render image load timeout')), RENDER_IMAGE_TIMEOUT_MS);
-        img.onload = () => {
-          window.clearTimeout(timeoutId);
-          resolve(img);
-        };
-        img.onerror = () => {
-          window.clearTimeout(timeoutId);
-          reject(new Error('Render image load error'));
-        };
-        img.src = src;
-      });
-
-    // object-cover crop: draw img into dx/dy/dw/dh with cover behaviour
-    const drawCover = (
-      ctx: CanvasRenderingContext2D,
-      img: HTMLImageElement,
-      dx: number, dy: number, dw: number, dh: number
-    ) => {
-      const ir = img.naturalWidth / img.naturalHeight;
-      const sr = dw / dh;
-      let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
-      if (ir > sr) { sw = sh * sr; sx = (img.naturalWidth - sw) / 2; }
-      else         { sh = sw / sr; sy = (img.naturalHeight - sh) / 2; }
-      ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-    };
+    // Satu salinan saja di level modul; dipakai juga oleh generatePrintImage.
+    const loadImg = loadImageElement;
+    const drawCover = drawCoverInto;
 
     try {
       const canvas = document.createElement('canvas');

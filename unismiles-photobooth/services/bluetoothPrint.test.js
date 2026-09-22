@@ -24,15 +24,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(here, '..');
 const BOOTH = readFileSync(path.join(ROOT, 'components', 'PhotoBooth.tsx'), 'utf8');
 
-/** Ambil isi satu fungsi agar pemeriksaan tidak tersentuh kode lain. */
+/**
+ * Ambil isi satu fungsi agar pemeriksaan tidak tersentuh kode lain.
+ *
+ * Menerima dua bentuk: tanpa parameter (`const x = async () => {`) dan dengan
+ * parameter (`const x = async (a, b) => {`). Keduanya muncul di berkas ini, dan
+ * versi yang tidak menerima parameter akan gagal dengan pesan "harus ada" yang
+ * menyesatkan — seolah fungsinya tidak ada padahal cuma bentuknya beda.
+ */
 function bodyOf(name, source = BOOTH) {
-  const start = source.indexOf(`const ${name} = async () => {`);
+  const patterns = [
+    `const ${name} = async () => {`,
+    `const ${name} = async (`,
+  ];
+  let start = -1;
+  for (const p of patterns) {
+    start = source.indexOf(p);
+    if (start > 0) break;
+  }
   assert.ok(start > 0, `${name} harus ada`);
-  // Cari penutup sejajar dengan indentasi pembuka.
   const rest = source.slice(start);
-  const end = rest.indexOf('\n  };');
-  assert.ok(end > 0, `${name} harus punya penutup`);
-  return rest.slice(0, end);
+  // Penutup sejajar indentasi pembuka (dua spasi untuk fungsi di dalam komponen,
+  // nol spasi untuk fungsi di level modul).
+  const endInner = rest.indexOf('\n  };');
+  const endTop = rest.indexOf('\n};');
+  const candidates = [endInner, endTop].filter(v => v > 0);
+  assert.ok(candidates.length > 0, `${name} harus punya penutup`);
+  return rest.slice(0, Math.min(...candidates));
 }
 
 test('tombol cetak Bluetooth ada dan memanggil jalur langsung', () => {
@@ -71,16 +89,44 @@ test('batal memilih perangkat dibedakan dari kegagalan printer', () => {
     'pesannya harus memberi tahu apa yang harus dilakukan');
 });
 
-test('yang dicetak adalah FOTO, tanpa frame Admin', () => {
+test('yang dicetak hanya isi slot, tanpa frame', () => {
   const fn = bodyOf('handleBluetoothPrint');
-  // Kertas label sudah ada desain tercetak. Menambahkan frame Admin di atasnya
-  // membuat desain muncul dua kali, dan kanvas frame (mis. 708x1062) harus
-  // diperkecil ke 576 px sehingga fotonya ikut menyusut dan menyisakan tepi.
-  assert.match(fn, /capturedPhotos\[0\]/, 'pakai foto hasil jepretan');
-  assert.ok(!/processedFrame|selectedFrame/.test(fn), 'frame Admin tidak boleh dipakai di jalur ini');
-  // Jalur berframe tetap ada sebagai cadangan kalau foto tidak tersedia.
+  // Inti keluhan: frame ikut tercetak, dan bagian di luar bingkai slot ikut
+  // tercetak. Yang benar hanya isi slot.
+  assert.match(fn, /generatePrintImage\(rawPhoto, frameForPrint, selectedLayoutId\)/,
+    'harus menyiapkan gambar dari isi slot');
+  assert.match(fn, /capturedPhotos\[0\]/, 'sumbernya foto hasil jepretan');
+  // Cadangan berlapis: isi slot -> foto mentah -> hasil akhir -> gambar lengkap.
   assert.match(fn, /finalUploadedUrl/, 'ada cadangan');
   assert.match(fn, /generateCompositeImage\(\)/, 'cadangan terakhir');
+});
+
+test('generatePrintImage TIDAK menggambar frame apa pun', () => {
+  const fn = bodyOf('generatePrintImage');
+  // Kalau salah satu dari ini ada di dalamnya, frame akan muncul lagi di kertas.
+  assert.ok(!/overlayUrl/.test(fn), 'artwork frame tidak boleh digambar');
+  assert.ok(!/backgroundConfig/.test(fn), 'background frame tidak boleh digambar');
+  assert.ok(!/strokeRect/.test(fn), 'border slot tidak boleh digambar');
+  assert.ok(!/getSlotBorderConfig/.test(fn), 'border slot tidak boleh dipakai');
+  assert.ok(!/\.elements/.test(fn), 'elemen teks/stiker frame tidak boleh digambar');
+  // Dan ukurannya dari slot, bukan dari kanvas layout.
+  assert.match(fn, /firstSlot\(config\.slots\)/, 'ukuran harus dari slot');
+  assert.match(fn, /canvas\.width = slot\.width/, 'lebar kanvas = lebar slot');
+  assert.match(fn, /canvas\.height = slot\.height/, 'tinggi kanvas = tinggi slot');
+});
+
+test('helper gambar tidak diduplikasi di dua tempat', () => {
+  // Dua salinan drawCover/loadImg cepat atau lambat berbeda perilaku, dan
+  // perbedaannya hanya terlihat di kertas.
+  assert.match(BOOTH, /const drawCoverInto = \(/,
+    'satu definisi drawCover di level modul');
+  assert.match(BOOTH, /const loadImageElement = \(/,
+    'satu definisi loadImg di level modul');
+  assert.ok(!/const drawCover = \(/.test(BOOTH), 'tidak boleh ada salinan drawCover lagi');
+  assert.ok(!/const loadImg = \(src/.test(BOOTH), 'tidak boleh ada salinan loadImg lagi');
+  // generateCompositeImage masih ada dan tetap memakai helper yang sama.
+  assert.match(BOOTH, /const loadImg = loadImageElement/,
+    'generateCompositeImage harus memakai helper modul');
 });
 
 test('pengaturan Admin dipakai di jalur Bluetooth', () => {

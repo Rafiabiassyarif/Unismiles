@@ -154,3 +154,33 @@ export function drawRect(
     dy: Math.round(offsetYPx + (canvasH - dh) / 2),
   };
 }
+
+
+export interface Slot {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Slot pertama dari konfigurasi layout — area yang dibingkai frame saat foto
+ * diambil. Inilah satu-satunya bagian yang boleh dicetak.
+ *
+ * Dipisah dari komponen supaya bisa dieksekusi di test: kesalahan di sini
+ * langsung terlihat di kertas sebagai bagian foto yang ikut tercetak di luar
+ * bingkai, dan itu tidak akan tertangkap oleh test yang hanya mencocokkan teks.
+ *
+ * Mengembalikan null kalau slot tidak terbaca — pemanggil harus punya cadangan,
+ * bukan diam-diam mencetak seluruh kanvas.
+ */
+export function firstSlot(
+  slots: Slot[] | null | undefined,
+): { width: number; height: number } | null {
+  const slot = Array.isArray(slots) ? slots[0] : null;
+  if (!slot) return null;
+  const width = Math.round(Number(slot.width));
+  const height = Math.round(Number(slot.height));
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+  return { width, height };
+}
