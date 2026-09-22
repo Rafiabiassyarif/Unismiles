@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const pool = require('../config/db');
 const { parseJson, resolvePrice } = require('../utils/price');
 const { pushKioskConfig, sendKioskCommand, broadcastToAdmin, isKioskConnected, pushPrintingConfig } = require('../utils/socketServer');
+const { publicBaseUrl } = require('../utils/security');
 const kioskPrintingConfigModel = require('../models/kioskPrintingConfigModel');
 const printingConfigController = require('./printingConfigController');
 
