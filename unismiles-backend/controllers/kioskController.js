@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const { parseJson, resolvePrice } = require('../utils/price');
 const { pushKioskConfig, sendKioskCommand, broadcastToAdmin, isKioskConnected, pushPrintingConfig } = require('../utils/socketServer');
 const kioskPrintingConfigModel = require('../models/kioskPrintingConfigModel');
-const { publicBaseUrl } = require('../utils/security');
+const printingConfigController = require('./printingConfigController');
 
 function canAccessKiosk(user, kiosk) {
   return user?.role === 'Super Admin' || user?.role === 'admin' || String(kiosk?.user_id) === String(user?.id);
@@ -528,114 +528,28 @@ const kioskController = {
    * @route   GET /api/v1/admin/kiosks/:kioskId/printing-config
    * @access  Private (Admin)
    */
-  getPrintingConfig: async (req, res, next) => {
-    try {
-      const { kioskId } = req.params;
-      const kiosk = await kioskModel.getKioskById(kioskId);
-      if (!kiosk) return notFoundKiosk(res);
-      if (!canAccessKiosk(req.user, kiosk)) return notFoundKiosk(res);
-
-      const config = await kioskPrintingConfigModel.getOrCreate(kioskId);
-      return res.status(200).json({
-        success: true,
-        data: kioskPrintingConfigModel.format(config),
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+  getPrintingConfig: (req, res, next) => printingConfigController.get(req, res, next),
 
   /**
    * @desc    Update printer configuration for a specific kiosk
    * @route   PUT /api/v1/admin/kiosks/:kioskId/printing-config
    * @access  Private (Admin)
    */
-  updatePrintingConfig: async (req, res, next) => {
-    try {
-      const { kioskId } = req.params;
-      const data = req.body;
-      console.log('--- updatePrintingConfig called! ---', { kioskId, data });
-      const kiosk = await kioskModel.getKioskById(kioskId);
-      if (!kiosk) return notFoundKiosk(res);
-      if (!canAccessKiosk(req.user, kiosk)) return notFoundKiosk(res);
-
-      const updated = await kioskPrintingConfigModel.updateDesired(kioskId, {
-        printing_enabled: Boolean(data.printing_enabled),
-        adapter: data.adapter,
-        printer_name: data.printer_name,
-        paper_size: data.paper_size,
-        orientation: data.orientation,
-        copies_limit: Number(data.copies_limit),
-        timeout_ms: Number(data.timeout_ms),
-        retry_count: Number(data.retry_count),
-        allowed_layouts: Array.isArray(data.allowed_layouts) ? data.allowed_layouts : [],
-      }, req.user?.id);
-
-      const formatted = kioskPrintingConfigModel.format(updated);
-      pushPrintingConfig(kioskId, formatted.config);
-      broadcastToAdmin('kiosk:updated', { kioskId, printingConfig: formatted });
-
-      return res.status(200).json({
-        success: true,
-        message: 'Printer configuration updated',
-        data: formatted,
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+  updatePrintingConfig: (req, res, next) => printingConfigController.update(req, res, next),
 
   /**
    * @desc    Send a test print command
    * @route   POST /api/v1/admin/kiosks/:kioskId/printing-config/test
    * @access  Private (Admin)
    */
-  testPrintingConfig: async (req, res, next) => {
-    try {
-      const { kioskId } = req.params;
-      const kiosk = await kioskModel.getKioskById(kioskId);
-      if (!kiosk) return notFoundKiosk(res);
-      if (!canAccessKiosk(req.user, kiosk)) return notFoundKiosk(res);
-
-      const dispatched = sendKioskCommand(kioskId, 'PRINT_PHOTO', {
-        job_id: 'test_' + crypto.randomUUID(),
-        copies: 1,
-        image_url: '/assets/test-print.png',
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: dispatched ? 'Test print command sent' : 'Test print command queued',
-        dispatched,
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+  testPrintingConfig: (req, res, next) => printingConfigController.test(req, res, next),
 
   /**
    * @desc    Refresh printer status by asking agent to report config
    * @route   POST /api/v1/admin/kiosks/:kioskId/printing-config/refresh
    * @access  Private (Admin)
    */
-  refreshPrintingConfig: async (req, res, next) => {
-    try {
-      const { kioskId } = req.params;
-      const kiosk = await kioskModel.getKioskById(kioskId);
-      if (!kiosk) return notFoundKiosk(res);
-      if (!canAccessKiosk(req.user, kiosk)) return notFoundKiosk(res);
-
-      const dispatched = sendKioskCommand(kioskId, 'REFRESH_PRINTER_STATUS', {});
-
-      return res.status(200).json({
-        success: true,
-        message: dispatched ? 'Refresh command sent' : 'Refresh command queued',
-        dispatched,
-      });
-    } catch (error) {
-      next(error);
-    }
-  },
+  refreshPrintingConfig: (req, res, next) => printingConfigController.refresh(req, res, next),
 };
 
 module.exports = kioskController;

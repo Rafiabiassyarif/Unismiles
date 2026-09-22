@@ -29,10 +29,12 @@ router.put('/kiosks/:id', kioskController.updateKiosk);
 router.delete('/kiosks/:id', kioskController.deleteKiosk);
 router.post('/kiosks/:id/regenerate-key', kioskController.regenerateKey);
 
-router.get('/kiosks/:kioskId/printing-config', kioskController.getPrintingConfig);
-router.put('/kiosks/:kioskId/printing-config', kioskController.updatePrintingConfig);
-router.post('/kiosks/:kioskId/printing-config/test', kioskController.testPrintingConfig);
-router.post('/kiosks/:kioskId/printing-config/refresh', kioskController.refreshPrintingConfig);
+const printingConfigController = require('../../controllers/printingConfigController');
+
+router.get('/kiosks/:kioskId/printing-config', printingConfigController.get);
+router.put('/kiosks/:kioskId/printing-config', printingConfigController.update);
+router.post('/kiosks/:kioskId/printing-config/test', printingConfigController.test);
+router.post('/kiosks/:kioskId/printing-config/refresh', printingConfigController.refresh);
 router.get('/templates', frameTemplateController.getTemplates);
 router.post('/templates/generate', frameTemplateController.generateTemplate);
 router.post('/templates', upload.single('frame_image'), frameTemplateController.uploadTemplate);

@@ -49,3 +49,25 @@ test('requires reported supported adapter and printer when enabling', () => {
   assert.throws(() => validatePrintingConfig({ printing_enabled: true, adapter: 'cups', printer_name: 'Other Printer' }, {}, supported), /not reported/);
   assert.deepEqual(validatePrintingConfig({ printing_enabled: true, adapter: 'cups', printer_name: 'Canon SELPHY CP1500' }, {}, supported).printing_enabled, true);
 });
+
+// Regresi: kiosk yang BELUM pernah terhubung melaporkan supported_adapters = [].
+// Daftar kosong itu berarti "belum ada laporan", bukan "tidak mendukung apa pun".
+// Sebelumnya Admin diblokir menyimpan adapter apa pun pada kiosk seperti ini.
+test('agent yang belum melaporkan dukungan tidak memblokir pengaturan Admin', () => {
+  const row = { adapter: 'windows', paper_size: '4R', printing_enabled: 1, printer_name: 'B1', orientation: 'portrait', copies_limit: 1, timeout_ms: 60000, retry_count: 2 };
+  const belumLapor = { adapter: null, supported_adapters: [], available_printers: [] };
+  const hasil = validatePrintingConfig({ adapter: 'windows', printer_name: 'B1 Pro', printing_enabled: true, paper_size: 'Instax Mini (54 × 86 mm)' }, row, belumLapor);
+  assert.strictEqual(hasil.adapter, 'windows', 'adapter harus bisa disimpan sebelum agent melapor');
+  assert.strictEqual(hasil.printer_name, 'B1 Pro');
+});
+
+test('agent yang sudah melaporkan tetap membatasi adapter', () => {
+  const row = { adapter: 'windows', paper_size: '4R', printing_enabled: 1, printer_name: 'B1', orientation: 'portrait', copies_limit: 1, timeout_ms: 60000, retry_count: 2 };
+  // Agent melaporkan hanya mendukung cups -> windows harus ditolak.
+  const sudahLapor = { adapter: 'cups', supported_adapters: ['cups'], available_printers: [] };
+  assert.throws(
+    () => validatePrintingConfig({ adapter: 'windows', printer_name: 'B1 Pro', printing_enabled: true, paper_size: 'Instax Mini (54 × 86 mm)' }, row, sudahLapor),
+    /not supported by this Kiosk Agent/,
+    'laporan yang nyata harus tetap dihormati',
+  );
+});

@@ -157,8 +157,15 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     if (!normalized.printer_name) {
       throw new PrintingConfigValidationError('printer_name is required when printing is enabled.');
     }
-    const supported = Array.isArray(reported?.supported_adapters) ? reported.supported_adapters : null;
-    if (supported && !supported.includes(normalized.adapter)) {
+    // Daftar kosong berarti agent BELUM melaporkan apa pun, bukan "tidak
+    // mendukung apa-apa". Tanpa pembedaan ini, kiosk yang belum pernah
+    // terhubung membuat Admin tidak bisa menyimpan adapter apa pun — panel
+    // memblokir pengaturan yang sah karena laporan yang memang belum ada.
+    //
+    // Pemeriksaan printer tepat di bawah sudah memakai pola yang benar
+    // (`available.length > 0`); yang ini disamakan.
+    const reportedAdapters = Array.isArray(reported?.supported_adapters) ? reported.supported_adapters : [];
+    if (reportedAdapters.length > 0 && !reportedAdapters.includes(normalized.adapter)) {
       throw new PrintingConfigValidationError('The selected adapter is not supported by this Kiosk Agent.', 'UNSUPPORTED_ADAPTER');
     }
     const available = Array.isArray(reported?.available_printers) ? reported.available_printers : null;
