@@ -164,27 +164,56 @@ export class NiimbotPrinter {
     // dialog; itu yang membuat cetak otomatis mungkin. Kalau ternyata tidak ada
     // perangkat tersimpan (pasangan pertama, atau izin dicabut), jalur pemilih
     // tetap dipakai — jadi perilakunya tidak pernah lebih buruk dari sebelumnya.
-    const authorized = await this.findPairedDevice();
-    if (authorized) {
+    const found = await this.findPairedDevice();
+    if (found) {
       // Tipe dasar library hanya punya connect() tanpa argumen, sedangkan
       // implementasi Bluetooth menerima { authorizedDevice }. Jadi yang
       // disempitkan di sini adalah NILAI client-nya, bukan tipe library.
       const btClient = this.client as unknown as {
         connect(options?: { authorizedDevice?: unknown; usesTillItsAvailable?: boolean }): Promise<unknown>;
       };
-      try {
-        await btClient.connect({ authorizedDevice: authorized });
-        return this.finishConnect();
-      } catch {
-        // Tersimpan tapi gagal (printer mati / di luar jangkauan). Dicoba sekali
-        // lagi tanpa pemilih, supaya cetak otomatis tidak terhenti oleh dialog.
+
+      // DIULANG BEBERAPA KALI, bukan sekali.
+      //
+      // Percobaan pertama sering gagal untuk printer yang sedang tidur: alamat
+      // tersimpan tetapi GATT belum siap menjawab. Kalau langsung menyerah,
+      // pemilih perangkat terbuka padahal tidak ada yang perlu dipilih — dan
+      // itulah keluhannya. Rentang total ~9 detik; kalau dalam rentang itu
+      // printer menjawab, dialog tidak pernah muncul.
+      const JUMLAH_PERCOBAAN = 6;
+      let galatTerakhir: unknown = null;
+      for (let coba = 1; coba <= JUMLAH_PERCOBAAN; coba += 1) {
         try {
-          await btClient.connect({ authorizedDevice: authorized, usesTillItsAvailable: true });
+          await btClient.connect({ authorizedDevice: found.device });
           return this.finishConnect();
-        } catch {
-          // Jatuh ke pemilih di bawah: paling tidak orangnya bisa memilih manual.
+        } catch (error) {
+          galatTerakhir = error;
+          // `usesTillItsAvailable` menyerahkan penungguan ke library dan
+          // menangani printer yang menyala terlambat.
+          try {
+            await btClient.connect({ authorizedDevice: found.device, usesTillItsAvailable: true });
+            return this.finishConnect();
+          } catch (error2) {
+            galatTerakhir = error2;
+          }
+          if (coba < JUMLAH_PERCOBAAN) {
+            const jeda = 500 * coba;
+            console.info(`[Printer] Sambungan ke "${String(found.device?.name || '?')}" belum berhasil `
+              + `(percobaan ${coba}/${JUMLAH_PERCOBAAN}), dicoba lagi dalam ${jeda} ms.`);
+            await new Promise((r) => setTimeout(r, jeda));
+          }
         }
       }
+
+      // Sampai di sini printer ADA dan tersimpan, tetapi tidak menjawab.
+      // Disebut apa adanya: pemilih perangkat bukan solusinya, jadi jangan
+      // diarahkan ke sana seolah itu langkah yang berguna.
+      const nama = String(found.device?.name || 'printer');
+      console.warn('[Printer] Gagal menyambung ke printer tersimpan setelah '
+        + JUMLAH_PERCOBAAN + ' percobaan:', galatTerakhir);
+      throw new Error(`Printer "${nama}" tersimpan tetapi tidak menjawab setelah `
+        + `${JUMLAH_PERCOBAAN} percobaan. Pastikan printer menyala, dalam jangkauan, `
+        + 'dan tidak sedang tersambung ke perangkat lain (HP).');
     }
     // JEDA PAKET: sengaja TIDAK diubah — dipakai bawaan library (10 ms).
     //
@@ -195,6 +224,12 @@ export class NiimbotPrinter {
     // tidak penuh. Jeda ini bagian dari protokol, bukan angka yang bisa
     // dihilangkan untuk mempercepat cetak.
 
+    // Jalur terakhir: membuka pemilih perangkat. Hanya sampai di sini kalau
+    // tidak ada printer tersimpan untuk ALAMAT INI (pasangan pertama, atau izin
+    // dicabut). Setelah sekali dipasangkan dari alamat ini, jalur ini tidak
+    // akan terpakai lagi.
+    console.info('[Printer] Membuka pemilih perangkat. Ini hanya sekali per alamat; '
+      + 'berikutnya tersambung otomatis.');
     await this.client.connect();
     return this.finishConnect();
   }
@@ -227,24 +262,52 @@ export class NiimbotPrinter {
    * biasanya hanya ada satu, tetapi kalau ada beberapa, printer yang benar harus
    * dipilih dengan pasti, bukan yang pertama kebetulan ditemukan.
    */
-  private async findPairedDevice(): Promise<any | null> {
+  private async findPairedDevice(): Promise<{ device: any; alasan: string } | null> {
     const bt = (navigator as any).bluetooth;
-    if (!bt) return null;
-    if (typeof bt.getDevices !== 'function') return null;
-    try {
-      const devices = await bt.getDevices();
-      if (!Array.isArray(devices) || devices.length === 0) return null;
-      const remembered = this.rememberedDeviceName();
-      if (remembered) {
-        const cocok = devices.find((d: any) => d?.name === remembered);
-        if (cocok) return cocok;
-      }
-      // Belum ada catatan: pakai yang namanya berawalan merek printer label.
-      const kandidat = devices.find((d: any) => /^[A-Za-z]/.test(String(d?.name || '')));
-      return kandidat || devices[0];
-    } catch {
+    if (!bt) {
+      console.warn('[Printer] navigator.bluetooth tidak ada di browser ini.');
       return null;
     }
+    if (typeof bt.getDevices !== 'function') {
+      console.warn('[Printer] getDevices() tidak didukung browser ini, jadi pemilih perangkat '
+        + 'tidak bisa dilewati. Pakai Chrome atau Edge terbaru.');
+      return null;
+    }
+
+    let devices: any[];
+    try {
+      devices = await bt.getDevices();
+    } catch (error) {
+      // DULU galat di sini ditelan, dan gejalanya adalah pemilih perangkat
+      // muncul tanpa penjelasan apa pun. Sekarang alasannya terlihat.
+      console.warn('[Printer] getDevices() gagal:', error);
+      return null;
+    }
+
+    if (!Array.isArray(devices) || devices.length === 0) {
+      // Penyebab paling sering, dan bukan kesalahan kode: izin Bluetooth
+      // tersimpan PER-ORIGIN. Kalau printer dipasangkan dari alamat lain
+      // (mis. saat panel masih di localhost atau subdomain lama), browser di
+      // origin ini tidak tahu apa-apa soal printer itu.
+      console.info('[Printer] Tidak ada printer tersimpan untuk alamat ini. '
+        + 'Pasangkan sekali lewat pemilih; berikutnya akan otomatis tanpa pemilih.');
+      return null;
+    }
+
+    const nama = devices.map((d: any) => String(d?.name || '(tanpa nama)')).join(', ');
+    const remembered = this.rememberedDeviceName();
+    if (remembered) {
+      const cocok = devices.find((d: any) => d?.name === remembered);
+      if (cocok) return { device: cocok, alasan: 'printer terakhir yang dipakai' };
+    }
+
+    // Belum ada catatan, atau namanya berubah (mis. printer diganti).
+    const kandidat = devices.find((d: any) => /^[A-Za-z]/.test(String(d?.name || '')));
+    const dipilih = kandidat || devices[0];
+    console.info(`[Printer] Printer tersimpan: ${nama}`
+      + (remembered ? ` — catatan "${remembered}" tidak cocok` : '')
+      + `, dipakai "${String(dipilih?.name || '?')}"`);
+    return { device: dipilih, alasan: 'printer tersimpan pertama' };
   }
 
   /** Bagian connect() setelah sambungan terbentuk. */

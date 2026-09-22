@@ -281,3 +281,50 @@ test('bawaan kertas tetap memajukan supaya label berikutnya sampai', () => {
   assert.match(PRINTER, /paperEnd: 'advance-and-separate'/,
     'bawaan harus tetap memajukan kertas');
 });
+
+// --- Popup pemilih perangkat: kapan boleh muncul ---
+
+test('printer tersimpan diulang beberapa kali sebelum menyerah', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const connect = PRINTER.slice(PRINTER.indexOf('async connect('), PRINTER.indexOf('Cadangan lewat pemilih'));
+  // Sekali coba lalu menyerah = pemilih terbuka padahal printer hanya sedang
+  // tidur. Itu keluhannya.
+  assert.match(connect, /JUMLAH_PERCOBAAN\s*=\s*(\d+)/,
+    'jumlah percobaan harus eksplisit');
+  const n = Number((connect.match(/JUMLAH_PERCOBAAN\s*=\s*(\d+)/) || [])[1] || 0);
+  assert.ok(n >= 3, `percobaan harus beberapa kali, bukan ${n}`);
+  assert.match(connect, /setTimeout/, 'harus ada jeda antar percobaan');
+});
+
+test('galat getDevices TIDAK ditelan diam-diam', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const start = PRINTER.indexOf('private async findPairedDevice');
+  const fn = PRINTER.slice(start, PRINTER.indexOf('private async waitForGattReady', start));
+  // Dulu catch kosong: pemilih muncul tanpa alasan apa pun yang terlihat.
+  assert.match(fn, /catch \(error\) \{[\s\S]{0,300}console\.(warn|info|error)/,
+    'galat getDevices harus dilaporkan, bukan ditelan');
+  assert.match(fn, /getDevices\(\) gagal/, 'sebutkan operasi mana yang gagal');
+});
+
+test('perangkat tersimpan yang tidak menjawab TIDAK diarahkan ke pemilih', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const connect = PRINTER.slice(PRINTER.indexOf('async connect('));
+  // Kalau printer ada dan tersimpan tapi mati, pemilih perangkat bukan solusi.
+  // Melempar galat yang menyebut sebabnya lebih berguna daripada membuka dialog
+  // yang tidak akan menemukan apa pun.
+  assert.match(connect, /tersimpan tetapi tidak menjawab/,
+    'harus ada pesan yang menyebut printer mati / di luar jangkauan');
+});
+
+test('pemilih perangkat disebut sebagai sekali per alamat', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /hanya sekali per alamat/,
+    'pengguna harus tahu pemilih tidak akan muncul terus');
+});
+
+test('izin Bluetooth dijelaskan per-alamat saat tidak ada perangkat', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  // Penyebab paling sering saat getDevices() kosong, dan bukan kesalahan kode.
+  assert.match(PRINTER, /PER-ORIGIN|per alamat|alamat ini/,
+    'sebabkan dengan jelas: izin tersimpan per origin');
+});
