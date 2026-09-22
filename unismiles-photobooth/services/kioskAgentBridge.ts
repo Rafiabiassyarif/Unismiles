@@ -22,12 +22,35 @@ export interface KioskAgentState {
   photoFitMode?: 'fit' | 'stretch';
 }
 
+/*
+ * Jembatan ke kiosk-agent lokal (opsional).
+ *
+ * KENAPA PROBE DULU, BUKAN LANGSUNG SAMBUNG
+ *
+ * kiosk-agent sering tidak berjalan — saat menguji cetak langsung lewat
+ * Bluetooth, agent memang tidak diperlukan. Sebelum ini bridge langsung membuka
+ * WebSocket DAN memasang poll `GET /api/kiosk-status` tiap 10 detik ke port yang
+ * mati. Yang muncul di konsol kiosk bukan pesan kita, melainkan pesan browser
+ * sendiri, dan itu tidak bisa ditekan oleh flag apa pun:
+ *
+ *   WebSocket connection to 'ws://localhost:3011/' failed
+ *   GET http://localhost:3011/api/kiosk-status net::ERR_CONNECTION_REFUSED
+ *
+ * Pesan itu berulang terus, menutupi error cetak yang sebenarnya.
+ *
+ * Sekarang alamatnya diperiksa lebih dulu dengan satu probe HTTP ringan. Kalau
+ * tidak ada yang menjawab, WebSocket maupun poll TIDAK PERNAH dipasang — jadi
+ * tidak ada error browser sama sekali. Pemeriksaan diulang tiap 30 detik, jadi
+ * agent yang baru dinyalakan tetap terdeteksi tanpa perlu muat ulang halaman.
+ */
+
 type StateCallback = (state: KioskAgentState) => void;
 
 class KioskAgentBridge {
   private socket: WebSocket | null = null;
   private listeners: Set<StateCallback> = new Set();
   private reconnectTimer: any = null;
+  private pollTimer: any = null;
   /** Supaya pesan "agent tidak aktif" tidak membanjiri konsol. */
   private warnedOffline = false;
   private enabled = String(import.meta.env.VITE_ENABLE_LOCAL_KIOSK_BRIDGE || 'false').toLowerCase() === 'true';
@@ -50,8 +73,7 @@ class KioskAgentBridge {
 
   constructor() {
     if (!this.enabled) return;
-    this.connect();
-    this.pollFallback();
+    this.start();
   }
 
   public subscribe(callback: StateCallback): () => void {
@@ -64,6 +86,44 @@ class KioskAgentBridge {
 
   private notify() {
     this.listeners.forEach(cb => cb(this.currentState));
+  }
+
+  /**
+   * Periksa apakah agent benar-benar ada, baru sambung.
+   *
+   * `AbortSignal.timeout` membuat fetch menyerah cepat; tanpanya probe menggantung
+   * lama di port yang hanya menerima koneksi tapi tidak menjawab.
+   */
+  private async start(): Promise<void> {
+    let ada = false;
+    try {
+      const res = await fetch(`http://localhost:${this.currentPort}/api/kiosk-status`,
+        { signal: AbortSignal.timeout(1500) });
+      ada = res.ok;
+      if (ada) {
+        const json = await res.json();
+        if (json?.data) this.currentState = { ...this.currentState, ...json.data };
+        this.notify();
+      }
+    } catch {
+      // Tidak ada yang menjawab: normal kalau agent memang tidak dipakai.
+    }
+
+    if (ada) {
+      this.warnedOffline = false;
+      this.connect();
+      this.pollFallback();
+      return;
+    }
+
+    if (!this.warnedOffline) {
+      this.warnedOffline = true;
+      console.info('[KioskAgentBridge] kiosk-agent tidak aktif di port ' + this.currentPort
+        + ' — pengaturan dari Admin tidak masuk lewat jalur ini. Cetak Bluetooth langsung '
+        + 'tidak terpengaruh. Diperiksa ulang tiap 30 detik; pesan ini tidak diulang.');
+    }
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => { void this.start(); }, 30000);
   }
 
   private connect() {
@@ -87,42 +147,42 @@ class KioskAgentBridge {
         }
       };
 
+      // Agent mati di tengah jalan: hentikan poll, lalu kembali memeriksa alamat
+      // alih-alih mencoba WebSocket berulang ke port yang sudah mati.
       this.socket.onclose = () => {
-        this.scheduleReconnect();
+        this.stopPolling();
+        this.scheduleRecheck();
       };
 
       this.socket.onerror = () => {
-        // Dicatat SEKALI, tidak tiap percobaan.
-        //
-        // kiosk-agent tidak selalu jalan (mis. saat menguji cetak langsung lewat
-        // Bluetooth, agent memang tidak diperlukan). Percobaan sambung ulang
-        // setiap 5 detik membuat konsol penuh pesan yang sama, dan pesan itu
-        // menutupi error yang sebenarnya — pernah terjadi: penyebab cetak tidak
-        // penuh tertimbun di antara puluhan baris ERR_CONNECTION_REFUSED.
         if (!this.warnedOffline) {
           this.warnedOffline = true;
-          console.info('[KioskAgentBridge] kiosk-agent tidak aktif di port ' + this.currentPort
-            + ' — pengaturan dari Admin tidak akan masuk lewat jalur ini. '
-            + 'Percobaan sambung ulang tetap berjalan, pesan ini tidak diulang.');
+          console.info('[KioskAgentBridge] sambungan ke kiosk-agent terputus di port '
+            + this.currentPort + '. Pengaturan dari Admin tidak masuk lewat jalur ini.');
         }
-        if (this.socket) {
-          this.socket.close();
-        }
+        if (this.socket) this.socket.close();
       };
     } catch (e) {
-      this.scheduleReconnect();
+      this.scheduleRecheck();
     }
   }
 
-  private scheduleReconnect() {
+  /** Setelah sempat tersambung, kembali ke pemeriksaan berkala. */
+  private scheduleRecheck() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = setTimeout(() => {
-      this.connect();
-    }, 5000);
+    this.reconnectTimer = setTimeout(() => { void this.start(); }, 30000);
+  }
+
+  private stopPolling() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
   }
 
   private pollFallback() {
-    setInterval(async () => {
+    this.stopPolling();
+    this.pollTimer = setInterval(async () => {
       try {
         const res = await fetch(`http://localhost:${this.currentPort}/api/kiosk-status`);
         if (res.ok) {
