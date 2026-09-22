@@ -882,28 +882,16 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
   const isBluetoothPrintAvailable = useCallback(() => NiimbotPrinter.isSupported(), []);
 
-  const handleBluetoothPrint = async () => {
-    if (btPrintState === 'connecting' || btPrintState === 'printing') return;
-    if (!NiimbotPrinter.isSupported()) {
-      setBtPrintState('failed');
-      setBtPrintError('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge, dan buka lewat HTTPS.');
-      return;
-    }
-
-    setBtPrintError(null);
-    setBtPrintState('connecting');
-
-    try {
-      // Yang dicetak: isi slot frame — area yang MEMANG dibatasi frame saat
-      // pengambilan foto — tanpa frame-nya sendiri.
-      //
-      // Kertas label sudah ada desain tercetak, jadi mengirim gambar lengkap
-      // membuat frame muncul dua kali. Dan yang lebih penting: gambar lengkap
-      // mencakup bagian DI LUAR bingkai slot, sehingga seluruh bidang kamera
-      // ikut tercetak, bukan hanya bagian yang dibingkai di layar.
-      //
-      // Cadangan disusun berlapis: isi slot -> hasil akhir -> gambar lengkap.
-      // Lapis terakhir hanya terpakai kalau geometri slot tidak terbaca.
+  /**
+   * Inti cetak lewat Web Bluetooth — TANPA menyentuh state UI.
+   *
+   * Dipisah dari tombolnya supaya cetak OTOMATIS bisa memakai jalur yang sama.
+   * Sebelumnya hanya tombol yang bisa mencetak langsung, sedangkan cetak
+   * otomatis menitipkan pekerjaan ke server (queuePrintJob) dan menunggu
+   * kiosk-agent di PC yang sama menariknya. Di kiosk ini agent memang tidak
+   * jalan, jadi cetak otomatis tidak pernah sampai ke printer.
+   */
+  const printViaBluetoothCore = async (): Promise<void> => {
       const rawPhoto = capturedPhotos[0] || null;
       const frameForPrint = processedFrame || selectedFrame;
       const image = (rawPhoto ? await generatePrintImage(rawPhoto, frameForPrint, selectedLayoutId) : null)
@@ -918,13 +906,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       if (!printer.isConnected()) {
         const info = await printer.connect();
         setBtPrinterName(info.deviceName);
-        // Laporkan ke Admin supaya panel menampilkan printer yang benar-benar
-        // dipakai. Tanpa ini status di Admin akan selalu kosong untuk kiosk
-        // berlabel termal.
         void printer.reportStatus('READY', { printerName: info.deviceName });
       }
 
-      setBtPrintState('printing');
       const mm = labelMmFromPaperSize(kioskPaperSize);
       const size = computeLabelSize(mm.widthMm, mm.heightMm);
       const adjustments: PrintAdjustments = {
@@ -940,6 +924,21 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       };
 
       await printer.print(image, size, 1, adjustments);
+  };
+
+  const handleBluetoothPrint = async () => {
+    if (btPrintState === 'connecting' || btPrintState === 'printing') return;
+    if (!NiimbotPrinter.isSupported()) {
+      setBtPrintState('failed');
+      setBtPrintError('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge, dan buka lewat HTTPS.');
+      return;
+    }
+
+    setBtPrintError(null);
+    setBtPrintState('connecting');
+
+    try {
+      await printViaBluetoothCore();
       setBtPrintState('done');
     } catch (error: any) {
       const msg = String(error?.message || error);
@@ -2809,6 +2808,32 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
               ? adminPaperSize
               : getPaperSizeForLayout(selectedLayoutId);
 
+          // CETAK LANGSUNG DULU, bukan lewat server.
+          //
+          // Printer label NIIMBOT tersambung lewat Web Bluetooth di browser ini
+          // dan TIDAK muncul sebagai printer sistem, jadi kiosk-agent tidak bisa
+          // menjangkaunya. Kerja samanya: pekerjaan dititipkan ke server
+          // (queuePrintJob) dan ditunggu agent menariknya — kalau agent tidak
+          // jalan, cetak otomatis tidak pernah sampai ke printer. Jadi jalur
+          // langsung dipakai lebih dulu, dan pekerjaan server tetap dicatat
+          // sesudahnya supaya pelaporan serta riwayat tetap utuh.
+          if (NiimbotPrinter.isSupported()) {
+              try {
+                  setPrintState('printing');
+                  await printViaBluetoothCore();
+                  setPrintState('success');
+                  // Pencatatan ke server bersifat pelaporan; kegagalannya tidak
+                  // boleh mengubah hasil cetak yang sudah terjadi.
+                  void recordPrintJob(imageUrl, paperSize, printConfig);
+                  return;
+              } catch (btError) {
+                  // Jatuh ke jalur server HANYA kalau jalur langsung gagal —
+                  // mis. belum ada perangkat terpasang dan pemilihnya dibatalkan.
+                  console.warn('[PhotoBooth] Cetak langsung gagal, mencoba jalur server.',
+                      btError instanceof Error ? btError.message : 'error');
+              }
+          }
+
           const job = await queuePrintJob(sessionCode, {
               image_url: imageUrl,
               copies: 1,
@@ -2831,6 +2856,44 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       } catch (error) {
           console.error('[PhotoBooth] Automatic print request failed:', error instanceof KioskApiError ? error.message : 'request error');
           finishPrintAsFailed(error);
+      }
+  };
+
+  /**
+   * Catat pekerjaan cetak ke server sebagai RIWAYAT saja.
+   *
+   * Dipakai setelah cetak langsung berhasil. Server tidak mencetak apa pun di
+   * sini — printer label tidak terjangkau agent — jadi kegagalan pencatatan
+   * hanya dicatat di konsol. Label yang sudah keluar tidak boleh dianggap gagal
+   * hanya karena riwayatnya tidak tersimpan.
+   */
+  const recordPrintJob = async (
+      imageUrl: string,
+      paperSize: string,
+      printConfig: { width: number; height: number },
+  ): Promise<void> => {
+      try {
+          const job = await queuePrintJob(sessionCode, {
+              image_url: imageUrl,
+              copies: 1,
+              paper_size: paperSize,
+              orientation: printConfig.width > printConfig.height ? 'landscape' : 'portrait',
+              idempotency_key: makeIdempotencyKey(),
+          });
+          setPrintJobId(job.job_id);
+          persistPrintJob({
+              sessionCode,
+              jobId: job.job_id,
+              imageUrl,
+              idempotencyKey: makeIdempotencyKey(),
+              // 'printing' adalah nilai terdekat yang diterima penyimpanan;
+              // state UI-nya sendiri sudah diset 'success' di pemanggil.
+              status: 'printing',
+              createdAt: Date.now(),
+          });
+      } catch (error) {
+          console.warn('[PhotoBooth] Riwayat cetak tidak tersimpan:',
+              error instanceof KioskApiError ? error.message : 'request error');
       }
   };
 

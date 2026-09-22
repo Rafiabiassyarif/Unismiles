@@ -60,7 +60,7 @@ test('tombol cetak Bluetooth ada dan memanggil jalur langsung', () => {
 });
 
 test('jalur Bluetooth TIDAK lewat server atau agent', () => {
-  const fn = bodyOf('handleBluetoothPrint');
+  const fn = bodyOf('printViaBluetoothCore');
   // Inti permintaan: tanpa kiosk agent. Kalau ada queuePrintJob / fetch print job
   // di sini, jalur ini kembali bergantung pada server.
   assert.ok(!/queuePrintJob/.test(fn), 'tidak boleh memakai queuePrintJob');
@@ -76,7 +76,7 @@ test('jalur Bluetooth TIDAK lewat server atau agent', () => {
 test('satu sambungan dipakai ulang, tidak menyambung tiap kali klik', () => {
   // Web Bluetooth menolak requestDevice di luar gestur pengguna, jadi
   // menyambung ulang tiap klik akan gagal setelah klik pertama.
-  const fn = bodyOf('handleBluetoothPrint');
+  const fn = bodyOf('printViaBluetoothCore');
   assert.match(fn, /bluetoothPrinterRef\.current/, 'klien harus disimpan di ref');
   assert.match(fn, /if \(!printer\.isConnected\(\)\)/, 'hanya menyambung kalau belum tersambung');
 });
@@ -90,7 +90,7 @@ test('batal memilih perangkat dibedakan dari kegagalan printer', () => {
 });
 
 test('yang dicetak hanya isi slot, tanpa frame', () => {
-  const fn = bodyOf('handleBluetoothPrint');
+  const fn = bodyOf('printViaBluetoothCore');
   // Inti keluhan: frame ikut tercetak, dan bagian di luar bingkai slot ikut
   // tercetak. Yang benar hanya isi slot.
   assert.match(fn, /generatePrintImage\(rawPhoto, frameForPrint, selectedLayoutId\)/,
@@ -130,7 +130,7 @@ test('helper gambar tidak diduplikasi di dua tempat', () => {
 });
 
 test('pengaturan Admin dipakai di jalur Bluetooth', () => {
-  const fn = bodyOf('handleBluetoothPrint');
+  const fn = bodyOf('printViaBluetoothCore');
   // Ukuran kertas dari Admin -> ukuran label.
   assert.match(fn, /labelMmFromPaperSize\(kioskPaperSize\)/,
     'ukuran label harus mengikuti ukuran kertas Admin');
@@ -152,11 +152,14 @@ test('kalibrasi termal datang dari agent, jadi Admin benar-benar berpengaruh', (
 });
 
 test('status printer dilaporkan ke Admin supaya panel tidak kosong', () => {
-  const fn = bodyOf('handleBluetoothPrint');
-  assert.match(fn, /reportStatus\('READY'/, 'sambungan berhasil harus dilaporkan');
-  assert.match(fn, /reportStatus\('ERROR'/, 'kegagalan harus dilaporkan');
-  // Pelaporan tidak boleh menggagalkan cetak.
-  assert.match(fn, /void .*reportStatus/, 'pelaporan tidak boleh di-await di jalur cetak');
+  const inti = bodyOf('printViaBluetoothCore');
+  assert.match(inti, /reportStatus\('READY'/, 'sambungan berhasil harus dilaporkan');
+  // Pelaporan tidak boleh menggagalkan cetak: di-void, bukan di-await.
+  assert.match(inti, /void printer\.reportStatus\('READY'/,
+    'pelaporan tidak boleh di-await di jalur cetak');
+  // Kegagalan dilaporkan oleh handler tombol, tempat jalur langsung dipanggil.
+  const handler = bodyOf('handleBluetoothPrint');
+  assert.match(handler, /reportStatus\('ERROR'/, 'kegagalan harus dilaporkan');
 });
 
 test('tombol terkunci saat sambungan/cetak berlangsung', () => {
@@ -182,4 +185,99 @@ test('konsol tidak dibanjiri pesan kiosk-agent yang tidak aktif', () => {
   assert.match(BRIDGE, /warnedOffline/, 'harus ada penanda supaya pesan ditulis sekali');
   assert.match(BRIDGE, /console\.info\(/, 'pakai info, bukan error, untuk kondisi normal ini');
   assert.match(BRIDGE, /tidak diulang/, 'pesannya harus menyebut bahwa tidak akan diulang');
+});
+
+// --- Cetak otomatis tanpa memilih printer ---
+
+test('cetak OTOMATIS memakai jalur langsung, bukan menunggu agent', () => {
+  // Sebelumnya hanya tombol yang mencetak langsung; cetak otomatis menitipkan
+  // pekerjaan ke server dan menunggu agent menariknya. Di kiosk ini agent tidak
+  // jalan, jadi cetak otomatis tidak pernah sampai ke printer.
+  // handleAutoPrint punya blok bersarang (try/catch), jadi dipotong sampai
+  // fungsi berikutnya, bukan sampai penutup pertama.
+  const start = BOOTH.indexOf('const handleAutoPrint');
+  const fn = BOOTH.slice(start, BOOTH.indexOf('const recordPrintJob', start));
+  assert.match(fn, /printViaBluetoothCore\(\)/,
+    'cetak otomatis harus memakai jalur langsung yang sama');
+  // Dibandingkan pada PEMANGGILAN-nya, bukan penyebutan di komentar: komentar
+  // penjelas di atas blok ini menyebut queuePrintJob, dan itu akan membuat
+  // perbandingan teks menyesatkan.
+  const panggilLangsung = fn.indexOf('await printViaBluetoothCore()');
+  const panggilServer = fn.indexOf('await queuePrintJob(');
+  assert.ok(panggilLangsung > 0 && panggilServer > 0, 'kedua jalur harus ada');
+  assert.ok(panggilLangsung < panggilServer,
+    'jalur langsung harus dicoba SEBELUM jalur server');
+  // Dan jalur server tetap ada sebagai cadangan, tidak dihapus.
+  assert.match(fn, /queuePrintJob\(/, 'jalur server tetap ada sebagai cadangan');
+});
+
+test('cetak otomatis tidak membuka pemilih perangkat', () => {
+  // Cetak otomatis tidak punya gestur pengguna, jadi requestDevice akan gagal.
+  // Ekspor nama perangkat yang diingat membuat sambungan berikutnya tidak perlu
+  // memilih, dan tidak bergantung pada interaksi.
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /rememberedDeviceName\(/,
+    'bridge harus bisa membuka sambungan tanpa pemilih');
+  assert.match(PRINTER, /REMEMBERED_DEVICE_KEY/, 'nama perangkat disimpan, bukan ditanyakan lagi');
+});
+
+// --- Koneksi otomatis ke printer yang sudah terpair ---
+
+test('printer yang sudah terpair disambung tanpa pemilih perangkat', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const connect = PRINTER.slice(PRINTER.indexOf('async connect('), PRINTER.indexOf('private async finishConnect'));
+
+  // getDevices() hanya mengembalikan perangkat yang SUDAH dipasangkan, dan boleh
+  // dipanggil tanpa gestur pengguna — itu yang membuat cetak otomatis bisa.
+  // Yang diperiksa adalah PEMAKAIANNYA di connect(), bukan sekadar keberadaan
+  // helper: helper yang ada tapi tidak dipanggil tidak mengubah apa pun.
+  assert.match(connect, /await this\.findPairedDevice\(\)/,
+    'connect() harus mencari perangkat tersimpan, bukan selalu membuka pemilih');
+  assert.match(connect, /authorizedDevice/,
+    'perangkat tersimpan harus diteruskan ke connect()');
+
+  // Jalur pemilih tetap ada sebagai cadangan (pasangan pertama / izin dicabut).
+  assert.match(connect, /await this\.client\.connect\(\)/,
+    'cadangan lewat pemilih harus tetap ada supaya tidak pernah lebih buruk dari sebelumnya');
+});
+
+test('perangkat tersimpan dipakai lebih dulu, bukan jalur pemilih', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const connect = PRINTER.slice(PRINTER.indexOf('async connect('), PRINTER.indexOf('private async finishConnect'));
+  const cari = connect.indexOf('await this.findPairedDevice()');
+  const pilih = connect.indexOf('await this.client.connect()');
+  assert.ok(cari > 0, 'perangkat tersimpan harus dicari');
+  assert.ok(cari < pilih, 'perangkat tersimpan harus dicoba SEBELUM membuka pemilih');
+});
+
+test('printer yang diingat dipilih duluan, bukan yang pertama ditemukan', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const start = PRINTER.indexOf('private async findPairedDevice');
+  const fn = PRINTER.slice(start, PRINTER.indexOf('private async finishConnect', start));
+  assert.match(fn, /remembered/, 'nama yang diingat harus dicari lebih dulu');
+  assert.ok(fn.indexOf('remembered') < fn.indexOf('devices[0]'),
+    'perangkat yang diingat harus menang atas perangkat pertama');
+});
+
+// --- Kertas: jangan dimajukan setelah cetak ---
+
+test('kertas tidak dimajukan lagi kalau mode akhir cetak memintanya', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  // printEnd-lah yang memajukan kertas di seri B1, jadi mode "berhenti di kepala
+  // cetak" harus benar-benar melewatkannya — bukan sekadar menyetel flag di
+  // tempat lain yang tidak memengaruhi aliran cetak.
+  assert.match(PRINTER, /stop-at-printhead/, 'mode berhenti di kepala cetak harus ada');
+  const print = PRINTER.slice(PRINTER.indexOf('async print('));
+  const finallyBlock = print.slice(print.indexOf('finally'));
+  const tanpaEnd = finallyBlock.slice(finallyBlock.indexOf('stop-at-printhead'));
+  assert.ok(tanpaEnd.indexOf('printEnd') < tanpaEnd.indexOf('else'),
+    'pemanggilan printEnd harus berada di cabang SEBELAH, bukan dijalankan selalu');
+});
+
+test('bawaan kertas tetap memajukan supaya label berikutnya sampai', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  // Label 54x67 mm punya desain tercetak; kalau kertas tidak dimajukan, label
+  // berikutnya tidak akan sampai ke posisi cetak. Jadi bawaannya tidak diubah.
+  assert.match(PRINTER, /paperEnd: 'advance-and-separate'/,
+    'bawaan harus tetap memajukan kertas');
 });

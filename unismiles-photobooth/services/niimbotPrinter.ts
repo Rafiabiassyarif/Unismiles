@@ -34,6 +34,26 @@ import {
   type PrintDirection,
 } from '@mmote/niimbluelib';
 
+/**
+ * Apa yang dilakukan printer pada akhir cetak.
+ *
+ *  'advance-and-separate' (bawaan) — printEnd memajukan kertas ke posisi
+ *      pemisah berikutnya. Untuk label berjarak (dengan celah) ini memang yang
+ *      diinginkan: label keluar, siap disobek, dan majunya berhenti tepat di
+ *      celah label berikutnya.
+ *
+ *  'stop-at-printhead' — tanpa printEnd. Kertas BERHENTI di posisi kepala cetak
+ *      dan tidak dimajukan lagi, jadi tidak ada kertas terbuang.
+ *
+ * PENTING — yang mencetak potong adalah PERANGKAT, bukan protokol. B1 Pro tidak
+ * punya pemotong; labelnya terpisah di garis perforasi/celah. Perintah
+ * "HalfCut" (0x5C) ada di protokol untuk model lain yang punya pisau, sudah
+ * dicoba dan tidak menghasilkan potongan di seri B. Jadi kalau yang dimaksud
+ * "langsung cut" adalah label langsung terlepas, itu urusan kertas yang
+ * dipakai, bukan setelan.
+ */
+export type PaperEndMode = 'advance-and-separate' | 'stop-at-printhead';
+
 export interface PrintAdjustments {
   /** Kecerahan foto, persen (100 = tidak diubah). */
   brightness: number;
@@ -61,6 +81,11 @@ export interface PrintAdjustments {
    * 'stretch' = penuhi label dengan merusak rasio (gepeng).
    */
   fitMode: 'fit' | 'cover' | 'stretch';
+  /**
+   * Perilaku akhir cetak. Bawaan 'advance-and-separate' = perilaku lama yang
+   * sudah terbukti (label keluar, berhenti di celah berikutnya).
+   */
+  paperEnd?: PaperEndMode;
 }
 
 export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
@@ -75,6 +100,7 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
   marginLeftPx: 0,
   marginBottomPx: 0,
   fitMode: 'fit',
+  paperEnd: 'advance-and-separate',
 };
 
 /** Geometri label: dihitung di `labelGeometry.ts` supaya bisa diuji tanpa hardware. */
@@ -124,6 +150,42 @@ export class NiimbotPrinter {
       try { await this.client.disconnect(); } catch { /* sudah terputus */ }
     }
     this.client = instantiateClient('bluetooth');
+
+    // SAMBUNG TANPA PEMILIH PERANGKAT.
+    //
+    // `requestDevice()` selalu membuka pemilih perangkat, dan itu tidak bisa
+    // dilewati. `navigator.bluetooth.getDevices()` sebaliknya — hanya tersedia
+    // untuk situs yang sudah diberi izin (izin tersimpan sejak pasangan pertama,
+    // dan Chrome mempertahankannya), dan hanya mengembalikan perangkat yang
+    // SUDAH pernah dipasangkan. Justru itu yang dibutuhkan kiosk: printer yang
+    // sama setiap kali, tanpa ada yang memilih apa pun.
+    //
+    // getDevices() boleh dipanggil TANPA gestur pengguna karena tidak membuka
+    // dialog; itu yang membuat cetak otomatis mungkin. Kalau ternyata tidak ada
+    // perangkat tersimpan (pasangan pertama, atau izin dicabut), jalur pemilih
+    // tetap dipakai — jadi perilakunya tidak pernah lebih buruk dari sebelumnya.
+    const authorized = await this.findPairedDevice();
+    if (authorized) {
+      // Tipe dasar library hanya punya connect() tanpa argumen, sedangkan
+      // implementasi Bluetooth menerima { authorizedDevice }. Jadi yang
+      // disempitkan di sini adalah NILAI client-nya, bukan tipe library.
+      const btClient = this.client as unknown as {
+        connect(options?: { authorizedDevice?: unknown; usesTillItsAvailable?: boolean }): Promise<unknown>;
+      };
+      try {
+        await btClient.connect({ authorizedDevice: authorized });
+        return this.finishConnect();
+      } catch {
+        // Tersimpan tapi gagal (printer mati / di luar jangkauan). Dicoba sekali
+        // lagi tanpa pemilih, supaya cetak otomatis tidak terhenti oleh dialog.
+        try {
+          await btClient.connect({ authorizedDevice: authorized, usesTillItsAvailable: true });
+          return this.finishConnect();
+        } catch {
+          // Jatuh ke pemilih di bawah: paling tidak orangnya bisa memilih manual.
+        }
+      }
+    }
     // JEDA PAKET: sengaja TIDAK diubah — dipakai bawaan library (10 ms).
     //
     // Sebelumnya di sini tertulis setPacketInterval(0): kirim tanpa jeda sama
@@ -134,8 +196,60 @@ export class NiimbotPrinter {
     // dihilangkan untuk mempercepat cetak.
 
     await this.client.connect();
+    return this.finishConnect();
+  }
 
-    const info = this.client.getPrinterInfo();
+  /** Nama perangkat yang diingat, supaya tidak perlu memilih lagi. */
+  private readonly REMEMBERED_DEVICE_KEY = 'unismiles.printer.deviceName';
+
+  /** Nama yang dipakai terakhir kali, dibaca dari localStorage. */
+  public rememberedDeviceName(): string | null {
+    try {
+      return window.localStorage.getItem(this.REMEMBERED_DEVICE_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  private rememberDeviceName(name: string | undefined): void {
+    if (!name) return;
+    try {
+      window.localStorage.setItem(this.REMEMBERED_DEVICE_KEY, name);
+    } catch {
+      // localStorage bisa dilarang (mode privat). Bukan alasan menggagalkan cetak.
+    }
+  }
+
+  /**
+   * Cari printer yang sudah dipasangkan, tanpa membuka pemilih.
+   *
+   * Diutamakan yang namanya sama dengan yang dipakai terakhir kali — di kiosk
+   * biasanya hanya ada satu, tetapi kalau ada beberapa, printer yang benar harus
+   * dipilih dengan pasti, bukan yang pertama kebetulan ditemukan.
+   */
+  private async findPairedDevice(): Promise<any | null> {
+    const bt = (navigator as any).bluetooth;
+    if (!bt) return null;
+    if (typeof bt.getDevices !== 'function') return null;
+    try {
+      const devices = await bt.getDevices();
+      if (!Array.isArray(devices) || devices.length === 0) return null;
+      const remembered = this.rememberedDeviceName();
+      if (remembered) {
+        const cocok = devices.find((d: any) => d?.name === remembered);
+        if (cocok) return cocok;
+      }
+      // Belum ada catatan: pakai yang namanya berawalan merek printer label.
+      const kandidat = devices.find((d: any) => /^[A-Za-z]/.test(String(d?.name || '')));
+      return kandidat || devices[0];
+    } catch {
+      return null;
+    }
+  }
+
+  /** Bagian connect() setelah sambungan terbentuk. */
+  private async finishConnect(): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
+    const info = this.client!.getPrinterInfo();
     const meta = this.client.getModelMetadata();
     const detected = this.client.getPrintTaskType();
     if (detected) {
@@ -143,6 +257,7 @@ export class NiimbotPrinter {
     }
 
     const deviceName = (info as { deviceName?: string } | undefined)?.deviceName || 'tidak diketahui';
+    this.rememberDeviceName(deviceName);
 
     // Laporkan ke Admin. Tidak di-await: status bukan alasan menunda cetak.
     void this.reportStatus('READY', { printerName: deviceName });
@@ -349,9 +464,22 @@ export class NiimbotPrinter {
       }
       await task.waitForFinished();
     } finally {
-      // printEnd WAJIB: itu yang mengeluarkan kertas. Tanpa ini printer
-      // berhenti dengan label masih di dalam.
-      try { await task.printEnd(); } catch { /* sudah selesai */ }
+      if (adj.paperEnd === 'stop-at-printhead') {
+        // Sengaja TIDAK memanggil printEnd. Di seri B1, pageEnd sudah
+        // menghentikan kertas di posisi kepala cetak; printEnd-lah yang
+        // memajukannya lagi. Tanpa printEnd, kertas tidak maju — tidak ada
+        // kertas terbuang. Konsekuensinya gambar berikutnya mulai dari posisi
+        // yang sama, jadi ini untuk mencetak satu kali per lembar.
+        //
+        // Hati-hati: hati-hati jangan sampai ini jadi bawaan. Untuk kertas
+        // berlabel (54x67 mm) yang punya desain tercetak, label berikutnya TIDAK
+        // akan sampai ke posisi cetak kalau kertas tidak dimajukan.
+        void task;
+      } else {
+        // printEnd WAJIB pada mode bawaan: itu yang mengeluarkan kertas sampai
+        // berhenti di pemisah label berikutnya.
+        try { await task.printEnd(); } catch { /* sudah selesai */ }
+      }
       try { this.client.startHeartbeat(); } catch { /* opsional */ }
     }
   }
