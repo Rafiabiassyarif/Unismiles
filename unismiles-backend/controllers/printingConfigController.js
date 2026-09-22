@@ -183,6 +183,8 @@ const controller = {
           thermal_offset_x_px: config.thermal_offset_x_px,
           print_margin_top_px: config.print_margin_top_px,
           print_margin_right_px: config.print_margin_right_px,
+          print_margin_left_px: config.print_margin_left_px,
+          print_margin_bottom_px: config.print_margin_bottom_px,
           photo_fit_mode: config.photo_fit_mode,
           config_version: config.config_version,
         },

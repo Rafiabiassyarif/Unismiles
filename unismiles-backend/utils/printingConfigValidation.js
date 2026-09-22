@@ -1,4 +1,4 @@
-const { PAPER_SIZES, isKnownPaperSize, validateCustomSize, isThermalSize } = require('./paperSizes');
+const { PAPER_SIZES, isKnownPaperSize, validateCustomSize, isThermalSize, findLabelPreset } = require('./paperSizes');
 
 /**
  * Adapter yang dikenal.
@@ -42,6 +42,8 @@ const PHOTO_ADJUST_LIMITS = {
   // ruang kosong, karena gambarnya selalu menutupi seluruh kanvas.
   print_margin_top_px: { min: 0, max: 300, fallback: 0 },
   print_margin_right_px: { min: 0, max: 300, fallback: 0 },
+  print_margin_left_px: { min: 0, max: 300, fallback: 0 },
+  print_margin_bottom_px: { min: 0, max: 300, fallback: 0 },
 };
 const PHOTO_FIT_MODES = ['fit', 'cover', 'stretch'];
 
@@ -111,6 +113,8 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     thermal_offset_x_px: Number(existing.thermal_offset_x_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback),
     print_margin_top_px: Number(existing.print_margin_top_px ?? PHOTO_ADJUST_LIMITS.print_margin_top_px.fallback),
     print_margin_right_px: Number(existing.print_margin_right_px ?? PHOTO_ADJUST_LIMITS.print_margin_right_px.fallback),
+    print_margin_left_px: Number(existing.print_margin_left_px ?? PHOTO_ADJUST_LIMITS.print_margin_left_px.fallback),
+    print_margin_bottom_px: Number(existing.print_margin_bottom_px ?? PHOTO_ADJUST_LIMITS.print_margin_bottom_px.fallback),
     photo_fit_mode: existing.photo_fit_mode || 'fit',
     ...input,
   };
@@ -158,6 +162,18 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     throw new PrintingConfigValidationError(`photo_fit_mode must be one of: ${PHOTO_FIT_MODES.join(', ')}.`);
   }
   normalized.photo_fit_mode = fitMode;
+
+  // Preset label membawa marginnya sendiri. Kalau nilainya preset, margin
+  // DITIMPA dari preset — supaya memilih template di Admin tidak perlu diikuti
+  // mengetik empat angka margin secara manual, dan tidak bisa setengah-setengah.
+  const labelPreset = findLabelPreset(merged.paper_size);
+  if (labelPreset) {
+    const px = (mm) => Math.max(0, Math.round((mm / 25.4) * 300));
+    normalized.print_margin_top_px = px(labelPreset.marginTopMm);
+    normalized.print_margin_right_px = px(labelPreset.marginRightMm);
+    normalized.print_margin_left_px = px(labelPreset.marginLeftMm);
+    normalized.print_margin_bottom_px = px(labelPreset.marginBottomMm);
+  }
 
   if (!enabled) {
     normalized.adapter = 'disabled';
@@ -218,6 +234,8 @@ function toSocketPrintingConfig(row) {
     thermal_offset_x_px: Number(row.thermal_offset_x_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback),
     print_margin_top_px: Number(row.print_margin_top_px ?? PHOTO_ADJUST_LIMITS.print_margin_top_px.fallback),
     print_margin_right_px: Number(row.print_margin_right_px ?? PHOTO_ADJUST_LIMITS.print_margin_right_px.fallback),
+    print_margin_left_px: Number(row.print_margin_left_px ?? PHOTO_ADJUST_LIMITS.print_margin_left_px.fallback),
+    print_margin_bottom_px: Number(row.print_margin_bottom_px ?? PHOTO_ADJUST_LIMITS.print_margin_bottom_px.fallback),
     photo_fit_mode: row.photo_fit_mode || 'fit',
   };
 }

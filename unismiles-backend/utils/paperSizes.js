@@ -69,7 +69,40 @@ const THERMAL_PRESETS = [
   'Termal 30 × 40 mm (label kecil)',
 ];
 
-const PAPER_SIZES = [...PHOTO_PRESETS, ...THERMAL_PRESETS];
+/**
+ * Preset label dengan AREA CETAK yang sudah ditentukan pabrik.
+ *
+ * Label Polaroid NIIMBOT 54 x 67 mm bukan kertas kosong: ia sudah punya bingkai
+ * tercetak, dan hanya kotak 46 x 46 mm di tengahnya yang boleh diisi. Karena itu
+ * ukuran kertas saja tidak cukup — margin empat sisinya ikut disimpan, kalau
+ * tidak fotonya akan melimpah ke bingkai yang sudah tercetak.
+ *
+ * Angka-angka ini datang dari pengukuran label yang dipakai UniSmiles:
+ *   atas 6 mm, kanan 3 mm, kiri 3 mm, bawah 14 mm  ->  46 x 46 mm di tengah.
+ *   6 + 46 + 14 = 66, bukan 67. Selisih 1 mm dibiarkan di bawah (margin 15 mm),
+ *   supaya kotak tetap persis 46 x 46 mm seperti yang diminta.
+ */
+const LABEL_PRESETS = [
+  {
+    name: 'nimbotpaper-polaroid',
+    paperWidthMm: 54,
+    paperHeightMm: 67,
+    marginTopMm: 6,
+    marginRightMm: 3,
+    marginLeftMm: 3,
+    /**
+     * Bawah 14 mm seperti diminta, TETAPI kotak tingginya harus tepat 46 mm.
+     * 6 + 46 + 14 = 66 mm, sedangkan kertasnya 67 mm. Selisih 1 mm itu harus
+     * jatuh ke salah satu sisi supaya persis 46 — dan lebih aman di BAWAH,
+     * menjauhi area foto, daripada di atas yang mendekati bingkai.
+     */
+    marginBottomMm: 67 - 6 - 46,
+  },
+];
+
+const LABEL_PRESET_NAMES = LABEL_PRESETS.map(p => p.name);
+
+const PAPER_SIZES = [...PHOTO_PRESETS, ...THERMAL_PRESETS, ...LABEL_PRESET_NAMES];
 
 /**
  * Pola ukuran kustom: "CUSTOM 48X150 MM" atau "CUSTOM 40x60mm".
@@ -121,10 +154,17 @@ function isThermalSize(value) {
   return THERMAL_PRESETS.includes(text) || Boolean(parseCustomSize(text));
 }
 
+/** Preset label berdasarkan namanya (mis. 'nimbotpaper-polaroid'). */
+function findLabelPreset(value) {
+  const text = String(value || '').trim().toLowerCase();
+  return LABEL_PRESETS.find(p => p.name.toLowerCase() === text) || null;
+}
+
 /** Apakah nilai ini ukuran kertas yang diterima? */
 function isKnownPaperSize(value) {
   const text = String(value || '').trim();
   if (PAPER_SIZES.includes(text)) return true;
+  if (findLabelPreset(text)) return true;
   const custom = parseCustomSize(text);
   if (!custom) return false;
   return validateCustomSize(text).ok;
@@ -136,6 +176,18 @@ function isKnownPaperSize(value) {
  * Dipakai supaya gambar yang dikirim ke printer tidak buram (kurang piksel) dan
  * tidak boros (jauh lebih besar dari kemampuan printer).
  */
+/** Ukuran area cetak (px) untuk sebuah preset label, pada 300 dpi. */
+function labelPresetPixels(preset) {
+  if (!preset) return null;
+  const dpi = THERMAL_LIMITS.dpi;
+  const px = (mm) => Math.max(1, Math.round((mm / 25.4) * dpi));
+  return {
+    widthPx: px(preset.paperWidthMm - preset.marginLeftMm - preset.marginRightMm),
+    heightPx: px(preset.paperHeightMm - preset.marginTopMm - preset.marginBottomMm),
+    dpi,
+  };
+}
+
 function pixelSize(value) {
   const dpi = THERMAL_LIMITS.dpi;
   const px = (mm) => Math.max(1, Math.round((mm / 25.4) * dpi));
@@ -154,6 +206,9 @@ module.exports = {
   THERMAL_LIMITS,
   PHOTO_PRESETS,
   THERMAL_PRESETS,
+  LABEL_PRESETS,
+  LABEL_PRESET_NAMES,
+  findLabelPreset,
   PAPER_SIZES,
   parseCustomSize,
   validateCustomSize,

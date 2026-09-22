@@ -712,6 +712,8 @@ class KioskWSClient {
         thermalOffsetXPx: Number(printing.thermal_offset_x_px ?? 0),
         printMarginTopPx: Number(printing.print_margin_top_px ?? 0),
         printMarginRightPx: Number(printing.print_margin_right_px ?? 0),
+        printMarginLeftPx: Number(printing.print_margin_left_px ?? 0),
+        printMarginBottomPx: Number(printing.print_margin_bottom_px ?? 0),
         photoFitMode: String(printing.photo_fit_mode || 'fit').toLowerCase(),
       };
       Object.assign(this.reportedState, calib);
@@ -791,6 +793,8 @@ class KioskWSClient {
       thermalOffsetXPx: Number(config.thermal_offset_x_px ?? this.printerConfig.thermalOffsetXPx ?? 0),
       printMarginTopPx: Number(config.print_margin_top_px ?? this.printerConfig.printMarginTopPx ?? 0),
       printMarginRightPx: Number(config.print_margin_right_px ?? this.printerConfig.printMarginRightPx ?? 0),
+      printMarginLeftPx: Number(config.print_margin_left_px ?? this.printerConfig.printMarginLeftPx ?? 0),
+      printMarginBottomPx: Number(config.print_margin_bottom_px ?? this.printerConfig.printMarginBottomPx ?? 0),
       photoFitMode: String(config.photo_fit_mode || this.printerConfig.photoFitMode || 'fit').toLowerCase(),
     };
 

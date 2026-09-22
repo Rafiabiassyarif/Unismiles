@@ -838,6 +838,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   // setelah sekian piksel — menggeser saja tidak bisa membuat ruang kosong.
   const [printMarginTopPx, setPrintMarginTopPx] = useState(0);
   const [printMarginRightPx, setPrintMarginRightPx] = useState(0);
+  const [printMarginLeftPx, setPrintMarginLeftPx] = useState(0);
+  const [printMarginBottomPx, setPrintMarginBottomPx] = useState(0);
   const [selectedFrame, setSelectedFrame] = useState<FrameStyle | null>(null);
   const [editTab, setEditTab] = useState<'FRAMES' | 'FILTERS'>('FRAMES');
   
@@ -933,6 +935,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         offsetXPx: Number(thermalOffsetXPx) || 0,
         marginTopPx: Number(printMarginTopPx) || 0,
         marginRightPx: Number(printMarginRightPx) || 0,
+        marginLeftPx: Number(printMarginLeftPx) || 0,
+        marginBottomPx: Number(printMarginBottomPx) || 0,
       };
 
       await printer.print(image, size, 1, adjustments);
@@ -1002,6 +1006,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       if (cfg.thermal_offset_x_px !== undefined) setThermalOffsetXPx(n(cfg.thermal_offset_x_px, 0));
       if (cfg.print_margin_top_px !== undefined) setPrintMarginTopPx(n(cfg.print_margin_top_px, 0));
       if (cfg.print_margin_right_px !== undefined) setPrintMarginRightPx(n(cfg.print_margin_right_px, 0));
+      if (cfg.print_margin_left_px !== undefined) setPrintMarginLeftPx(n(cfg.print_margin_left_px, 0));
+      if (cfg.print_margin_bottom_px !== undefined) setPrintMarginBottomPx(n(cfg.print_margin_bottom_px, 0));
       setPhotoAdjust(prev => ({
         brightness: n(cfg.photo_brightness, prev.brightness),
         contrast: n(cfg.photo_contrast, prev.contrast),

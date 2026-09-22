@@ -22,8 +22,8 @@
  *   label — jadi yang dipakai adalah angka yang terbukti.
  */
 
-import { B1_PRO_PRINTHEAD_PX, type LabelSize } from './labelGeometry.ts';
-import { ditherToBlackAndWhite } from './oneBitImage.ts';
+import { B1_PRO_PRINTHEAD_PX, printBox, type LabelSize } from './labelGeometry.ts';
+import { ditherToBlackAndWhite, ONE_BIT_THRESHOLD } from './oneBitImage.ts';
 import {
   ImageEncoder,
   PageColorType,
@@ -51,6 +51,10 @@ export interface PrintAdjustments {
   marginTopPx: number;
   /** Margin kanan: hentikan cetak sekian piksel sebelum tepi kanan label. */
   marginRightPx: number;
+  /** Margin kiri. */
+  marginLeftPx: number;
+  /** Margin bawah. */
+  marginBottomPx: number;
   /**
    * 'fit' = muat seluruh foto, sisa label jadi putih (ada bingkai).
    * 'cover' = penuhi label, rasio dijaga, kelebihan dipotong (tanpa bingkai).
@@ -68,12 +72,14 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
   offsetXPx: 0,
   marginTopPx: 0,
   marginRightPx: 0,
+  marginLeftPx: 0,
+  marginBottomPx: 0,
   fitMode: 'fit',
 };
 
 /** Geometri label: dihitung di `labelGeometry.ts` supaya bisa diuji tanpa hardware. */
 import { drawRect } from './labelGeometry.ts';
-export { labelSize, labelMmFromPaperSize, drawRect, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+export { labelSize, labelMmFromPaperSize, drawRect, printBox, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
 export type { LabelSize } from './labelGeometry.ts';
 
 export type PrintStatus =
@@ -251,7 +257,10 @@ export class NiimbotPrinter {
 
     // Perhitungan dipindah ke drawRect() supaya bisa diuji tanpa canvas.
     const r = drawRect(adj.fitMode, canvas.width, canvas.height, img.naturalWidth, img.naturalHeight,
-      adj.offsetYPx, adj.offsetXPx, adj.marginTopPx, adj.marginRightPx);
+      adj.offsetYPx, adj.offsetXPx, adj.marginTopPx, adj.marginRightPx, adj.marginLeftPx, adj.marginBottomPx,
+      // Batas keras: kertas label lebih lebar dari kepala cetak, jadi kotak
+      // cetak tidak boleh melewatinya walau marginnya mengatakan lain.
+      B1_PRO_PRINTHEAD_PX);
     // Dipotong ke bidang cetak: piksel di luar margin dibiarkan putih. Tanpa
     // langkah ini, margin tidak akan pernah terlihat — foto menutupi seluruh
     // kanvas, jadi tidak ada ruang kosong yang bisa muncul.
@@ -271,7 +280,12 @@ export class NiimbotPrinter {
     // menentukan hasil hitam-putihnya — kalau sebelum, filter akan mengembalikan
     // nilai antara dan merusak hasil dithering.
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    ditherToBlackAndWhite(imageData.data, canvas.width, canvas.height);
+    // Bidang cetak yang sama dengan yang dipakai menggambar: dithering di luar
+    // kotak hanya membuang waktu, dan menjaga perhitungan tinta tetap setara
+    // dengan yang benar-benar keluar di kertas.
+    const inkBox = printBox(canvas.width, canvas.height,
+      adj.marginTopPx, adj.marginRightPx, adj.marginLeftPx, adj.marginBottomPx, B1_PRO_PRINTHEAD_PX);
+    ditherToBlackAndWhite(imageData.data, canvas.width, canvas.height, ONE_BIT_THRESHOLD, inkBox);
     ctx.putImageData(imageData, 0, 0);
 
     return canvas;

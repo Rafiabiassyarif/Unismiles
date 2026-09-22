@@ -422,6 +422,8 @@ export const fetchPrintingConfig = async (): Promise<{
   thermal_offset_x_px?: number;
   print_margin_top_px?: number;
   print_margin_right_px?: number;
+  print_margin_left_px?: number;
+  print_margin_bottom_px?: number;
 } | null> => {
   try {
     const response = await request<ApiResponse<any>>({

@@ -31,7 +31,20 @@ const THERMAL_PRESETS = [
   'Termal 30 × 40 mm (label kecil)',
 ] as const;
 
-const PAPER_SIZES = [...PHOTO_PRESETS, ...THERMAL_PRESETS] as const;
+/**
+ * Template label dengan area cetak sendiri.
+ *
+ * Nilainya HARUS persis nama preset di backend ('nimbotpaper-polaroid'), karena
+ * backend mengenalinya dari nama itu dan mengisi margin empat sisinya sendiri.
+ * Yang ditampilkan ke pengguna diberi keterangan ukuran area cetaknya.
+ */
+const LABEL_PRESETS = [
+  { value: 'nimbotpaper-polaroid', label: 'NIIMBOT Polaroid 54 × 67 mm — area cetak 46 × 46 mm' },
+] as const;
+
+const LABEL_PRESET_VALUES = LABEL_PRESETS.map(p => p.value);
+
+const PAPER_SIZES = [...PHOTO_PRESETS, ...THERMAL_PRESETS, ...LABEL_PRESET_VALUES] as const;
 
 /** Batas printer termal, untuk memandu pengisian ukuran kustom. */
 const THERMAL_LIMITS = { maxPrintWidthMm: 48, minHeightMm: 8, maxHeightMm: 350, dpi: 300 };
@@ -346,6 +359,9 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
           >
             <optgroup label="Foto (printer tinta)">
               {PHOTO_PRESETS.map(size => <option key={size} value={size}>{size}</option>)}
+            </optgroup>
+            <optgroup label="Template label (area cetak sudah ditentukan)">
+              {LABEL_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </optgroup>
             <optgroup label={`Termal / label (lebar maks ${THERMAL_LIMITS.maxPrintWidthMm} mm)`}>
               {THERMAL_PRESETS.map(size => <option key={size} value={size}>{size}</option>)}

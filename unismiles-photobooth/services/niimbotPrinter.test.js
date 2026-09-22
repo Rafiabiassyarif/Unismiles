@@ -71,8 +71,15 @@ test('perhitungan gambar ada di drawRect, bukan di dalam prepareCanvas', () => {
   // memakai hasilnya — bukan menghitung sendiri.
   // Kedua offset (vertikal DAN mendatar) harus diteruskan; kalau salah satu
   // hilang, kalibrasi posisi diam-diam tidak bekerja untuk sumbu itu.
-  assert.match(SERVICE, /drawRect\(adj\.fitMode, canvas\.width, canvas\.height, img\.naturalWidth, img\.naturalHeight,\s*\n\s*adj\.offsetYPx, adj\.offsetXPx, adj\.marginTopPx, adj\.marginRightPx\)/,
-    'prepareCanvas harus memakai drawRect dengan kedua offset DAN margin');
+  // Kedua offset, margin empat sisi, dan batas kepala cetak harus diteruskan.
+  // Pola dibiarkan longgar terhadap spasi/komentar: yang penting argumennya ADA,
+  // supaya menghapus salah satunya ketahuan di sini, bukan di kertas.
+  const call = SERVICE.slice(SERVICE.indexOf('const r = drawRect('));
+  const args = call.slice(0, call.indexOf(');'));
+  for (const wajib of ['adj.offsetYPx', 'adj.offsetXPx', 'adj.marginTopPx', 'adj.marginRightPx',
+    'adj.marginLeftPx', 'adj.marginBottomPx', 'B1_PRO_PRINTHEAD_PX']) {
+    assert.ok(args.includes(wajib), 'drawRect harus menerima ' + wajib);
+  }
   // Margin hanya bekerja kalau digambar dengan kliping; tanpa ini foto menutupi
   // seluruh kanvas dan margin tidak akan pernah terlihat.
   assert.match(SERVICE, /ctx\.rect\(r\.clipX, r\.clipY, r\.clipW, r\.clipH\)/,
@@ -187,7 +194,7 @@ test('dithering dilakukan SETELAH filter Admin', () => {
 test('dithering dipakai lewat satu fungsi teruji, bukan ditulis ulang', () => {
   // Perhitungannya di services/oneBitImage.ts supaya bisa DIEKSEKUSI di test:
   // kesalahan di sini hanya terlihat di kertas.
-  assert.match(SERVICE, /import \{ ditherToBlackAndWhite \} from '\.\/oneBitImage\.ts'/,
+  assert.match(SERVICE, /import \{ ditherToBlackAndWhite[, ]+ONE_BIT_THRESHOLD \} from '\.\/oneBitImage\.ts'/,
     'harus mengimpor dari modul teruji, bukan menyalin perhitungannya');
   assert.strictEqual((SERVICE.match(/ditherToBlackAndWhite\(/g) || []).length, 1,
     'satu tempat saja yang mengubah gambar');

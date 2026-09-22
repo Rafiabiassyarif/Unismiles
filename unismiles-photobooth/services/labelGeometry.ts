@@ -52,24 +52,27 @@ export function labelSize(
   heightMm: number,
   printheadPx: number = B1_PRO_PRINTHEAD_PX,
 ): LabelSize {
-  const px = (mm: number) => Math.max(1, Math.round((mm / 25.4) * LABEL_DPI));
+  // Nilai rusak (NaN, nol, negatif) jatuh ke 1 px, bukan NaN. Ukuran NaN akan
+  // membuat canvas berlebar NaN dan encoder gagal tanpa pesan yang jelas.
+  const px = (mm: number) => (Number.isFinite(mm) && mm > 0
+    ? Math.max(1, Math.round((mm / 25.4) * LABEL_DPI))
+    : 1);
   const requestedWidthPx = px(widthMm);
   const requestedHeightPx = px(heightMm);
+
+  // Kanvas = ukuran KERTAS, tanpa dipangkas.
+  //
+  // SEBELUMNYA lebar dipangkas ke kepala cetak (576 px) dan tingginya ikut
+  // diskalakan. Akibatnya skala gambar bukan lagi 300 dpi (menjadi ~271 dpi),
+  // sehingga "margin 3 mm" tidak lagi 3 mm di kertas — seluruh kalibrasi
+  // meleset. Untuk label yang punya area cetak, ukuran kertas harus utuh.
+  //
+  // Yang membatasi tinta sekarang adalah KOTAK CETAK: margin (dan batas kepala
+  // cetak) memotongnya, jadi piksel di luar area cetak tidak pernah berisi
+  // gambar. Itu juga yang membuat sisi kanan 54 mm yang tidak terjangkau
+  // printer tidak lagi "memotong" foto — di sana memang tidak ada tinta.
   const clamped = requestedWidthPx > printheadPx;
-
-  if (!clamped) {
-    return { widthPx: requestedWidthPx, heightPx: requestedHeightPx, requestedWidthPx, clamped: false };
-  }
-
-  // Skala dengan faktor yang sama untuk lebar dan tinggi, supaya rasio kertas
-  // tetap terjaga dan tidak ada bagian gambar yang terpotong.
-  const factor = printheadPx / requestedWidthPx;
-  return {
-    widthPx: printheadPx,
-    heightPx: Math.max(1, Math.round(requestedHeightPx * factor)),
-    requestedWidthPx,
-    clamped: true,
-  };
+  return { widthPx: requestedWidthPx, heightPx: requestedHeightPx, requestedWidthPx, clamped };
 }
 
 /** Konversi milimeter ke piksel pada DPI label. */
@@ -92,7 +95,21 @@ export function mmToPx(mm: number, dpi: number = LABEL_DPI): number {
  */
 export const DEFAULT_LABEL_MM = { widthMm: 54, heightMm: 67 } as const;
 
+/**
+ * Kertas label yang punya AREA CETAK sendiri (preset dari Admin).
+ *
+ * Label Polaroid bukan kertas kosong: bingkainya sudah tercetak, jadi ukuran
+ * kertasnya harus dikenali walau yang tersimpan hanya NAMANYA, bukan "CUSTOM ..".
+ * Marginnya tidak diambil dari sini melainkan dari pengaturan cetak (px), supaya
+ * hanya ada satu angka yang berlaku saat mencetak.
+ */
+const LABEL_PAPER_MM: Record<string, { widthMm: number; heightMm: number }> = {
+  'nimbotpaper-polaroid': { widthMm: 54, heightMm: 67 },
+};
+
 export function labelMmFromPaperSize(paperSize: string | null | undefined): { widthMm: number; heightMm: number } {
+  const preset = LABEL_PAPER_MM[String(paperSize || '').trim().toLowerCase()];
+  if (preset) return { ...preset };
   const match = String(paperSize || '').trim().match(/CUSTOM\s+(\d{1,3})\s*[X×]\s*(\d{1,3})\s*MM/i);
   if (match) {
     const widthMm = Number(match[1]);
@@ -118,6 +135,38 @@ export interface DrawRect {
 }
 
 /**
+ * Kotak cetak dari margin empat sisi.
+ *
+ * Ini yang membuat "area cetak 46 x 46 mm, margin atas 6 mm, kiri 3 mm, bawah
+ * 14 mm" bisa diwujudkan: foto tidak lagi mengisi seluruh kanvas, melainkan
+ * kotak ini. Di luar kotak dibiarkan kosong.
+ *
+ * Margin yang melebihi kanvas dijepit, bukan dibiarkan menghasilkan ukuran
+ * negatif — kanvas dengan lebar negatif akan gagal tanpa pesan yang jelas.
+ */
+export function printBox(
+  canvasW: number,
+  canvasH: number,
+  marginTopPx = 0,
+  marginRightPx = 0,
+  marginLeftPx = 0,
+  marginBottomPx = 0,
+  printableWidthPx: number = canvasW,
+): { x: number; y: number; w: number; h: number } {
+  const x = clampInt(Math.max(0, marginLeftPx), 0, canvasW);
+  const y = clampInt(Math.max(0, marginTopPx), 0, canvasH);
+
+  // Tepi kanan kotak tidak pernah melewati KEPALA CETAK. Kertas label 54 mm
+  // lebih lebar dari yang bisa dicetak (48,77 mm), jadi piksel di sebelah kanan
+  // batas itu tidak akan pernah keluar. Tanpa jepit ini, area cetak "46 mm"
+  // tampak terpenuhi di perhitungan tetapi 1,2 mm-nya hilang di kertas.
+  const rightEdge = Math.min(clampInt(canvasW - Math.max(0, marginRightPx), 0, canvasW), printableWidthPx);
+  const w = clampInt(rightEdge - x, 0, canvasW);
+  const h = clampInt(canvasH - y - Math.max(0, marginBottomPx), 0, canvasH);
+  return { x, y, w, h };
+}
+
+/**
  * Posisi dan ukuran gambar di atas label, sesuai mode penyesuaian.
  *
  * Dipisah dari `prepareCanvas` supaya bisa DIEKSEKUSI di test — `prepareCanvas`
@@ -125,9 +174,13 @@ export interface DrawRect {
  * kesalahan di sini langsung terlihat di kertas sebagai foto gepeng atau
  * bingkai putih.
  *
- *  - 'fit'     : seluruh foto masuk, sisa label jadi putih (ADA bingkai).
- *  - 'cover'   : label terisi penuh, rasio dijaga, kelebihan dipotong (TANPA bingkai).
- *  - 'stretch' : label terisi penuh dengan merusak rasio (gepeng).
+ *  - 'fit'     : seluruh foto masuk ke kotak, sisanya putih (ADA bingkai).
+ *  - 'cover'   : kotak terisi penuh, rasio dijaga, kelebihan dipotong (TANPA bingkai).
+ *  - 'stretch' : kotak dipenuhi apa adanya (bisa gepeng).
+ *
+ * Semua mode memakai KOTAK CETAK sebagai acuan, bukan seluruh kanvas. Dengan
+ * margin nol keduanya sama; dengan margin, foto menempati kotak itu saja dan
+ * tidak pernah melimpah keluar.
  */
 export function drawRect(
   mode: 'fit' | 'cover' | 'stretch',
@@ -139,55 +192,36 @@ export function drawRect(
   offsetXPx = 0,
   marginTopPx = 0,
   marginRightPx = 0,
+  marginLeftPx = 0,
+  marginBottomPx = 0,
+  printableWidthPx: number = canvasW,
 ): DrawRect {
-  // Bidang gambar selalu penuh kanvas — supaya tidak ada celah putih di dalam
-  // area foto yang muncul tanpa sengaja.
-  //
-  // MARGIN hanya MEMOTONG bidang itu: piksel di luar margin dibiarkan putih.
-  // Foto tetap digambar penuh (cover), lalu dipotong. Itu cara satu-satunya
-  // supaya "mulai cetak setelah 0,5 cm" terwujud tanpa mengubah isi foto:
-  // menggeser saja tidak bisa membuat ruang kosong, karena gambarnya selalu
-  // menutupi seluruh kanvas.
-  //
-  // Batasannya: margin atas + bawah tidak boleh melebihi tinggi kanvas, dan
-  // begitu juga mendatar. Kalau melebihi, tidak ada yang tersisa untuk dicetak.
-  const clipX = clampInt(offsetXPx + (marginRightPx < 0 ? -marginRightPx : 0), 0, canvasW);
-  const clipY = clampInt(offsetYPx + Math.max(0, marginTopPx), 0, canvasH);
-  const rightInset = offsetXPx + Math.max(0, marginRightPx);
-  const bottomInset = offsetYPx;
-  const clipW = clampInt(canvasW - clipX - Math.max(0, rightInset), 0, canvasW);
-  const clipH = clampInt(canvasH - clipY - Math.max(0, bottomInset), 0, canvasH);
+  const box = printBox(canvasW, canvasH, marginTopPx, marginRightPx, marginLeftPx, marginBottomPx, printableWidthPx);
+  const clip = { clipX: box.x, clipY: box.y, clipW: box.w, clipH: box.h };
 
-  const base: DrawRect = {
-    dx: Math.round(offsetXPx),
-    dy: Math.round(offsetYPx),
-    dw: canvasW,
-    dh: canvasH,
-    clipX,
-    clipY,
-    clipW,
-    clipH,
-  };
-  if (mode === 'stretch' || imgW <= 0 || imgH <= 0) return base;
+  // Mode stretch (atau gambar rusak): kotak dipenuhi tanpa menjaga rasio.
+  const base: DrawRect = { dx: box.x + Math.round(offsetXPx), dy: box.y + Math.round(offsetYPx), dw: box.w, dh: box.h, ...clip };
+  if (mode === 'stretch' || imgW <= 0 || imgH <= 0 || box.w <= 0 || box.h <= 0) return base;
 
-  // fit = muat di dalam (faktor terkecil), cover = penuhi (faktor terbesar).
+  // fit = muat di dalam kotak (faktor terkecil), cover = penuhi kotak (terbesar).
   // Bedanya hanya min vs max; keduanya MENJAGA rasio, jadi tidak ada gepeng.
   const scale = mode === 'cover'
-    ? Math.max(canvasW / imgW, canvasH / imgH)
-    : Math.min(canvasW / imgW, canvasH / imgH);
+    ? Math.max(box.w / imgW, box.h / imgH)
+    : Math.min(box.w / imgW, box.h / imgH);
 
   // +2 px hanya untuk cover: menutup celah sub-piksel akibat pembulatan, supaya
-  // tidak ada garis putih tipis di tepi label.
+  // tidak ada garis putih tipis di tepi.
   const pad = mode === 'cover' ? 2 : 0;
   const dw = Math.max(1, Math.round(imgW * scale) + pad);
   const dh = Math.max(1, Math.round(imgH * scale) + pad);
 
+  // Dipusatkan di dalam KOTAK (bukan kanvas), lalu digeser sesuai offset.
   return {
-    ...base,
+    ...clip,
     dw,
     dh,
-    dx: Math.round(offsetXPx + (canvasW - dw) / 2),
-    dy: Math.round(offsetYPx + (canvasH - dh) / 2),
+    dx: box.x + Math.round(offsetXPx + (box.w - dw) / 2),
+    dy: box.y + Math.round(offsetYPx + (box.h - dh) / 2),
   };
 }
 
