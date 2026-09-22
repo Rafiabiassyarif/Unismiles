@@ -8,6 +8,7 @@ import { FrameLayout, FrameStyle, PhotoFilter, GridLayoutId, VirtualBackground, 
 import { getStoredFilters, getLayoutConfig, getStoredBackgrounds, getAppConfig } from '../services/storageService';
 import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
+import { NiimbotPrinter, labelSize as computeLabelSize, labelMmFromPaperSize, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
@@ -751,6 +752,9 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     saturation: 100,
     fitMode: 'fit' as 'fit' | 'stretch',
   });
+  // Kalibrasi termal dari Admin, dipakai jalur cetak Bluetooth langsung.
+  const [thermalDensity, setThermalDensity] = useState(3);
+  const [thermalOffsetYPx, setThermalOffsetYPx] = useState(0);
   const [selectedFrame, setSelectedFrame] = useState<FrameStyle | null>(null);
   const [editTab, setEditTab] = useState<'FRAMES' | 'FILTERS'>('FRAMES');
   
@@ -774,6 +778,78 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const [filters, setFilters] = useState<PhotoFilter[]>([]);
   const [kioskPaperSize, setKioskPaperSize] = useState('4R');
 
+  /**
+   * Cetak LANGSUNG ke printer label lewat Web Bluetooth — tanpa kiosk-agent.
+   *
+   * Kenapa ini ada: printer NIIMBOT tidak muncul sebagai printer sistem dan
+   * tidak bisa dijangkau agent. Jalur lewat server (queuePrintJob) hanya bekerja
+   * kalau agent hidup di PC yang sama dengan printer. Untuk kiosk yang printer-nya
+   * tersambung ke browser ini, jalur langsung menghilangkan satu titik gagal.
+   *
+   * Web Bluetooth hanya boleh membuka pemilih perangkat dari INTERAKSI
+   * PENGGUNA LANGSUNG, jadi tombolnya harus diklik. Sambungan juga terikat pada
+   * satu tab, bukan pada akun — membuka tab lain berarti menyambung lagi.
+   */
+  const bluetoothPrinterRef = useRef<NiimbotPrinter | null>(null);
+  const [btPrintState, setBtPrintState] = useState<'idle' | 'connecting' | 'printing' | 'done' | 'failed'>('idle');
+  const [btPrintError, setBtPrintError] = useState<string | null>(null);
+  const [btPrinterName, setBtPrinterName] = useState<string | null>(null);
+
+  const isBluetoothPrintAvailable = useCallback(() => NiimbotPrinter.isSupported(), []);
+
+  const handleBluetoothPrint = async () => {
+    if (btPrintState === 'connecting' || btPrintState === 'printing') return;
+    if (!NiimbotPrinter.isSupported()) {
+      setBtPrintState('failed');
+      setBtPrintError('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge, dan buka lewat HTTPS.');
+      return;
+    }
+
+    setBtPrintError(null);
+    setBtPrintState('connecting');
+
+    try {
+      const image = finalUploadedUrl?.startsWith('http') || finalUploadedUrl?.startsWith('data:')
+        ? finalUploadedUrl
+        : await generateCompositeImage();
+      if (!image) throw new Error('Foto final belum tersedia.');
+
+      const printer = bluetoothPrinterRef.current || new NiimbotPrinter();
+      bluetoothPrinterRef.current = printer;
+
+      if (!printer.isConnected()) {
+        const info = await printer.connect();
+        setBtPrinterName(info.deviceName);
+        // Laporkan ke Admin supaya panel menampilkan printer yang benar-benar
+        // dipakai. Tanpa ini status di Admin akan selalu kosong untuk kiosk
+        // berlabel termal.
+        void printer.reportStatus('READY', { printerName: info.deviceName });
+      }
+
+      setBtPrintState('printing');
+      const mm = labelMmFromPaperSize(kioskPaperSize);
+      const size = computeLabelSize(mm.widthMm, mm.heightMm);
+      const adjustments: PrintAdjustments = {
+        ...DEFAULT_ADJUSTMENTS,
+        ...photoAdjust,
+        density: Number(thermalDensity) || DEFAULT_ADJUSTMENTS.density,
+        offsetYPx: Number(thermalOffsetYPx) || 0,
+      };
+
+      await printer.print(image, size, 1, adjustments);
+      setBtPrintState('done');
+    } catch (error: any) {
+      const msg = String(error?.message || error);
+      setBtPrintState('failed');
+      // Pemilih yang dibatalkan bukan kegagalan printer; menyebutnya error
+      // membuat orang mencari masalah di tempat yang salah.
+      setBtPrintError(/cancel|user|No device|chooser/i.test(msg)
+        ? 'Pemilih perangkat ditutup. Klik lagi untuk menyambungkan printer.'
+        : msg);
+      void bluetoothPrinterRef.current?.reportStatus('ERROR', { lastError: msg });
+    }
+  };
+
   useEffect(() => {
       const unsubscribe = kioskAgentBridge.subscribe((agentState) => {
           // Penyesuaian tampilan foto dari Admin. Diterapkan hanya kalau
@@ -790,6 +866,12 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
           });
           if (agentState.paperSize) {
               setKioskPaperSize(agentState.paperSize);
+          }
+          if (agentState.thermalDensity !== undefined) {
+              setThermalDensity(num(agentState.thermalDensity, 3));
+          }
+          if (agentState.thermalOffsetYPx !== undefined) {
+              setThermalOffsetYPx(num(agentState.thermalOffsetYPx, 0));
           }
       });
       return () => unsubscribe();
@@ -3566,6 +3648,28 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                                   <Printer size={isVertical ? 18 : 20} /> Print manual
                                 </button>
                               )}
+
+                              {/*
+                                Cetak lewat Bluetooth langsung: photobooth menyambung
+                                printer label sendiri, tanpa kiosk-agent dan tanpa
+                                server. Tombol ini harus DIKLIK — Web Bluetooth
+                                menolak membuka pemilih perangkat di luar gestur
+                                pengguna.
+                              */}
+                              {isBluetoothPrintAvailable() && (
+                                <button
+                                  id="btn-bluetooth-print"
+                                  onClick={() => void handleBluetoothPrint()}
+                                  disabled={!areAssetsReady || btPrintState === 'connecting' || btPrintState === 'printing'}
+                                  className={`flex items-center gap-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-full shadow-[0_10px_20px_rgba(37,99,235,0.35)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${isVertical ? 'px-6 py-2.5 text-sm' : 'px-8 py-3 text-base'}`}
+                                >
+                                  <Printer size={isVertical ? 18 : 20} className={btPrintState === 'connecting' || btPrintState === 'printing' ? 'animate-pulse' : ''} />
+                                  {btPrintState === 'connecting' && 'Menyambungkan…'}
+                                  {btPrintState === 'printing' && 'Mencetak…'}
+                                  {btPrintState === 'done' && 'Cetak Bluetooth ✓'}
+                                  {(btPrintState === 'idle' || btPrintState === 'failed') && 'Cetak Bluetooth'}
+                                </button>
+                              )}
                             </>
                         )}
                          <button 
@@ -3583,6 +3687,19 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                             Send Email
                         </button>
                     </div>
+
+                    {btPrintState !== 'idle' && (
+                      <div
+                        id="bluetooth-print-status"
+                        role="status"
+                        className={`absolute z-20 rounded-xl px-4 py-2 text-center text-sm font-bold ${isVertical ? 'bottom-24 left-1/2 -translate-x-1/2 max-w-[92%]' : 'bottom-40 right-6 max-w-[430px]'} ${btPrintState === 'done' ? 'bg-green-500/20 text-green-300 border border-green-400/40' : btPrintState === 'failed' ? 'bg-red-500/20 text-red-300 border border-red-400/40' : 'bg-white/10 text-white border border-white/20'}`}
+                      >
+                        {btPrintState === 'connecting' && (btPrinterName ? `Menyambungkan ke ${btPrinterName}…` : 'Membuka pemilih perangkat Bluetooth…')}
+                        {btPrintState === 'printing' && 'Mengirim foto ke printer label…'}
+                        {btPrintState === 'done' && 'Foto tercetak lewat Bluetooth'}
+                        {btPrintState === 'failed' && (btPrintError || 'Cetak Bluetooth gagal.')}
+                      </div>
+                    )}
 
                     {isAutoPrintEnabled() && printState !== 'idle' && (
                       <div

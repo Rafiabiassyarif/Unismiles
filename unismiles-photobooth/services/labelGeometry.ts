@@ -62,3 +62,30 @@ export function labelSize(
 export function mmToPx(mm: number, dpi: number = LABEL_DPI): number {
   return Math.max(1, Math.round((mm / 25.4) * dpi));
 }
+
+
+/**
+ * Ukuran label (mm) dari pengaturan ukuran kertas Admin.
+ *
+ * Halaman Pengaturan Admin menyimpan ukuran kertas sebagai string, baik nama
+ * preset maupun "CUSTOM 54X67 MM". Fungsi ini menerjemahkannya menjadi ukuran
+ * label yang bisa dipakai printer.
+ *
+ * Bawaan 54 x 67 mm adalah kertas label yang dipakai saat ini. Lebarnya
+ * MELEBIHI kepala cetak, jadi `labelSize()` akan mengunci gambarnya ke 576 px
+ * dan sisi kanan 5,25 mm tidak tercetak — itu sifat printer, bukan kesalahan
+ * di sini, dan sengaja tidak disembunyikan.
+ */
+export const DEFAULT_LABEL_MM = { widthMm: 54, heightMm: 67 } as const;
+
+export function labelMmFromPaperSize(paperSize: string | null | undefined): { widthMm: number; heightMm: number } {
+  const match = String(paperSize || '').trim().match(/CUSTOM\s+(\d{1,3})\s*[X×]\s*(\d{1,3})\s*MM/i);
+  if (match) {
+    const widthMm = Number(match[1]);
+    const heightMm = Number(match[2]);
+    // Nilai 0 dari ukuran rusak akan membuat canvas 0 px dan encodeCanvas gagal
+    // dengan pesan yang tidak informatif; jatuh ke bawaan lebih berguna.
+    if (widthMm > 0 && heightMm > 0) return { widthMm, heightMm };
+  }
+  return { widthMm: DEFAULT_LABEL_MM.widthMm, heightMm: DEFAULT_LABEL_MM.heightMm };
+}

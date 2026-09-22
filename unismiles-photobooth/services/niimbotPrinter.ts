@@ -58,7 +58,7 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
 };
 
 /** Geometri label: dihitung di `labelGeometry.ts` supaya bisa diuji tanpa hardware. */
-export { labelSize, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry';
+export { labelSize, labelMmFromPaperSize, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry';
 export type { LabelSize } from './labelGeometry';
 
 export type PrintStatus =

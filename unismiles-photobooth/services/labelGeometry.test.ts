@@ -9,7 +9,7 @@
 
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { labelSize, mmToPx, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+import { labelSize, mmToPx, labelMmFromPaperSize, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
 
 test('konstanta kepala cetak sesuai pengukuran di kertas, bukan tabel library', () => {
   assert.strictEqual(B1_PRO_PRINTHEAD_PX, 576);
@@ -87,4 +87,40 @@ test('kepala cetak bisa dioper untuk unit lain, tanpa mengubah bawaan', () => {
   const s = labelSize(48, 67, 384);
   assert.strictEqual(s.widthPx, 384);
   assert.strictEqual(B1_PRO_PRINTHEAD_PX, 576, 'bawaan tidak boleh ikut berubah');
+});
+
+test('ukuran label dari pengaturan Admin: format kustom', () => {
+  // Inilah nilai yang tersimpan di produksi.
+  assert.deepEqual(labelMmFromPaperSize('CUSTOM 54X67 MM'), { widthMm: 54, heightMm: 67 });
+  // Variasi penulisan yang wajar harus diterima juga.
+  assert.deepEqual(labelMmFromPaperSize('custom 54x67mm'), { widthMm: 54, heightMm: 67 });
+  assert.deepEqual(labelMmFromPaperSize('CUSTOM 48 X 150 MM'), { widthMm: 48, heightMm: 150 });
+  assert.deepEqual(labelMmFromPaperSize('CUSTOM 40×60 MM'), { widthMm: 40, heightMm: 60 });
+});
+
+test('ukuran label jatuh ke 54x67 mm untuk nilai yang tidak bisa dibaca', () => {
+  // Preset bernama ('Instax Mini', '4R') bukan ukuran termal. Memakai bawaan
+  // lebih benar daripada menebak dari namanya.
+  for (const v of ['Instax Mini (54 × 86 mm)', '4R', '', null, undefined, 'ngawur', 0, 42]) {
+    assert.deepEqual(labelMmFromPaperSize(v as any), { widthMm: 54, heightMm: 67 },
+      `nilai ${JSON.stringify(v)} harus jatuh ke bawaan`);
+  }
+});
+
+test('ukuran nol atau rusak tidak menghasilkan canvas 0 px', () => {
+  // 'CUSTOM 0X67 MM' akan membuat canvas 0 px dan encodeCanvas gagal dengan
+  // pesan yang tidak informatif. Jatuh ke bawaan lebih berguna.
+  for (const v of ['CUSTOM 0X67 MM', 'CUSTOM 54X0 MM', 'CUSTOM 0X0 MM']) {
+    const mm = labelMmFromPaperSize(v);
+    assert.ok(mm.widthMm > 0 && mm.heightMm > 0, `${v} harus jatuh ke bawaan, dapat ${JSON.stringify(mm)}`);
+    const size = labelSize(mm.widthMm, mm.heightMm);
+    assert.ok(size.widthPx >= 1 && size.heightPx >= 1, `${v} harus menghasilkan ukuran px yang sah`);
+  }
+});
+
+test('bawaan konsisten dengan kertas label yang dipakai', () => {
+  assert.deepEqual(DEFAULT_LABEL_MM, { widthMm: 54, heightMm: 67 });
+  const size = labelSize(DEFAULT_LABEL_MM.widthMm, DEFAULT_LABEL_MM.heightMm);
+  assert.strictEqual(size.widthPx, 576, 'lebar dikunci ke kepala cetak');
+  assert.strictEqual(size.clamped, true, 'harus jujur bahwa ada yang terpotong');
 });
