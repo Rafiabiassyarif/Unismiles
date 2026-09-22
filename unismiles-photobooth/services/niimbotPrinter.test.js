@@ -212,3 +212,33 @@ test('impor internal memakai ekstensi .ts', () => {
   assert.ok(!/from '\.\/labelGeometry'\s/.test(SERVICE),
     'tidak boleh ada impor tanpa ekstensi');
 });
+
+test('batas waktu kirim halaman cukup untuk satu halaman penuh', () => {
+  // Diukur: satu halaman 576x714 px = 714 paket / ~59 KB. Pada jeda bawaan
+  // library 10 ms itu 7,1 detik; bawaan pageTimeoutMs cuma 10 detik, sehingga
+  // halaman habis waktu di tengah dan label keluar tidak penuh.
+  assert.match(SERVICE, /pageTimeoutMs: 60_000/,
+    'batas waktu kirim harus jauh di atas perkiraan 7 detik');
+  assert.ok(!/pageTimeoutMs: (\d|1[0-9])_?\d{3}\b/.test(SERVICE),
+    'tidak boleh memakai batas waktu bawaan 10 detik');
+});
+
+test('jeda paket TIDAK dinolkan', () => {
+  // Menolkan jeda paket membuat BLE menerima potongan paket yang tidak lengkap:
+  // konsol menampilkan "Dropping invalid buffer 00 00 00 00" dan label keluar
+  // hanya sebagian. Jeda bawaan library adalah bagian dari protokol.
+  //
+  // Komentar dibuang dulu: kode ini MENJELASKAN kenapa jeda tidak boleh nol,
+  // jadi menyebut namanya di komentar adalah hal yang benar dan tidak boleh
+  // ikut terhitung sebagai pelanggaran.
+  const kode = SERVICE.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/setPacketInterval/.test(kode),
+    'jangan menyentuh jeda paket: biarkan bawaan library');
+});
+
+test('kanvas memberi tahu browser bahwa pikselnya akan dibaca', () => {
+  // Tanpa willReadFrequently, browser memindahkan kanvas GPU<->CPU dan
+  // memperingatkan di konsol pada setiap encodeCanvas.
+  assert.match(SERVICE, /getContext\('2d', \{ willReadFrequently: true \}\)/,
+    'kanvas yang pikselnya dibaca harus memakai willReadFrequently');
+});

@@ -174,3 +174,12 @@ test('jalur cetak lama tetap ada, tidak digantikan', () => {
   assert.match(BOOTH, /queuePrintJob\(/, 'jalur server harus tetap ada');
   assert.match(BOOTH, /id="btn-print"/, 'tombol print utama harus tetap ada');
 });
+
+test('konsol tidak dibanjiri pesan kiosk-agent yang tidak aktif', () => {
+  // kiosk-agent memang tidak selalu jalan; mencetak lewat Bluetooth tidak
+  // memerlukannya. Pesan berulang tiap 5 detik menutupi error yang sebenarnya.
+  const BRIDGE = readFileSync(path.join(ROOT, 'services', 'kioskAgentBridge.ts'), 'utf8');
+  assert.match(BRIDGE, /warnedOffline/, 'harus ada penanda supaya pesan ditulis sekali');
+  assert.match(BRIDGE, /console\.info\(/, 'pakai info, bukan error, untuk kondisi normal ini');
+  assert.match(BRIDGE, /tidak diulang/, 'pesannya harus menyebut bahwa tidak akan diulang');
+});

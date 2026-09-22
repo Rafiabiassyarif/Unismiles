@@ -109,7 +109,14 @@ export class NiimbotPrinter {
       try { await this.client.disconnect(); } catch { /* sudah terputus */ }
     }
     this.client = instantiateClient('bluetooth');
-    this.client.setPacketInterval(0);
+    // JEDA PAKET: sengaja TIDAK diubah — dipakai bawaan library (10 ms).
+    //
+    // Sebelumnya di sini tertulis setPacketInterval(0): kirim tanpa jeda sama
+    // sekali. BLE tidak sanggup untuk data sebesar satu halaman (714 paket,
+    // ~59 KB), printer menerima potongan paket yang tidak lengkap, dan di konsol
+    // muncul "Dropping invalid buffer 00 00 00 00" disertai label yang keluar
+    // tidak penuh. Jeda ini bagian dari protokol, bukan angka yang bisa
+    // dihilangkan untuk mempercepat cetak.
 
     await this.client.connect();
 
@@ -219,7 +226,10 @@ export class NiimbotPrinter {
     const canvas = document.createElement('canvas');
     canvas.width = widthPx;
     canvas.height = heightPx;
-    const ctx = canvas.getContext('2d');
+    // willReadFrequently: kanvas ini digambar SEKALI lalu pikselnya dibaca untuk
+    // pengubahan hitam-putih. Tanpa petunjuk ini, browser memindahkan kanvas
+    // bolak-balik antara GPU dan memori utama, dan memperingatkan di konsol.
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) throw new Error('Canvas 2D tidak tersedia di browser ini.');
 
     // Latar putih dulu, tanpa filter.
@@ -284,6 +294,19 @@ export class NiimbotPrinter {
       density: adj.density,
       statusPollIntervalMs: 100,
       statusTimeoutMs: 15_000,
+      // BATAS WAKTU KIRIM HALAMAN — diukur, bukan ditebak.
+      //
+      // Satu halaman 576x714 px menjadi 714 paket / ~59 KB (diukur dengan
+      // PacketGenerator.writeImageData). Pada jeda paket bawaan library 10 ms
+      // itu berarti 7,1 detik. Bawaan di sini cuma 10 detik, jadi satu halaman
+      // hampir pasti habis waktunya di tengah — gejalanya di kertas adalah label
+      // keluar TIDAK PENUH (mis. hanya 1/4 gambar), disertai
+      // "Dropping invalid buffer" di konsol karena potongan paket yang tertunda
+      // ikut terbaca sebagai paket baru.
+      //
+      // Diberi kelonggaran besar: BLE bisa melambat kalau ada perangkat lain,
+      // dan gagal karena lambat jauh lebih murah daripada label setengah jadi.
+      pageTimeoutMs: 60_000,
     });
 
     try {

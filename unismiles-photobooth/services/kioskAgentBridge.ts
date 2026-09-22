@@ -28,6 +28,8 @@ class KioskAgentBridge {
   private socket: WebSocket | null = null;
   private listeners: Set<StateCallback> = new Set();
   private reconnectTimer: any = null;
+  /** Supaya pesan "agent tidak aktif" tidak membanjiri konsol. */
+  private warnedOffline = false;
   private enabled = String(import.meta.env.VITE_ENABLE_LOCAL_KIOSK_BRIDGE || 'false').toLowerCase() === 'true';
   private currentPort = Number(import.meta.env.VITE_LOCAL_BRIDGE_PORT) || 3011;
 
@@ -69,6 +71,7 @@ class KioskAgentBridge {
       this.socket = new WebSocket(`ws://localhost:${this.currentPort}`);
 
       this.socket.onopen = () => {
+        this.warnedOffline = false;
         console.log('[KioskAgentBridge] Connected to Local Kiosk Agent service.');
       };
 
@@ -89,6 +92,19 @@ class KioskAgentBridge {
       };
 
       this.socket.onerror = () => {
+        // Dicatat SEKALI, tidak tiap percobaan.
+        //
+        // kiosk-agent tidak selalu jalan (mis. saat menguji cetak langsung lewat
+        // Bluetooth, agent memang tidak diperlukan). Percobaan sambung ulang
+        // setiap 5 detik membuat konsol penuh pesan yang sama, dan pesan itu
+        // menutupi error yang sebenarnya — pernah terjadi: penyebab cetak tidak
+        // penuh tertimbun di antara puluhan baris ERR_CONNECTION_REFUSED.
+        if (!this.warnedOffline) {
+          this.warnedOffline = true;
+          console.info('[KioskAgentBridge] kiosk-agent tidak aktif di port ' + this.currentPort
+            + ' — pengaturan dari Admin tidak akan masuk lewat jalur ini. '
+            + 'Percobaan sambung ulang tetap berjalan, pesan ini tidak diulang.');
+        }
         if (this.socket) {
           this.socket.close();
         }
@@ -123,7 +139,9 @@ class KioskAgentBridge {
           }
         }
       } catch (e) {
-        // Agent offline or loading
+        // Agent offline atau sedang memuat. Sengaja ditelan: ini jalur
+        // pengaturan tambahan, bukan jalur cetak, dan kegagalannya sudah
+        // diwakili satu pesan di onerror di atas.
       }
     }, 10000);
   }
