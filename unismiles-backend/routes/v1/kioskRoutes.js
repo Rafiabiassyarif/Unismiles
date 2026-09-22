@@ -58,4 +58,15 @@ router.get('/print-jobs/:job_id', printJobController.getPrintJob);
  */
 router.post('/printer-status', printingConfigController.reportFromBrowser);
 
+/**
+ * Pengaturan cetak untuk kiosk, lewat HTTP.
+ *
+ * Ini jalur CADANGAN untuk kiosk yang mencetak langsung lewat Web Bluetooth:
+ * tanpa endpoint ini, ukuran kertas / kepekatan / geser vertikal dari Admin
+ * hanya sampai lewat WebSocket (butuh kiosk-agent berjalan).
+ *
+ * Hanya membaca. Kiosk tetap tidak bisa mengubah konfigurasi dari sini.
+ */
+router.get('/printing-config', printingConfigController.getForKiosk);
+
 module.exports = router;

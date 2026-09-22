@@ -325,26 +325,111 @@
   // Pembacaan pertama dilakukan LANGSUNG, bukan menunggu interval: kalau hanya
   // interval, halaman sempat menampilkan nilai netral beberapa detik dan orang
   // bisa menyimpulkan setelan produksinya netral padahal bukan.
+  //
+  // DUA SUMBER, backend lebih dulu:
+  //   1. Backend lewat HTTP (VITE_API_BASE_URL) — tidak butuh kiosk-agent.
+  //      Ini yang dipakai kalau Anda mencetak langsung lewat Web Bluetooth.
+  //   2. Local bridge agent di port 3011 — cadangan untuk kiosk yang agent-nya
+  //      jalan. Dulu ini satu-satunya sumber, sehingga agent mati berarti
+  //      ukuran kertas/kepekatan/geser tidak bisa dibaca sama sekali.
   (function watchAdminConfig() {
     var bridgePort = 3011;   // LOCAL_BRIDGE_PORT agent
+
+    /**
+     * API base + kunci kiosk, dibaca dari sumber yang SAMA dengan photobooth:
+     * `pb_config` di localStorage (tempat halaman produksi menyimpan
+     * backendUrl + apiKey). Tidak ada nilai yang ditulis ke berkas ini, supaya
+     * kunci kiosk tidak pernah ikut ter-commit.
+     */
+    function readApi() {
+      var out = { base: '', key: '' };
+      try {
+        var raw = localStorage.getItem('pb_config');
+        if (raw) {
+          var cfg = JSON.parse(raw);
+          out.base = String(cfg.backendUrl || '').replace(/\/$/, '');
+          out.key = String(cfg.apiKey || '').trim();
+        }
+      } catch (e) { /* localStorage bisa diblokir; perlakukan sebagai tidak ada */ }
+      if (!out.base) out.base = String(window.__API_BASE_URL__ || '').replace(/\/$/, '');
+      if (!out.key) out.key = String(window.__KIOSK_API_KEY__ || '').trim();
+      return out;
+    }
+
     var firstRead = true;
-    var poll = function () {
-      fetch('http://localhost:' + bridgePort + '/api/kiosk-status')
+
+    /** Nilai dari agent bentuknya beda dengan backend; samakan dulu. */
+    function fromAgent(d) {
+      return {
+        paperSize: d.paperSize,
+        thermalDensity: d.thermalDensity,
+        thermalOffsetYPx: d.thermalOffsetYPx,
+        photoBrightness: d.photoBrightness,
+        photoContrast: d.photoContrast,
+        photoSaturation: d.photoSaturation,
+        photoFitMode: d.photoFitMode,
+      };
+    }
+
+    /** Nilai dari backend (snake_case). */
+    function fromBackend(d) {
+      return {
+        paperSize: d.paper_size,
+        thermalDensity: d.thermal_density,
+        thermalOffsetYPx: d.thermal_offset_y_px,
+        photoBrightness: d.photo_brightness,
+        photoContrast: d.photo_contrast,
+        photoSaturation: d.photo_saturation,
+        photoFitMode: d.photo_fit_mode,
+      };
+    }
+
+    function readBackend() {
+      var api = readApi();
+      if (!api.base || !api.key) return Promise.reject(new Error('tanpa API'));
+      return fetch(api.base + '/kiosk/printing-config', { headers: { 'x-api-key': api.key } })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) {
-          if (!j || !j.data) return;
-          LAST_ADMIN_CONFIG = j.data;
-          applyAdminConfig(j.data);
+          if (!j || !j.data) throw new Error('kosong');
+          return fromBackend(j.data);
+        });
+    }
+
+    function readAgent() {
+      return fetch('http://localhost:' + bridgePort + '/api/kiosk-status')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !j.data) throw new Error('kosong');
+          return fromAgent(j.data);
+        });
+    }
+
+    function note(teks, cls) {
+      var src = $('adminSource');
+      if (src.innerHTML === teks) return;
+      src.innerHTML = teks;
+      src.className = 'facts' + (cls ? ' ' + cls : '');
+    }
+
+    var poll = function () {
+      var asal = 'backend';
+      readBackend()
+        .catch(function () { asal = 'agent'; return readAgent(); })
+        .then(function (cfg) {
+          LAST_ADMIN_CONFIG = cfg;
+          applyAdminConfig(cfg);
+          if (asal === 'agent') {
+            // Katakan dari mana nilainya datang; kalau tidak, orang mengira
+            // Admin tidak berpengaruh padahal agent yang memasok.
+            note($('adminSource').innerHTML + ' <i>(lewat kiosk-agent)</i>', 'ok');
+          }
           firstRead = false;
         })
         .catch(function () {
-          // Agent tidak jalan. Katakan terus terang, jangan diam-diam.
-          var src = $('adminSource');
-          if (src.textContent.indexOf('tidak jalan') < 0) {
-            src.innerHTML = 'kiosk-agent <b>tidak jalan</b> di komputer ini — halaman memakai nilai netral. '
-              + 'Untuk mengubah ukuran kertas/kepekatan/geser, gunakan Pengaturan Admin.';
-            src.className = 'facts warn';
-          }
+          // Kedua sumber mati. Katakan terus terang, jangan diam-diam.
+          note('Pengaturan Admin <b>tidak bisa dibaca</b> — backend tidak menjawab '
+            + 'dan kiosk-agent tidak jalan. Halaman memakai nilai netral. '
+            + 'Cek koneksi, lalu muat ulang.', 'warn');
           firstRead = false;
         });
     };

@@ -145,6 +145,48 @@ const controller = {
     } catch (error) { return next(error); }
   },
 
+  /**
+   * Pengaturan cetak untuk KIOSK itu sendiri (bukan untuk admin).
+   *
+   * Kenapa endpoint ini perlu ada: konfigurasi cetak dikirim ke kiosk lewat
+   * WebSocket, yang hanya hidup kalau kiosk-agent berjalan. Photobooth yang
+   * mencetak langsung lewat Web Bluetooth tidak punya jalur lain untuk membaca
+   * ukuran kertas, kepekatan, dan geser vertikal dari Admin — akibatnya
+   * pengaturan itu hanya bisa diubah lewat halaman uji, bukan lewat Admin.
+   *
+   * Yang dikembalikan hanya nilai yang dibutuhkan untuk mencetak. Tidak ada
+   * kredensial, tidak ada daftar printer, tidak ada apa pun yang bisa dipakai
+   * untuk mengubah konfigurasi — endpoint ini hanya membaca.
+   */
+  async getForKiosk(req, res, next) {
+    try {
+      const kioskId = req.kiosk?.id;
+      if (!kioskId) return res.status(401).json({ success: false, message: 'Kiosk identity required.' });
+
+      const row = await printingConfigModel.getOrCreate(kioskId);
+      const { config } = printingConfigModel.format(row);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          paper_size: config.paper_size,
+          orientation: config.orientation,
+          copies_limit: config.copies_limit,
+          adapter: config.adapter,
+          printing_enabled: config.enabled,
+          printer_name: config.printer_name,
+          photo_brightness: config.photo_brightness,
+          photo_contrast: config.photo_contrast,
+          photo_saturation: config.photo_saturation,
+          thermal_density: config.thermal_density,
+          thermal_offset_y_px: config.thermal_offset_y_px,
+          photo_fit_mode: config.photo_fit_mode,
+          config_version: config.config_version,
+        },
+      });
+    } catch (error) { return next(error); }
+  },
+
   async test(req, res, next) {
     try {
       const kiosk = await kioskModel.getKioskById(req.params.kioskId);
