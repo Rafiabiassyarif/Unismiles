@@ -93,6 +93,55 @@ memenuhi label dan akan gepeng.
 **Untuk hasil penuh tanpa bingkai:** ambil foto pada rasio 0,728 (misalnya
 700 × 962 px). Halaman uji memberi tahu rasio fotonya saat berkas dipilih.
 
+## 1d. Di mana pengaturan itu sekarang
+
+Ukuran kertas, kepekatan, geser vertikal, dan penyesuaian tampilan foto **tidak
+lagi diatur di halaman uji ini**. Semua pindah ke:
+
+```
+Admin -> Kiosk Manager -> pilih kiosk -> Printer Configuration
+       -> "Photo & Print Calibration"
+```
+
+| Pengaturan | Rentang | Catatan |
+|---|---|---|
+| Brightness | 50–150% | foto hasil cetak |
+| Contrast | 50–150% | foto hasil cetak |
+| Saturation | 0–150% | 0 = hitam putih |
+| Kepekatan termal | 1–5 | driver Niimbot |
+| Geser vertikal | −200…200 px | kalibrasi posisi di kertas |
+| Penyesuaian foto di label | jaga rasio / penuhi label | jaga rasio = tidak gepeng |
+| Ukuran kertas | preset atau `CUSTOM LxT MM` | sudah ada sebelumnya |
+
+Kenapa dipindah: nilai yang diatur di halaman localhost **tidak terbaca oleh
+photobooth produksi** — halaman itu hanya ada di laptop. Nilai di Admin tersimpan
+per kiosk dan dikirim lewat backend → kiosk-agent → photobooth.
+
+**Jalur nilainya** (ini yang membuat perubahan benar-benar sampai ke cetakan):
+
+```
+Admin (form)
+  -> backend /admin/kiosks/:id/printing-config   (divalidasi + disimpan)
+  -> socket ke kiosk-agent                        (payload printing config)
+  -> agent reportedState                          (WAJIB, bukan hanya disimpan)
+  -> local bridge (:3011) -> photobooth           (dipakai saat menggambar foto)
+```
+
+Langkah `reportedState` itu mudah terlewat. Ukuran kertas pernah "tersimpan" di
+Admin tetapi tidak pernah sampai ke photobooth justru karena agent menyimpannya
+ke `printerConfig` tanpa melaporkannya. Test `photoAdjustmentFlow.test.js`
+memeriksa setiap mata rantai ini.
+
+Halaman uji sekarang **membaca** nilai itu dari agent (lewat
+`http://localhost:3011/api/kiosk-status`) dan menampilkannya di bagian "Nilai
+dari Pengaturan Admin". Kalau agent tidak jalan, halaman mengatakannya terus
+terang dan memakai nilai netral.
+
+**Yang TIDAK terpengaruh:** filter untuk OCR verifikasi pembayaran. Itu jalur
+terpisah dengan filter sendiri yang sudah dikalibrasi agar nominal struk terbaca
+(`contrast(1.24) brightness(1.04) saturate(0.9)`). Mengubahnya dari halaman
+Pengaturan akan merusak verifikasi pembayaran, jadi sengaja tidak disambungkan.
+
 ## 2. Cara mencoba di laptop Anda
 
 Web Bluetooth butuh **HTTPS atau localhost**. `localhost` sudah memenuhi syarat,
@@ -167,7 +216,8 @@ photobooth. Bedanya penting:
 | Masuk otomatis setelah sesi foto selesai | ❌ belum |
 | Ambil foto polaroid 1x dari photobooth | ❌ belum — masih perlu 1 sesi foto yang sudah ada |
 | Rasio foto dikunci ke 0,728 saat menjepret | ❌ belum — sekarang disesuaikan setelah foto diambil |
-| Ukuran dari Admin (Kiosk Manager) | ❌ belum — sekarang tombol preset di halaman uji |
+| Ukuran dari Admin (Kiosk Manager) | ✅ sudah |
+| Brightness/contrast/kepekatan/geser dari Admin | ✅ sudah |
 | Sambungan otomatis (tanpa pilih perangkat) | ❌ belum |
 
 Urutan yang disarankan: **uji manual dulu di laptop** (bagian 2). Kalau sudah

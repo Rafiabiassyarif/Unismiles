@@ -61,24 +61,30 @@
   </section>
 
   <section>
-    <h2>1. Ukuran label</h2>
+    <h2>1. Nilai dari Pengaturan Admin</h2>
+    <!--
+      Halaman ini TIDAK LAGI menyetel ukuran kertas, kepekatan, atau geser
+      vertikal. Pengaturan itu sekarang ada di Admin (Kiosk Manager -> Printer
+      Configuration -> Photo & Print Calibration), karena nilai yang diatur di
+      sini tidak terbaca oleh photobooth produksi — halaman localhost hanya ada
+      di laptop.
+
+      Nilai di bawah dibaca dari kiosk-agent lewat local bridge. Kalau agent
+      tidak jalan, halaman memakai nilai netral dan mengatakannya terus terang,
+      supaya tidak ada yang mengira sudah memakai setelan produksi.
+    -->
     <div class="row">
       <div>
-        <label>Lebar (mm)</label>
+        <label>Lebar kertas label (mm)</label>
         <input id="w_mm" type="number" value="54" min="1" step="0.5">
       </div>
       <div>
-        <label>Tinggi (mm)</label>
+        <label>Tinggi kertas label (mm)</label>
         <input id="h_mm" type="number" value="67" min="1" step="0.5">
       </div>
     </div>
-    <!-- Satu tombol untuk ukuran kertas label yang dipakai. Lebarnya melebihi
-         kepala cetak B1 Pro, jadi halaman ini memperingatkan berapa mm yang
-         hilang — bukan menyembunyikannya. -->
     <p class="facts" id="geom">—</p>
-    <div class="actions">
-      <button class="ghost" id="presetLabel" type="button">Kertas label 54 × 67 mm</button>
-    </div>
+    <p class="facts" id="adminSource" style="margin-top:6px;">Membaca pengaturan dari kiosk-agent…</p>
   </section>
 
   <section>
@@ -100,11 +106,13 @@
       </div>
       <div>
         <label>Kepekatan (1–5)</label>
-        <input id="density" type="number" value="3" min="1" max="5">
+        <input id="density" type="number" value="3" min="1" max="5" readonly
+               title="Diatur di Admin: Printer Configuration -> Photo & Print Calibration">
       </div>
       <div>
         <label>Geser vertikal (px)</label>
-        <input id="offset_y" type="number" value="0" step="1">
+        <input id="offset_y" type="number" value="0" step="1" readonly
+               title="Diatur di Admin: Printer Configuration -> Photo & Print Calibration">
       </div>
     </div>
 
@@ -255,19 +263,87 @@
   var currentImageUrl = null;
   var currentImageSize = null;   // { w, h } gambar sumber, untuk hitung rasio
 
-  // --- Ukuran kertas label yang dipakai ---------------------------------------
-  // Kertas label sudah membawa desainnya sendiri (photobooth hanya mengisi
-  // fotonya), jadi cukup satu ukuran. Lebarnya melebihi kepala cetak B1 Pro —
-  // tombol ini sengaja TIDAK menyensor angka itu, hanya memasang nilainya.
-  var LABEL = { w_mm: 54, h_mm: 67 };
+  // --- Nilai dari Pengaturan Admin -------------------------------------------
+  // Ukuran kertas, kepekatan, geser vertikal, dan penyesuaian foto TIDAK lagi
+  // diatur di halaman ini. Nilainya dibaca dari kiosk-agent lewat local bridge,
+  // sumber yang sama dengan photobooth produksi — jadi yang diuji di sini
+  // benar-benar setelan yang dipakai.
+  //
+  // Kalau agent tidak jalan, halaman memakai nilai netral DAN mengatakannya,
+  // supaya tidak ada yang mengira sedang menguji setelan produksi.
+  var LAST_ADMIN_CONFIG = null;
 
-  $('presetLabel').addEventListener('click', function () {
-    $('w_mm').value = LABEL.w_mm;
-    $('h_mm').value = LABEL.h_mm;
-    refreshGeometry();
-    updateFitInfo();
-    log('Ukuran disetel ke kertas label ' + LABEL.w_mm + ' × ' + LABEL.h_mm + ' mm.', 'ok');
-  });
+  function applyAdminConfig(cfg) {
+    if (!cfg) return false;
+    var applied = false;
+
+    // Ukuran kertas dari Admin, mis. "CUSTOM 54X67 MM".
+    var m = String(cfg.paperSize || '').match(/CUSTOM\s+(\d{1,3})\s*[X×]\s*(\d{1,3})\s*MM/i);
+    if (m) {
+      $('w_mm').value = m[1];
+      $('h_mm').value = m[2];
+      applied = true;
+    }
+
+    if (cfg.thermalDensity !== undefined) { $('density').value = cfg.thermalDensity; applied = true; }
+    if (cfg.thermalOffsetYPx !== undefined) { $('offset_y').value = cfg.thermalOffsetYPx; applied = true; }
+
+    if (applied) {
+      refreshGeometry();
+      updateFitInfo();
+    }
+
+    // Tampilkan asal nilai supaya tidak menyesatkan.
+    var src = $('adminSource');
+    var parts = [];
+    if (cfg.paperSize) parts.push('kertas ' + cfg.paperSize);
+    if (cfg.thermalDensity !== undefined) parts.push('kepekatan ' + cfg.thermalDensity);
+    if (cfg.thermalOffsetYPx !== undefined) parts.push('geser ' + cfg.thermalOffsetYPx + ' px');
+    if (cfg.photoBrightness !== undefined) {
+      parts.push('tampilan ' + cfg.photoBrightness + '% / ' + cfg.photoContrast + '% / ' + cfg.photoSaturation + '%');
+    }
+    if (cfg.photoFitMode) parts.push('mode ' + cfg.photoFitMode);
+
+    src.innerHTML = parts.length
+      ? '<b>Dari Pengaturan Admin:</b> ' + parts.join(' · ')
+      : '<b>Agent tersambung</b>, tetapi Admin belum menyimpan pengaturan cetak. Memakai nilai netral.';
+    src.className = parts.length ? 'facts ok' : 'facts';
+    return applied;
+  }
+
+  // Baca saat halaman dibuka, lalu ikuti perubahan berikutnya.
+  //
+  // Pembacaan pertama dilakukan LANGSUNG, bukan menunggu interval: kalau hanya
+  // interval, halaman sempat menampilkan nilai netral beberapa detik dan orang
+  // bisa menyimpulkan setelan produksinya netral padahal bukan.
+  (function watchAdminConfig() {
+    var bridgePort = 3011;   // LOCAL_BRIDGE_PORT agent
+    var firstRead = true;
+    var poll = function () {
+      fetch('http://localhost:' + bridgePort + '/api/kiosk-status')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          if (!j || !j.data) return;
+          LAST_ADMIN_CONFIG = j.data;
+          applyAdminConfig(j.data);
+          firstRead = false;
+        })
+        .catch(function () {
+          // Agent tidak jalan. Katakan terus terang, jangan diam-diam.
+          var src = $('adminSource');
+          if (src.textContent.indexOf('tidak jalan') < 0) {
+            src.innerHTML = 'kiosk-agent <b>tidak jalan</b> di komputer ini — halaman memakai nilai netral. '
+              + 'Untuk mengubah ukuran kertas/kepekatan/geser, gunakan Pengaturan Admin.';
+            src.className = 'facts warn';
+          }
+          firstRead = false;
+        });
+    };
+    poll();
+    var timer = setInterval(poll, 5000);
+    window.addEventListener('beforeunload', function () { clearInterval(timer); });
+  })();
+
 
 
   /**

@@ -90,7 +90,7 @@ console.log();
 console.log('== 5) halaman memakai angka yang sama dengan perhitungan di atas ==');
 // Angka-angka ini harus benar di HTML: kalau salah, label terpotong di printer.
 assert.match(PAGE, /var PRINTHEAD_PX = 576;/, 'halaman harus memakai batas kepala cetak 576 px');
-assert.match(PAGE, /value="54" min="1" step="0\.5"/, 'bawaan lebar 54 mm (kertas yang dipakai)');
+assert.match(PAGE, /value="54" min="1" step="0\.5"/, 'bawaan lebar 54 mm (dipakai bila agent tidak jalan)');
 assert.match(PAGE, /value="67" min="1" step="0\.5"/, 'bawaan tinggi 67 mm');
 assert.match(PAGE, /sizeFromMm\(\{[\s\S]{0,160}dpi: 300, printhead_px: PRINTHEAD_PX/, 
   'ukuran harus dihitung lewat label-size dengan batas kepala cetak');
@@ -107,8 +107,13 @@ console.log('== 5b) penyiapan foto & ukuran kertas label di halaman ==');
 assert.match(PAGE, /function renderForPrint\(\)/, 'harus ada penyiapan gambar sebelum cetak');
 assert.match(PAGE, /Math\.min\(g\.w_px \/ currentImageSize\.w/, 'skala harus menjaga rasio');
 assert.match(PAGE, /id="fit"/, 'harus ada opsi sesuaikan-tanpa-distorsi');
-assert.match(PAGE, /var LABEL = \{ w_mm: 54, h_mm: 67 \}/, 'ukuran kertas label 54x67 mm');
-assert.match(PAGE, /id="presetLabel"/, 'tombol ukuran kertas label');
+// Pengaturan tidak lagi di halaman ini: nilainya dibaca dari kiosk-agent,
+// sumber yang sama dengan photobooth produksi.
+assert.match(PAGE, /function applyAdminConfig/, 'halaman harus membaca pengaturan Admin');
+assert.match(PAGE, /api\/kiosk-status/, 'dibaca lewat local bridge agent');
+assert.ok(!PAGE.includes("id=\"presetLabel\""), 'tombol setel ukuran harus hilang dari halaman uji');
+assert.match(PAGE, /id="density"[^>]*readonly/, 'kepekatan tidak boleh disetel di halaman uji');
+assert.match(PAGE, /id="offset_y"[^>]*readonly/, 'geser vertikal tidak boleh disetel di halaman uji');
 assert.match(PAGE, /renderForPrint\(\)\.then/, 'kedua tombol cetak harus memakai hasil penyiapan');
 console.log('  ok   penyiapan gambar menjaga rasio + tombol ukuran kertas 54x67 mm');
 
