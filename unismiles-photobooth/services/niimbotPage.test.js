@@ -105,3 +105,24 @@ test('aset gambar uji tetap tersedia setelah halaman pindah', () => {
   assert.ok(existsSync(path.join(ROOT, 'public', 'assets')),
     'aset public harus tetap ada');
 });
+
+test('objek ukuran diteruskan dengan nama field yang diterima service', () => {
+  // Bug nyata: currentSize() menyalin hasil service ke nama pendek (w_px/h_px),
+  // lalu objek itu diteruskan ke printService.print() yang membaca widthPx.
+  // Akibatnya canvas berlebar 0 dan browser hanya mengeluh
+  // "The source width is 0." — pesan yang tidak menunjuk ke penyebabnya.
+  assert.match(PAGE, /return printService\.labelSize\(w_mm, h_mm\);/,
+    'currentSize harus mengembalikan objek service apa adanya, tanpa penamaan ulang');
+  // Tidak boleh ada pembacaan nama pendek yang tersisa.
+  assert.ok(!/\bg\.w_px\b|\.h_px\b|\brequested_px\b/.test(PAGE),
+    'tidak boleh ada sisa pembacaan nama pendek');
+  // Yang dikirim ke print() harus membawa widthPx/heightPx.
+  assert.match(PAGE, /printService\.print\(currentImageUrl, g, /,
+    'objek ukuran dari currentSize dikirim ke print()');
+});
+
+test('layar menampilkan ukuran yang benar, bukan undefined', () => {
+  // Dulu log mencetak g.widthPx dari objek bernama pendek -> "undefined x undefined".
+  assert.match(PAGE, /g\.widthPx \+ ' × ' \+ g\.heightPx/,
+    'log ukuran harus memakai nama field yang benar');
+});

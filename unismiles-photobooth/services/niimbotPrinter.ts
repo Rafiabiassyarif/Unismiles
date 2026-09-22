@@ -22,8 +22,8 @@
  *   label — jadi yang dipakai adalah angka yang terbukti.
  */
 
-import { B1_PRO_PRINTHEAD_PX, type LabelSize } from './labelGeometry';
-import { ditherToBlackAndWhite } from './oneBitImage';
+import { B1_PRO_PRINTHEAD_PX, type LabelSize } from './labelGeometry.ts';
+import { ditherToBlackAndWhite } from './oneBitImage.ts';
 import {
   ImageEncoder,
   PageColorType,
@@ -63,9 +63,9 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
 };
 
 /** Geometri label: dihitung di `labelGeometry.ts` supaya bisa diuji tanpa hardware. */
-import { drawRect } from './labelGeometry';
-export { labelSize, labelMmFromPaperSize, drawRect, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry';
-export type { LabelSize } from './labelGeometry';
+import { drawRect } from './labelGeometry.ts';
+export { labelSize, labelMmFromPaperSize, drawRect, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+export type { LabelSize } from './labelGeometry.ts';
 
 export type PrintStatus =
   | { state: 'idle' }
@@ -191,11 +191,34 @@ export class NiimbotPrinter {
     size: LabelSize,
     adj: PrintAdjustments = DEFAULT_ADJUSTMENTS,
   ): Promise<HTMLCanvasElement> {
+    // Diperiksa dengan pesan yang menyebut sebabnya.
+    //
+    // Kalau ukuran ini rusak, `canvas.width` menjadi 0 dan browser hanya
+    // mengeluh "The source width is 0." saat getImageData — pesan yang tidak
+    // menunjuk ke mana pun. Penyebab aslinya hampir selalu objek ukuran yang
+    // memakai nama field berbeda (mis. `w_px` sebagai ganti `widthPx`), atau
+    // ukuran kertas yang tidak terbaca. Lebih baik gagal di sini dengan kalimat
+    // yang bisa ditindaklanjuti.
+    const widthPx = Number(size?.widthPx);
+    const heightPx = Number(size?.heightPx);
+    if (!Number.isFinite(widthPx) || !Number.isFinite(heightPx) || widthPx <= 0 || heightPx <= 0) {
+      throw new Error(
+        `Ukuran label tidak sah (${widthPx} x ${heightPx} px). `
+        + 'Pastikan ukuran kertas di Admin terbaca dan objek ukuran memakai '
+        + 'field widthPx/heightPx dari labelSize().',
+      );
+    }
+
     const img = await loadImage(source);
+    // Ukuran gambar nol (foto rusak atau gagal dimuat sebagian) akan membuat
+    // seluruh kanvas menjadi tinta; tolak lebih awal.
+    if (!img.naturalWidth || !img.naturalHeight) {
+      throw new Error('Gambar yang akan dicetak tidak punya ukuran yang sah.');
+    }
 
     const canvas = document.createElement('canvas');
-    canvas.width = size.widthPx;
-    canvas.height = size.heightPx;
+    canvas.width = widthPx;
+    canvas.height = heightPx;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Canvas 2D tidak tersedia di browser ini.');
 

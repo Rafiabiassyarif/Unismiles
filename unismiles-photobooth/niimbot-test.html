@@ -202,30 +202,27 @@
 
     if (!printReady) return null;
     // Perhitungan dari service — sumber yang sama dipakai saat mencetak.
-    var g = printService.labelSize(w_mm, h_mm);
-    // Service mengembalikan widthPx/heightPx/requestedWidthPx; halaman ini
-    // memakai nama pendek. Normalkan DI SINI saja, supaya tidak ada dua
-    // penamaan yang berbeda untuk nilai yang sama — dan supaya tidak ada
-    // pembacaan undefined yang diam-diam menghasilkan NaN.
-    return {
-      w_px: g.widthPx,
-      h_px: g.heightPx,
-      requested_px: g.requestedWidthPx,
-      clamped: g.clamped,
-    };
+    //
+    // Dikembalikan APA ADANYA (widthPx/heightPx/requestedWidthPx). Sebelumnya
+    // fungsi ini menyalinnya ke nama pendek (w_px/h_px), lalu objek bernama
+    // pendek itu diteruskan ke printService.print() yang membaca widthPx —
+    // hasilnya undefined, canvas berlebar 0, dan errornya
+    // "The source width is 0." yang sama sekali tidak menunjuk ke penyebabnya.
+    // Satu nama saja untuk satu nilai.
+    return printService.labelSize(w_mm, h_mm);
   }
 
   function refreshGeometry() {
     var g = currentSize();
     if (!g) { $('geom').textContent = 'Ukuran tidak valid.'; return; }
     var mm = function (px) { return (px * 25.4 / 300).toFixed(2); };
-    var txt = 'label ' + g.w_px + ' × ' + g.h_px + ' px  (' + mm(g.w_px) + ' × ' + mm(g.h_px) + ' mm)';
+    var txt = 'label ' + g.widthPx + ' × ' + g.heightPx + ' px  (' + mm(g.widthPx) + ' × ' + mm(g.heightPx) + ' mm)';
     if (g.clamped) {
       // Penting dibedakan: gambar DIPERKECIL supaya utuh, bukan dipotong.
       // Menuliskan "hilang" akan membuat orang mencari bagian foto yang
       // sebenarnya ada di sana.
-      txt += '  —  kertas ' + g.requested_px + ' px lebih lebar dari kepala cetak '
-           + g.w_px + ' px, sehingga gambar DIPERKECIL ' + (100 * g.w_px / g.requested_px).toFixed(1)
+      txt += '  —  kertas ' + g.requestedWidthPx + ' px lebih lebar dari kepala cetak '
+           + g.widthPx + ' px, sehingga gambar DIPERKECIL ' + (100 * g.widthPx / g.requestedWidthPx).toFixed(1)
            + '% agar seluruhnya muat. Tidak ada bagian yang terpotong.';
     } else {
       txt += '  —  muat di kepala cetak';
@@ -248,8 +245,8 @@
   // terlihat di kertas memang apa yang diuji, tanpa bingkai palsu.
   function sampleImage() {
     var g = currentSize();
-    var W = g ? g.w_px : 576;
-    var H = g ? g.h_px : 714;
+    var W = g ? g.widthPx : 576;
+    var H = g ? g.heightPx : 714;
     var c = document.createElement('canvas');
     c.width = W; c.height = H;
     var x = c.getContext('2d');
@@ -480,23 +477,23 @@
 
     // Background putih penuh label, lalu hasil gambar di atasnya.
     var c = document.createElement('canvas');
-    c.width = g.w_px; c.height = g.h_px;
+    c.width = g.widthPx; c.height = g.heightPx;
     var ctx = c.getContext('2d');
     ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, g.w_px, g.h_px);
+    ctx.fillRect(0, 0, g.widthPx, g.heightPx);
 
     return new Promise(function (resolve) {
       var img = new Image();
       img.onload = function () {
-        var dw = g.w_px, dh = g.h_px;
+        var dw = g.widthPx, dh = g.heightPx;
         var dx = 0, dyv = 0;
         if ($('fit').checked && currentImageSize) {
           // Skalakan mempertahankan rasio, muat di dalam label.
-          var scale = Math.min(g.w_px / currentImageSize.w, g.h_px / currentImageSize.h);
+          var scale = Math.min(g.widthPx / currentImageSize.w, g.heightPx / currentImageSize.h);
           dw = Math.round(currentImageSize.w * scale);
           dh = Math.round(currentImageSize.h * scale);
-          dx = Math.round((g.w_px - dw) / 2);
-          dyv = Math.round((g.h_px - dh) / 2);
+          dx = Math.round((g.widthPx - dw) / 2);
+          dyv = Math.round((g.heightPx - dh) / 2);
         }
         ctx.drawImage(img, dx, dyv, dw, dh);
         resolve(c.toDataURL('image/png'));
@@ -511,7 +508,7 @@
     // Ukuran harus sama dengan canvas yang baru digambar, kalau tidak
     // informasi rasio di bawah akan salah.
     var g = currentSize();
-    currentImageSize = { w: (g ? g.w_px : 576), h: (g ? g.h_px : 714) };
+    currentImageSize = { w: (g ? g.widthPx : 576), h: (g ? g.heightPx : 714) };
     log('Gambar uji ' + currentImageSize.w + ' × ' + currentImageSize.h
         + ' px disiapkan — sama dengan ukuran label, jadi tidak ada bingkai putih.', 'ok');
     updateFitInfo();
@@ -527,9 +524,9 @@
       img.onload = function () {
         currentImageSize = { w: img.naturalWidth, h: img.naturalHeight };
         var g = currentSize();
-        if (g && img.naturalWidth !== g.w_px) {
+        if (g && img.naturalWidth !== g.widthPx) {
           log('Gambar ' + img.naturalWidth + '×' + img.naturalHeight + ' akan disesuaikan ke label '
-              + g.w_px + '×' + g.h_px + ' px.', 'ok');
+              + g.widthPx + '×' + g.heightPx + ' px.', 'ok');
         } else {
           log('Berkas siap: ' + f.name, 'ok');
         }
@@ -551,7 +548,7 @@
     if (!g) { el.textContent = '—'; return; }
 
     var imgAr = currentImageSize.w / currentImageSize.h;
-    var labAr = g.w_px / g.h_px;
+    var labAr = g.widthPx / g.heightPx;
     var diff = Math.abs(imgAr - labAr);
     var sameRatio = diff < 0.02;
 
@@ -597,7 +594,7 @@
     btn.disabled = true;
     log('Membuka pemilih perangkat Bluetooth…');
 
-    if (!currentImageUrl) { currentImageUrl = sampleImage(); var gg = currentSize(); currentImageSize = { w: (gg ? gg.w_px : 576), h: (gg ? gg.h_px : 714) }; }
+    if (!currentImageUrl) { currentImageUrl = sampleImage(); var gg = currentSize(); currentImageSize = { w: (gg ? gg.widthPx : 576), h: (gg ? gg.heightPx : 714) }; }
     var g = currentSize();
     if (!g) { log('Ukuran label tidak valid.', 'bad'); btn.disabled = false; return; }
 

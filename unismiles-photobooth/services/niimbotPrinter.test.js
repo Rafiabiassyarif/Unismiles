@@ -33,7 +33,7 @@ test('lebar dikunci ke kepala cetak, memakai angka hasil pengukuran di kertas', 
   assert.ok(!/PRINTHEAD_PX = 567/.test(GEOMETRY + SERVICE),
     'jangan pakai 567 dari tabel library — itu bukan unit yang dipakai');
   // Service harus memakai konstanta itu, bukan menyalin angkanya.
-  assert.match(SERVICE, /from '\.\/labelGeometry'/,
+  assert.match(SERVICE, /from '\.\/labelGeometry\.ts'/,
     'service harus mengimpor geometri, bukan mendefinisikan ulang');
 });
 
@@ -180,8 +180,35 @@ test('dithering dilakukan SETELAH filter Admin', () => {
 test('dithering dipakai lewat satu fungsi teruji, bukan ditulis ulang', () => {
   // Perhitungannya di services/oneBitImage.ts supaya bisa DIEKSEKUSI di test:
   // kesalahan di sini hanya terlihat di kertas.
-  assert.match(SERVICE, /import \{ ditherToBlackAndWhite \} from '\.\/oneBitImage'/,
+  assert.match(SERVICE, /import \{ ditherToBlackAndWhite \} from '\.\/oneBitImage\.ts'/,
     'harus mengimpor dari modul teruji, bukan menyalin perhitungannya');
   assert.strictEqual((SERVICE.match(/ditherToBlackAndWhite\(/g) || []).length, 1,
     'satu tempat saja yang mengubah gambar');
+});
+
+test('ukuran label rusak ditolak dengan pesan yang menyebut sebabnya', () => {
+  // Tanpa ini, ukuran rusak berlanjut sampai ke getImageData dan berhenti dengan
+  // "The source width is 0." — pesan yang tidak menunjuk ke mana pun.
+  assert.match(SERVICE, /Ukuran label tidak sah/,
+    'harus ada pemeriksaan ukuran sebelum membuat kanvas');
+  assert.match(SERVICE, /const widthPx = Number\(size\?\.widthPx\)/,
+    'lebar harus divalidasi dari field yang benar');
+  assert.match(SERVICE, /canvas\.width = widthPx/,
+    'kanvas memakai lebar yang sudah divalidasi');
+  // Gambar tanpa ukuran juga ditolak, karena seluruh kanvas akan jadi tinta.
+  assert.match(SERVICE, /naturalWidth/,
+    'gambar tanpa ukuran harus ditolak sebelum digambar');
+});
+
+test('impor internal memakai ekstensi .ts', () => {
+  // Bukan gaya penulisan: tanpa ekstensi, Node TIDAK bisa memuat berkas ini
+  // langsung untuk diuji atau dijalankan, dan `prepareCanvas` jadi tidak pernah
+  // bisa dibuktikan di luar browser. Vite menerima keduanya, jadi menambah
+  // ekstensi tidak merugikan build.
+  assert.match(SERVICE, /from '\.\/labelGeometry\.ts'/,
+    'labelGeometry harus diimpor dengan ekstensi');
+  assert.match(SERVICE, /from '\.\/oneBitImage\.ts'/,
+    'oneBitImage harus diimpor dengan ekstensi');
+  assert.ok(!/from '\.\/labelGeometry'\s/.test(SERVICE),
+    'tidak boleh ada impor tanpa ekstensi');
 });
