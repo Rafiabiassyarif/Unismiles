@@ -9,6 +9,7 @@ import { getStoredFilters, getLayoutConfig, getStoredBackgrounds, getAppConfig }
 import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
 import { NiimbotPrinter, labelSize as computeLabelSize, labelMmFromPaperSize, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
+import { paintCover as paintCoverInto, paintPrintImage } from '../services/printImage';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
@@ -640,21 +641,17 @@ const loadImageElement = (src: string): Promise<HTMLImageElement> =>
     });
 
 /**
- * Gambar `img` mengisi dx/dy/dw/dh dengan perilaku "cover": rasio dipertahankan
- * dan kelebihan dipotong, bukan digepengkan.
+ * Gambar `img` mengisi dw x dh di posisi dx/dy dengan perilaku "cover": rasio
+ * dipertahankan, kelebihan dipotong, tidak digepengkan.
+ *
+ * Perhitungannya di `services/printImage.ts` supaya bisa DIEKSEKUSI di test —
+ * kesalahan rasio di sini hanya terlihat di kertas.
  */
 const drawCoverInto = (
     ctx: CanvasRenderingContext2D,
     img: HTMLImageElement,
     dx: number, dy: number, dw: number, dh: number,
-) => {
-    const ir = img.naturalWidth / img.naturalHeight;
-    const sr = dw / dh;
-    let sx = 0, sy = 0, sw = img.naturalWidth, sh = img.naturalHeight;
-    if (ir > sr) { sw = sh * sr; sx = (img.naturalWidth - sw) / 2; }
-    else         { sh = sw / sr; sy = (img.naturalHeight - sh) / 2; }
-    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-};
+) => paintCoverInto(ctx as any, img, dw, dh, dx, dy);
 
 /**
  * Gambar yang DICETAK: isi slot frame, tanpa frame-nya.
@@ -690,11 +687,10 @@ const generatePrintImage = async (
         const ctx = canvas.getContext('2d');
         if (!ctx) return null;
 
-        // Latar putih supaya sisa label tidak hitam kalau rasio foto berbeda.
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        // Isi slot secara penuh, rasio foto dipertahankan (sama seperti pratinjau).
-        drawCoverInto(ctx, img, 0, 0, canvas.width, canvas.height);
+        // Satu tempat saja yang tahu cara menggambar: services/printImage.ts.
+        // Di test modul itu, operasi menggambarnya direkam dan diperiksa —
+        // sehingga frame yang tidak sengaja ikut tergambar akan ketahuan.
+        paintPrintImage(ctx as any, img, slot);
 
         return canvas.toDataURL('image/png');
     } catch (e) {
