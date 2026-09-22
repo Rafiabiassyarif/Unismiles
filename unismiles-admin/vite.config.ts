@@ -6,6 +6,25 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        output: {
+          /**
+           * Pisahkan dependensi besar ke chunk tersendiri.
+           *
+           * Bukan sekadar menghilangkan peringatan ukuran chunk: bundle admin
+           * yang menumpuk jadi satu berkas 1,19 MB membuat setiap perubahan kode
+           * aplikasi membatalkan cache seluruh pustaka. Dipisah, pustaka tetap
+           * ter-cache saat kode aplikasi berubah.
+           */
+          manualChunks: {
+            react: ['react', 'react-dom', 'react-router-dom'],
+            charts: ['recharts'],
+            icons: ['lucide-react'],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
