@@ -66,6 +66,29 @@ assert.strictEqual(LS.sizeFromMm({ w_mm: 54, h_mm: 67, dpi: 300, printhead_px: 0
 console.log('  ok   0 / negatif / NaN / head 0 semuanya mengembalikan null');
 
 console.log();
+console.log('== 4b) frame photobooth vs kertas printer ==');
+// Angka kanvas frame yang nyata di sistem (dari layout_config frame_templates).
+const FRAMES = [
+  { name: '1x1', w: 708, h: 1062 },
+  { name: '2x1', w: 591, h: 1772 },
+  { name: '3x1', w: 591, h: 1772 },
+];
+for (const f of FRAMES) {
+  // Lebar frame melebihi kepala cetak -> harus dipotong, bukan dicetak apa adanya.
+  assert.ok(f.w > PRINTHEAD_PX,
+    `${f.name}: lebar frame ${f.w} px memang melebihi kepala cetak ${PRINTHEAD_PX} px`);
+  // Label yang rasionya sama dengan frame tidak membuat gambar gepeng.
+  const w_mm = PRINTHEAD_PX * 25.4 / DPI;
+  const h_mm = w_mm * (f.h / f.w);
+  assert.ok(h_mm <= 350, `${f.name}: tinggi label ${h_mm.toFixed(1)} mm harus di bawah batas 350 mm`);
+  assert.ok(Math.abs((w_mm / h_mm) - (f.w / f.h)) < 0.001,
+    `${f.name}: rasio label harus sama dengan rasio frame supaya tidak gepeng`);
+  console.log(`  ok   ${f.name}: lebar ${f.w} px -> dikunci ${PRINTHEAD_PX} px `
+    + `(terpotong ${((f.w - PRINTHEAD_PX) * 25.4 / DPI).toFixed(1)} mm); `
+    + `label ${w_mm.toFixed(0)}×${h_mm.toFixed(0)} mm menjaga rasio`);
+}
+
+console.log();
 console.log('== 5) halaman memakai angka yang sama dengan perhitungan di atas ==');
 // Angka-angka ini harus benar di HTML: kalau salah, label terpotong di printer.
 assert.match(PAGE, /var PRINTHEAD_PX = 576;/, 'halaman harus memakai batas kepala cetak 576 px');
@@ -78,6 +101,17 @@ assert.match(PAGE, /name_prefixes: \['B1'\]/, 'filter pemilih perangkat = awalan
 assert.match(PAGE, /Niimbot\.printImage\(/, 'memakai API printImage dari driver');
 assert.match(PAGE, /clamped/, 'halaman harus memperingatkan kalau ukuran dikunci');
 console.log('  ok   batas 576 px, bawaan 48×67 mm, task v4, dan peringatan clamping ada di halaman');
+
+console.log();
+console.log('== 5b) penanganan frame vs label di halaman ==');
+// Driver merentang gambar mengisi label (drawImage tanpa jaga rasio), jadi
+// halaman harus menyediakan cara mencetak frame tanpa membuatnya gepeng.
+assert.match(PAGE, /function renderForPrint\(\)/, 'harus ada penyiapan gambar sebelum cetak');
+assert.match(PAGE, /Math\.min\(g\.w_px \/ currentImageSize\.w/, 'skala harus menjaga rasio');
+assert.match(PAGE, /id="fit"/, 'harus ada opsi sesuaikan-tanpa-distorsi');
+assert.match(PAGE, /FRAMES = \[/, 'harus ada preset ukuran per frame');
+assert.match(PAGE, /renderForPrint\(\)\.then/, 'kedua tombol cetak harus memakai hasil penyiapan');
+console.log('  ok   penyiapan gambar menjaga rasio, opsi fit, dan preset frame ada');
 
 console.log();
 console.log('== 6) skrip driver ada dan bisa dimuat ==');

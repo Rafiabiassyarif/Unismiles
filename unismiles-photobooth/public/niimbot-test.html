@@ -105,6 +105,27 @@
         <div id="preview" style="font-size:12px;color:#94a3b8;">belum ada</div>
       </div>
     </div>
+
+    <!-- Frame photobooth punya rasio yang berbeda-beda, dan driver MERENTANG
+         gambar ke ukuran label tanpa menjaga rasio. Tanpa opsi ini, frame akan
+         gepeng pada kertas yang rasionya tidak sama. -->
+    <div style="margin: 4px 0 12px;">
+      <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="fit" checked style="width:auto;margin-top:3px;">
+        <span>
+          Sesuaikan ke label tanpa distorsi (beri bingkai putih)
+          <span style="color:#94a3b8;font-size:11px;display:block;margin-top:2px;">
+            Kalau tidak dicentang, gambar direntangkan memenuhi label dan bisa gepeng.
+          </span>
+        </span>
+      </label>
+    </div>
+
+    <div style="margin-bottom:12px;">
+      <label>Atau pakai ukuran frame photobooth</label>
+      <div class="actions" id="presets"></div>
+      <p class="facts" style="margin:8px 0 0;font-size:12px;" id="fitInfo">—</p>
+    </div>
     <div class="actions">
       <button id="connect" type="button">1. Sambungkan printer</button>
       <button id="print" type="button" disabled>2. Cetak</button>
@@ -184,7 +205,7 @@
   }
 
   ['w_mm', 'h_mm', 'offset_y'].forEach(function (id) {
-    $(id).addEventListener('input', refreshGeometry);
+    $(id).addEventListener('input', function () { refreshGeometry(); updateFitInfo(); });
   });
   refreshGeometry();
 
@@ -234,6 +255,85 @@
   }
 
   var currentImageUrl = null;
+  var currentImageSize = null;   // { w, h } gambar sumber, untuk hitung rasio
+
+  // --- Ukuran frame photobooth yang benar-benar ada di sistem -----------------
+  // Diambil dari kanvas frame di database (layout_config.width/height), jadi
+  // tombol di sini menghasilkan label yang rasionya SAMA dengan frame asli.
+  // Rasio harus sama karena driver merentang gambar mengisi label — rasio yang
+  // berbeda membuat foto gepeng, bukan terpotong.
+  var FRAMES = [
+    { name: '1x1', label: '1x1', w: 708, h: 1062 },
+    { name: '2x1', label: '2x1', w: 591, h: 1772 },
+    { name: '3x1', label: '3x1', w: 591, h: 1772 },
+  ];
+
+  function buildPresets() {
+    var box = $('presets');
+    FRAMES.forEach(function (f) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ghost';
+      // Lebar selalu dikunci ke kepala cetak; tinggi mengikuti rasio frame.
+      var w_mm = PRINTHEAD_PX * 25.4 / 300;
+      var h_mm = w_mm * (f.h / f.w);
+      b.textContent = f.label + ' → ' + w_mm.toFixed(0) + '×' + h_mm.toFixed(0) + ' mm';
+      b.title = 'Frame ' + f.w + '×' + f.h + ' px (rasio ' + (f.w / f.h).toFixed(3) + ')';
+      b.addEventListener('click', function () {
+        $('w_mm').value = w_mm.toFixed(1);
+        $('h_mm').value = h_mm.toFixed(1);
+        refreshGeometry();
+        log('Ukuran disetel ke frame ' + f.label + ': ' + w_mm.toFixed(1) + ' × ' + h_mm.toFixed(1)
+            + ' mm — rasio label sama dengan rasio frame, jadi foto tidak gepeng.', 'ok');
+      });
+      box.appendChild(b);
+    });
+  }
+  buildPresets();
+
+  /**
+   * Menghitung gambar yang siap dicetak.
+   *
+   * Driver merentang gambar mengisi label (`drawImage(bmp, 0, dy, w, h)`), jadi:
+   *  - mode "sesuaikan" (bawaan): gambar diskalakan mempertahankan rasio, lalu
+   *    diberi bingkai putih supaya sisa label tidak hitam. Foto tidak gepeng.
+   *  - mode "rentangkan": gambar memenuhi label; rasio berbeda = foto gepeng.
+   *
+   * Dikembalikan sebagai data-URL (bukan URL ke server) supaya bebas dari masalah
+   * CORS — driver mengambil gambar lewat fetch().
+   */
+  function renderForPrint() {
+    var g = currentSize();
+    if (!g) return null;
+    if (!currentImageUrl) return null;
+
+    // Background putih penuh label, lalu hasil gambar di atasnya.
+    var c = document.createElement('canvas');
+    c.width = g.w_px; c.height = g.h_px;
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, g.w_px, g.h_px);
+
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        var dw = g.w_px, dh = g.h_px;
+        var dx = 0, dyv = 0;
+        if ($('fit').checked && currentImageSize) {
+          // Skalakan mempertahankan rasio, muat di dalam label.
+          var scale = Math.min(g.w_px / currentImageSize.w, g.h_px / currentImageSize.h);
+          dw = Math.round(currentImageSize.w * scale);
+          dh = Math.round(currentImageSize.h * scale);
+          dx = Math.round((g.w_px - dw) / 2);
+          dyv = Math.round((g.h_px - dh) / 2);
+        }
+        ctx.drawImage(img, dx, dyv, dw, dh);
+        resolve(c.toDataURL('image/png'));
+      };
+      img.onerror = function () { resolve(currentImageUrl); };
+      img.src = currentImageUrl;
+    });
+  }
 
   function setPreview(label) {
     $('preview').textContent = label;
@@ -241,8 +341,10 @@
 
   $('useSample').addEventListener('click', function () {
     currentImageUrl = sampleImage();
-    setPreview('gambar uji ' + '567×791');
+    currentImageSize = { w: 567, h: 791 };
+    setPreview('gambar uji 567×791');
     log('Gambar uji disiapkan (567 × 791 px, sesuai label 48 × 67 mm).', 'ok');
+    updateFitInfo();
   });
 
   $('file').addEventListener('change', function (e) {
@@ -253,19 +355,52 @@
       currentImageUrl = reader.result;
       var img = new Image();
       img.onload = function () {
+        currentImageSize = { w: img.naturalWidth, h: img.naturalHeight };
         setPreview(f.name + ' (' + img.naturalWidth + '×' + img.naturalHeight + ')');
         var g = currentSize();
         if (g && img.naturalWidth !== g.w_px) {
-          log('Perhatian: gambar ' + img.naturalWidth + ' px akan direntangkan/dipadatkan ke ' + g.w_px
-              + ' px (aspek rasio diabaikan driver). Siapkan gambar pada rasio label.', 'bad');
+          log('Gambar ' + img.naturalWidth + '×' + img.naturalHeight + ' akan disesuaikan ke label '
+              + g.w_px + '×' + g.h_px + ' px.', 'ok');
         } else {
           log('Berkas siap: ' + f.name, 'ok');
         }
+        updateFitInfo();
       };
       img.src = reader.result;
     };
     reader.readAsDataURL(f);
   });
+
+  /**
+   * Menjelaskan apa yang akan terjadi pada gambar dengan pengaturan sekarang:
+   * apakah rasio cocok, atau akan ada bingkai putih / gambar gepeng.
+   */
+  function updateFitInfo() {
+    var el = $('fitInfo');
+    if (!currentImageSize) { el.textContent = 'Pilih gambar dulu untuk melihat kecocokan.'; return; }
+    var g = currentSize();
+    if (!g) { el.textContent = '—'; return; }
+
+    var imgAr = currentImageSize.w / currentImageSize.h;
+    var labAr = g.w_px / g.h_px;
+    var diff = Math.abs(imgAr - labAr);
+    var sameRatio = diff < 0.02;
+
+    if (sameRatio) {
+      el.innerHTML = 'Rasio gambar <b>sama</b> dengan label (' + imgAr.toFixed(3) + ') — '
+        + 'tercetak penuh tanpa bingkai.';
+      return;
+    }
+    if ($('fit').checked) {
+      el.innerHTML = 'Rasio gambar ' + imgAr.toFixed(3) + ' vs label ' + labAr.toFixed(3)
+        + ' — gambar <b>tidak gepeng</b>, ada bingkai putih di sisinya.';
+    } else {
+      el.innerHTML = '<span class="bad">Rasio gambar ' + imgAr.toFixed(3) + ' vs label '
+        + labAr.toFixed(3) + ' — gambar akan DIPAKSA memenuhi label, hasilnya ' 
+        + (imgAr < labAr ? 'lebih gepeng' : 'lebih kurus') + '.</span>';
+    }
+  }
+  $('fit').addEventListener('change', updateFitInfo);
 
   // --- Sambung & cetak -----------------------------------------------------
   $('connect').addEventListener('click', function () {
@@ -284,8 +419,9 @@
     if (!g) { log('Ukuran label tidak valid.', 'bad'); btn.disabled = false; return; }
 
     log('Menyambung sebagai ' + MODEL.task + ' (' + g.w_px + '×' + g.h_px + ' px). Cetak 1 label uji…');
-    // copies=1 dengan ukuran terkecil: cara paling andal untuk memastikan sambungan hidup.
-    Niimbot.printImage(currentImageUrl, {
+    // copies=1: cara paling andal memastikan sambungan benar-benar hidup.
+    renderForPrint().then(function (img) {
+    Niimbot.printImage(img, {
       model: MODEL,
       size: { w_px: g.w_px, h_px: g.h_px, offset_y_px: g.offset_y_px },
       copies: 1,
@@ -301,6 +437,10 @@
       log('Gagal: ' + (err && err.message ? err.message : err), 'bad');
       btn.disabled = false;
     });
+    }).catch(function (err) {
+      log('Gagal menyiapkan gambar: ' + (err && err.message ? err.message : err), 'bad');
+      btn.disabled = false;
+    });
   });
 
   $('print').addEventListener('click', function () {
@@ -311,8 +451,10 @@
     var copies = Math.max(1, parseInt($('copies').value, 10) || 1);
 
     btn.disabled = true;
-    log('Mencetak ' + copies + ' salinan pada ' + g.w_px + '×' + g.h_px + ' px…');
-    Niimbot.printImage(currentImageUrl, {
+    log('Mencetak ' + copies + ' salinan pada ' + g.w_px + '×' + g.h_px + ' px…'
+        + ($('fit').checked && currentImageSize ? ' (disesuaikan, tanpa distorsi)' : ' (direntangkan)'));
+    renderForPrint().then(function (img) {
+    Niimbot.printImage(img, {
       model: MODEL,
       size: { w_px: g.w_px, h_px: g.h_px, offset_y_px: g.offset_y_px },
       copies: copies,
@@ -329,10 +471,15 @@
       }
       btn.disabled = false;
     });
+    }).catch(function (err) {
+      log('Gagal menyiapkan gambar: ' + (err && err.message ? err.message : err), 'bad');
+      btn.disabled = false;
+    });
   });
 
   $('clear').addEventListener('click', function () { logEl.textContent = ''; });
 
+  updateFitInfo();   // isi keterangan kecocokan sejak awal, bukan menunggu gambar dipilih
   log('Siap. Langkah: pilih gambar → Sambungkan printer → Cetak.');
   log('Batas kepala cetak B1 Pro: ' + PRINTHEAD_PX + ' px (' + (PRINTHEAD_PX * 25.4 / 300).toFixed(2) + ' mm).');
 })();

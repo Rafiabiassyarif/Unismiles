@@ -40,6 +40,49 @@ terpotong, jadi jangan kaget.
 
 ---
 
+## 1b. Frame photobooth vs kertas printer
+
+Frame photobooth punya ukuran sendiri, dan **semuanya lebih lebar** dari kepala
+cetak B1 Pro:
+
+| Frame | Kanvas | Lebar vs kepala cetak | Akibat |
+|---|---|---|---|
+| 1x1 | 708 × 1062 px | 708 vs 576 px | **terpotong 11,2 mm** |
+| 2x1 | 591 × 1772 px | 591 vs 576 px | terpotong 1,3 mm |
+| 3x1 | 591 × 1772 px | 591 vs 576 px | terpotong 1,3 mm |
+
+Ada **dua masalah berbeda** di sini, dan solusinya juga berbeda:
+
+**(a) Lebar berlebih → dipotong.** Bagian kanan frame hilang, tanpa pesan error.
+Solusinya: **perkecil frame di Admin**, atau terima pemotongan. Halaman uji selalu
+mengunci lebar ke 576 px, jadi tidak ada yang bisa lolos diam-diam.
+
+**(b) Rasio tidak sama → gepeng.** Driver **merentangkan** gambar memenuhi label
+(`drawImage(bmp, 0, dy, w, h)`), tanpa menghiraukan rasio. Jadi kalau label
+48 × 67 mm (rasio 0,717) dipakai untuk frame 1x1 (rasio 0,667), fotonya **gepeng** —
+bukan terpotong.
+
+Solusi untuk (b) ada dua, dan halaman uji menyediakan keduanya:
+
+1. **Pakai tombol ukuran frame** di halaman uji. Setiap tombol menghasilkan label
+   yang rasionya **sama persis** dengan frame aslinya, dengan lebar dikunci 48,77 mm:
+
+   | Frame | Label yang dihasilkan | Rasio |
+   |---|---|---|
+   | 1x1 | 49 × 73 mm | 0,667 ✓ |
+   | 2x1 | 49 × 146 mm | 0,334 ✓ |
+   | 3x1 | 49 × 146 mm | 0,334 ✓ |
+
+   Ini yang paling bersih: foto tercetak penuh, tanpa bingkai, tanpa gepeng.
+
+2. **Centang "Sesuaikan ke label tanpa distorsi."** Gambar diskalakan
+   mempertahankan rasio lalu diberi **bingkai putih** di sisinya. Berguna kalau
+   ukuran kertas sudah terlanjur dipotong dan tidak bisa diubah. Fotonya tidak
+   gepeng, tapi tidak memenuhi kertas — ada tepi putih.
+
+Ringkasnya: **rasio label harus sama dengan rasio frame.** Kalau tidak, pilih
+bingkai putih (opsi 2) atau ubah ukuran kertas (opsi 1).
+
 ## 2. Cara mencoba di laptop Anda
 
 Web Bluetooth butuh **HTTPS atau localhost**. `localhost` sudah memenuhi syarat,
@@ -112,7 +155,8 @@ photobooth. Bedanya penting:
 | Cetak dari browser ke B1 Pro | ✅ halaman uji siap |
 | Ukuran label 48 × 67 mm terhitung benar | ✅ diuji, 45 test lolos |
 | Masuk otomatis setelah sesi foto selesai | ❌ belum |
-| Ukuran dari Admin (Kiosk Manager) | ❌ belum — sekarang masih bawaan di halaman uji |
+| Frame diambil langsung dari kiosk | ❌ belum — presetnya masih ditulis di halaman uji |
+| Ukuran dari Admin (Kiosk Manager) | ❌ belum — sekarang tombol preset di halaman uji |
 | Sambungan otomatis (tanpa pilih perangkat) | ❌ belum |
 
 Urutan yang disarankan: **uji manual dulu di laptop** (bagian 2). Kalau sudah
