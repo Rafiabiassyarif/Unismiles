@@ -834,6 +834,10 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const [thermalDensity, setThermalDensity] = useState(3);
   const [thermalOffsetYPx, setThermalOffsetYPx] = useState(0);
   const [thermalOffsetXPx, setThermalOffsetXPx] = useState(0);
+  // Margin kosong dari tepi label. Dipakai saat foto harus mulai mencetak
+  // setelah sekian piksel — menggeser saja tidak bisa membuat ruang kosong.
+  const [printMarginTopPx, setPrintMarginTopPx] = useState(0);
+  const [printMarginRightPx, setPrintMarginRightPx] = useState(0);
   const [selectedFrame, setSelectedFrame] = useState<FrameStyle | null>(null);
   const [editTab, setEditTab] = useState<'FRAMES' | 'FILTERS'>('FRAMES');
   
@@ -927,6 +931,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         density: Number(thermalDensity) || DEFAULT_ADJUSTMENTS.density,
         offsetYPx: Number(thermalOffsetYPx) || 0,
         offsetXPx: Number(thermalOffsetXPx) || 0,
+        marginTopPx: Number(printMarginTopPx) || 0,
+        marginRightPx: Number(printMarginRightPx) || 0,
       };
 
       await printer.print(image, size, 1, adjustments);
@@ -994,6 +1000,8 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       if (cfg.thermal_density !== undefined) setThermalDensity(n(cfg.thermal_density, 3));
       if (cfg.thermal_offset_y_px !== undefined) setThermalOffsetYPx(n(cfg.thermal_offset_y_px, 0));
       if (cfg.thermal_offset_x_px !== undefined) setThermalOffsetXPx(n(cfg.thermal_offset_x_px, 0));
+      if (cfg.print_margin_top_px !== undefined) setPrintMarginTopPx(n(cfg.print_margin_top_px, 0));
+      if (cfg.print_margin_right_px !== undefined) setPrintMarginRightPx(n(cfg.print_margin_right_px, 0));
       setPhotoAdjust(prev => ({
         brightness: n(cfg.photo_brightness, prev.brightness),
         contrast: n(cfg.photo_contrast, prev.contrast),

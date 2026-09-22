@@ -29,6 +29,8 @@ test('normalizes disabled printing and clears adapter/printer', () => {
     thermal_density: 3,
     thermal_offset_y_px: 0,
     thermal_offset_x_px: 0,
+    print_margin_top_px: 0,
+    print_margin_right_px: 0,
     photo_fit_mode: 'fit',
   });
 });

@@ -47,6 +47,10 @@ export interface PrintAdjustments {
   offsetYPx: number;
   /** Geser mendatar gambar pada kertas, piksel. Positif = kanan. */
   offsetXPx: number;
+  /** Margin atas: mulai cetak setelah sekian piksel dari tepi atas label. */
+  marginTopPx: number;
+  /** Margin kanan: hentikan cetak sekian piksel sebelum tepi kanan label. */
+  marginRightPx: number;
   /**
    * 'fit' = muat seluruh foto, sisa label jadi putih (ada bingkai).
    * 'cover' = penuhi label, rasio dijaga, kelebihan dipotong (tanpa bingkai).
@@ -62,6 +66,8 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
   density: 3,
   offsetYPx: 0,
   offsetXPx: 0,
+  marginTopPx: 0,
+  marginRightPx: 0,
   fitMode: 'fit',
 };
 
@@ -245,7 +251,13 @@ export class NiimbotPrinter {
 
     // Perhitungan dipindah ke drawRect() supaya bisa diuji tanpa canvas.
     const r = drawRect(adj.fitMode, canvas.width, canvas.height, img.naturalWidth, img.naturalHeight,
-      adj.offsetYPx, adj.offsetXPx);
+      adj.offsetYPx, adj.offsetXPx, adj.marginTopPx, adj.marginRightPx);
+    // Dipotong ke bidang cetak: piksel di luar margin dibiarkan putih. Tanpa
+    // langkah ini, margin tidak akan pernah terlihat — foto menutupi seluruh
+    // kanvas, jadi tidak ada ruang kosong yang bisa muncul.
+    ctx.beginPath();
+    ctx.rect(r.clipX, r.clipY, r.clipW, r.clipH);
+    ctx.clip();
     ctx.drawImage(img, r.dx, r.dy, r.dw, r.dh);
     ctx.restore();
 

@@ -110,6 +110,11 @@ export interface DrawRect {
   dy: number;
   dw: number;
   dh: number;
+  /** Bidang yang boleh berisi tinta. Di luar ini dibiarkan kosong (putih). */
+  clipX: number;
+  clipY: number;
+  clipW: number;
+  clipH: number;
 }
 
 /**
@@ -132,12 +137,36 @@ export function drawRect(
   imgH: number,
   offsetYPx = 0,
   offsetXPx = 0,
+  marginTopPx = 0,
+  marginRightPx = 0,
 ): DrawRect {
+  // Bidang gambar selalu penuh kanvas — supaya tidak ada celah putih di dalam
+  // area foto yang muncul tanpa sengaja.
+  //
+  // MARGIN hanya MEMOTONG bidang itu: piksel di luar margin dibiarkan putih.
+  // Foto tetap digambar penuh (cover), lalu dipotong. Itu cara satu-satunya
+  // supaya "mulai cetak setelah 0,5 cm" terwujud tanpa mengubah isi foto:
+  // menggeser saja tidak bisa membuat ruang kosong, karena gambarnya selalu
+  // menutupi seluruh kanvas.
+  //
+  // Batasannya: margin atas + bawah tidak boleh melebihi tinggi kanvas, dan
+  // begitu juga mendatar. Kalau melebihi, tidak ada yang tersisa untuk dicetak.
+  const clipX = clampInt(offsetXPx + (marginRightPx < 0 ? -marginRightPx : 0), 0, canvasW);
+  const clipY = clampInt(offsetYPx + Math.max(0, marginTopPx), 0, canvasH);
+  const rightInset = offsetXPx + Math.max(0, marginRightPx);
+  const bottomInset = offsetYPx;
+  const clipW = clampInt(canvasW - clipX - Math.max(0, rightInset), 0, canvasW);
+  const clipH = clampInt(canvasH - clipY - Math.max(0, bottomInset), 0, canvasH);
+
   const base: DrawRect = {
     dx: Math.round(offsetXPx),
     dy: Math.round(offsetYPx),
     dw: canvasW,
     dh: canvasH,
+    clipX,
+    clipY,
+    clipW,
+    clipH,
   };
   if (mode === 'stretch' || imgW <= 0 || imgH <= 0) return base;
 
@@ -153,14 +182,18 @@ export function drawRect(
   const dw = Math.max(1, Math.round(imgW * scale) + pad);
   const dh = Math.max(1, Math.round(imgH * scale) + pad);
 
-  // Geser mendatar TIDAK ikut dibagi dua: pengguna menggesernya dari posisi
-  // terpusat, jadi offset adalah perpindahan dari pusat — bukan koordinat absolut.
   return {
+    ...base,
     dw,
     dh,
     dx: Math.round(offsetXPx + (canvasW - dw) / 2),
     dy: Math.round(offsetYPx + (canvasH - dh) / 2),
   };
+}
+
+/** Bulatkan lalu jepit ke rentang, supaya margin tidak pernah menghasilkan nilai negatif. */
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, Math.round(value)));
 }
 
 

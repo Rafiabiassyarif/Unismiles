@@ -320,3 +320,57 @@ test('geser mendatar juga berlaku pada mode stretch', () => {
   // Ukuran tetap penuh kanvas pada stretch.
   assert.strictEqual(geser.dw, 576, 'stretch memenuhi lebar kanvas');
 });
+
+// --- Margin kosong: "mulai cetak setelah 0,5 cm" ---
+test('margin atas memulai cetak setelah sekian piksel dari tepi', () => {
+  const W = 576, H = 541, IW = 628, IH = 782;
+  const nol = drawRect('cover', W, H, IW, IH, 0, 0, 0, 0);
+  const m59 = drawRect('cover', W, H, IW, IH, 0, 0, 59, 0);
+
+  // 590,5 px = 0,5 cm tidak bulat; 59 px = 5,00 mm pada 300 dpi.
+  assert.strictEqual(m59.clipY, 59, 'mulai cetak 59 px dari tepi atas');
+  assert.strictEqual(m59.clipH, H - 59, 'tinggi bidang cetak berkurang sebanyak margin');
+  // Tanpa margin, seluruh kanvas boleh dicetak.
+  assert.strictEqual(nol.clipY, 0, 'tanpa margin mulai dari tepi');
+  assert.strictEqual(nol.clipH, H, 'tanpa margin seluruh kanvas');
+  // Foto sendiri TIDAK digeser maupun diperkecil oleh margin.
+  assert.strictEqual(m59.dy, nol.dy, 'margin tidak menggeser foto');
+  assert.strictEqual(m59.dh, nol.dh, 'margin tidak mengubah ukuran foto');
+});
+
+test('margin kanan menghentikan cetak sebelum tepi kanan', () => {
+  const W = 576, H = 541, IW = 628, IH = 782;
+  // 0,3 cm = 35 px
+  const m = drawRect('cover', W, H, IW, IH, 0, 0, 0, 35);
+  assert.strictEqual(m.clipX, 0, 'sisi kiri tidak terpengaruh');
+  assert.strictEqual(m.clipW, W - 35, 'lebar bidang cetak berkurang 35 px');
+  assert.strictEqual(m.dx, drawRect('cover', W, H, IW, IH, 0, 0, 0, 0).dx, 'foto tidak digeser');
+});
+
+test('margin digabung dengan geser tidak saling merusak', () => {
+  const W = 576, H = 541, IW = 628, IH = 782;
+  // Geser kanan 10 px + margin kiri 20 px: bidang cetak mulai 20 px dari tepi,
+  // dan geseran tetap berlaku pada foto.
+  const nol = drawRect('cover', W, H, IW, IH, 0, 0, 0, 0);
+  const r = drawRect('cover', W, H, IW, IH, 0, 10, 20, 0);
+  assert.strictEqual(r.clipY, 20, 'margin atas 20 px');
+  assert.strictEqual(r.dx - nol.dx, 10, 'geser mendatar tetap 10 px');
+  assert.strictEqual(r.clipH, H - 20);
+});
+
+test('margin tidak pernah membuat bidang cetak negatif', () => {
+  const W = 576, H = 541, IW = 628, IH = 782;
+  // Margin lebih besar dari kanvas: tidak ada yang bisa dicetak, tapi tidak
+  // boleh menghasilkan lebar/tinggi negatif yang membuat kanvas rusak.
+  const r = drawRect('cover', W, H, IW, IH, 0, 0, 9999, 9999);
+  assert.ok(r.clipW >= 0, 'lebar bidang cetak tidak negatif');
+  assert.ok(r.clipH >= 0, 'tinggi bidang cetak tidak negatif');
+});
+
+test('mode stretch juga menghormati margin', () => {
+  const W = 576, H = 541, IW = 628, IH = 782;
+  // stretch keluar lebih awal (base); margin harus tetap terhitung di sana.
+  const r = drawRect('stretch', W, H, IW, IH, 0, 0, 40, 0);
+  assert.strictEqual(r.clipY, 40, 'stretch: margin atas tetap berlaku');
+  assert.strictEqual(r.clipH, H - 40, 'stretch: bidang cetak berkurang');
+});

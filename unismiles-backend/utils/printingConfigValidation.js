@@ -37,6 +37,11 @@ const PHOTO_ADJUST_LIMITS = {
   // desain tercetak di kertas label tidak bisa dikalibrasi dari Admin sama
   // sekali — harus menyentuh kode dan deploy ulang.
   thermal_offset_x_px: { min: -200, max: 200, fallback: 0 },
+  // Margin kosong dari tepi label. Dipakai saat foto harus MULAI mencetak
+  // setelah sekian piksel dari tepi — menggeser gambar tidak bisa membuat
+  // ruang kosong, karena gambarnya selalu menutupi seluruh kanvas.
+  print_margin_top_px: { min: 0, max: 300, fallback: 0 },
+  print_margin_right_px: { min: 0, max: 300, fallback: 0 },
 };
 const PHOTO_FIT_MODES = ['fit', 'cover', 'stretch'];
 
@@ -104,6 +109,8 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     thermal_density: Number(existing.thermal_density ?? PHOTO_ADJUST_LIMITS.thermal_density.fallback),
     thermal_offset_y_px: Number(existing.thermal_offset_y_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_y_px.fallback),
     thermal_offset_x_px: Number(existing.thermal_offset_x_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback),
+    print_margin_top_px: Number(existing.print_margin_top_px ?? PHOTO_ADJUST_LIMITS.print_margin_top_px.fallback),
+    print_margin_right_px: Number(existing.print_margin_right_px ?? PHOTO_ADJUST_LIMITS.print_margin_right_px.fallback),
     photo_fit_mode: existing.photo_fit_mode || 'fit',
     ...input,
   };
@@ -209,6 +216,8 @@ function toSocketPrintingConfig(row) {
     thermal_density: Number(row.thermal_density ?? PHOTO_ADJUST_LIMITS.thermal_density.fallback),
     thermal_offset_y_px: Number(row.thermal_offset_y_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_y_px.fallback),
     thermal_offset_x_px: Number(row.thermal_offset_x_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback),
+    print_margin_top_px: Number(row.print_margin_top_px ?? PHOTO_ADJUST_LIMITS.print_margin_top_px.fallback),
+    print_margin_right_px: Number(row.print_margin_right_px ?? PHOTO_ADJUST_LIMITS.print_margin_right_px.fallback),
     photo_fit_mode: row.photo_fit_mode || 'fit',
   };
 }
