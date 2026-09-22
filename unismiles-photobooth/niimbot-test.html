@@ -152,8 +152,12 @@
   </section>
 </main>
 
-<script src="/niimbot/niimbot.js"></script>
-<script src="/niimbot/label-size.js"></script>
+<!-- Service cetak baru, memakai NiimBlueLib (@mmote/niimbluelib) yang dipakai
+     niimblue (MultiMote/niimblue) — bukan driver protokol buatan sendiri.
+     Dibundel lewat Vite supaya Web Bluetooth + library-nya jalan di browser. -->
+<!-- Entry TS diproses Vite: halaman ini adalah salah satu entry build, jadi
+     skrip hasil kompilasi disuntikkan otomatis dengan nama berkas yang benar. -->
+<script type="module" src="./niimbot-print-service.ts"></script>
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -169,31 +173,36 @@
     console.log(msg);
   }
 
-  // --- Model B1 Pro (dari registry.json repo) ------------------------------
-  // id 4097, 300 dpi, protocol v4, density bawaan 3.
-  var MODEL = {
-    name_prefixes: ['B1'],
-    task: 'v4',
-    density: 3,
-    label_type: 1,
-    speed: 1,
-  };
+  // --- Service cetak (NiimBlueLib), dimuat sebagai modul --------------------
+  // Modul dimuat asinkron, jadi UI menunggu sampai siap. Sebelum siap, tombol
+  // cetak tetap terkunci — bukan dibiarkan ada tapi gagal saat diklik.
+  var printService = null;
+  var printReady = false;
+  function onServiceReady(api) {
+    if (printReady) return;
+    printService = api;
+    printReady = true;
+    log('Service cetak siap (NiimBlueLib). Kepala cetak B1 Pro: '
+        + printService.B1_PRO_PRINTHEAD_PX + ' px.', 'ok');
+    log('Web Bluetooth: ' + (printService.isSupported() ? 'tersedia' : 'TIDAK tersedia'), 
+        printService.isSupported() ? 'ok' : 'bad');
+    refreshGeometry();
+  }
+  window.addEventListener('niimbot-print-service-ready', function (ev) { onServiceReady(ev.detail); });
+  // Cadangan: kalau modul sudah selesai dimuat sebelum listener ini terpasang.
+  if (window.NiimbotPrint) onServiceReady(window.NiimbotPrint);
 
-  // Batas kepala cetak B1 Pro, dari registry.json: 576 px, terverifikasi di kertas.
+  // Batas kepala cetak B1 Pro: hasil pengukuran di kertas pada unit yang dipakai.
+  // NiimBlueLib menulis 567 untuk B1_PRO; angka itu dari tabel model, bukan unit ini.
   var PRINTHEAD_PX = 576;
 
   function currentSize() {
     var w_mm = parseFloat($('w_mm').value);
     var h_mm = parseFloat($('h_mm').value);
-    var offset = parseInt($('offset_y').value, 10) || 0;
 
-    var geom = NiimbotLabelSize.sizeFromMm({
-      w_mm: w_mm, h_mm: h_mm, dpi: 300, printhead_px: PRINTHEAD_PX,
-    });
-    if (!geom) return null;
-    geom.offset_y_px = offset;
-    geom.requested_px = Math.round(w_mm * 300 / 25.4);
-    return geom;
+    if (!printReady) return null;
+    // Perhitungan dari service — sumber yang sama dipakai saat mencetak.
+    return printService.labelSize(w_mm, h_mm);
   }
 
   function refreshGeometry() {
@@ -453,78 +462,85 @@
   $('fit').addEventListener('change', updateFitInfo);
 
   // --- Sambung & cetak -----------------------------------------------------
+  // Keduanya lewat printService (NiimBlueLib). Tidak ada lagi panggilan langsung
+  // ke driver lama: satu jalur cetak saja, supaya tidak ada dua implementasi
+  // yang bisa berbeda perilaku.
+  function printAdjustments() {
+    return {
+      brightness: parseInt($('photoBrightness') && $('photoBrightness').value, 10) || 100,
+      contrast: parseInt($('photoContrast') && $('photoContrast').value, 10) || 100,
+      saturation: parseInt($('photoSaturation') && $('photoSaturation').value, 10) || 100,
+      density: parseInt($('density').value, 10) || 3,
+      offsetYPx: parseInt($('offset_y').value, 10) || 0,
+      fitMode: $('fit').checked ? 'fit' : 'stretch',
+    };
+  }
+
   $('connect').addEventListener('click', function () {
     var btn = this;
-    btn.disabled = true;
-    log('Membuka pemilih perangkat Bluetooth…');
-    // Niimbot.printImage akan membuka pemilih; untuk sekadar menyambung kita
-    // pakai gambar uji 1×. Kita cegah cetak nyata dengan memeriksa dukungan dulu.
-    if (!Niimbot.isSupported()) {
+    if (!printReady) { log('Service cetak belum siap — tunggu sebentar lalu coba lagi.', 'bad'); return; }
+    if (!printService.isSupported()) {
       log('Web Bluetooth tidak tersedia. Pakai Chrome/Edge, dan buka lewat https:// atau localhost.', 'bad');
-      btn.disabled = false;
       return;
     }
+
+    btn.disabled = true;
+    log('Membuka pemilih perangkat Bluetooth…');
+
     if (!currentImageUrl) { currentImageUrl = sampleImage(); currentImageSize = { w: 567, h: 791 }; }
     var g = currentSize();
     if (!g) { log('Ukuran label tidak valid.', 'bad'); btn.disabled = false; return; }
 
-    log('Menyambung sebagai ' + MODEL.task + ' (' + g.w_px + '×' + g.h_px + ' px). Cetak 1 label uji…');
-    // copies=1: cara paling andal memastikan sambungan benar-benar hidup.
-    renderForPrint().then(function (img) {
-    Niimbot.printImage(img, {
-      model: MODEL,
-      size: { w_px: g.w_px, h_px: g.h_px, offset_y_px: g.offset_y_px },
-      copies: 1,
-      density: parseInt($('density').value, 10) || MODEL.density,
-      onProgress: function (s) { log('  ' + (typeof s === 'string' ? s : JSON.stringify(s))); },
-    }).then(function () {
-      log('Tersambung dan 1 label uji tercetak.', 'ok');
-      $('print').disabled = false;
-      btn.disabled = false;
-      var info = Niimbot.printer;
-      if (info) log('Printer terdeteksi: ' + JSON.stringify(info));
-    }).catch(function (err) {
-      log('Gagal: ' + (err && err.message ? err.message : err), 'bad');
-      btn.disabled = false;
-    });
-    }).catch(function (err) {
-      log('Gagal menyiapkan gambar: ' + (err && err.message ? err.message : err), 'bad');
-      btn.disabled = false;
-    });
+    printService.connect()
+      .then(function (info) {
+        log('Tersambung: ' + info.deviceName + ' (' + info.model + '), print task ' + info.printTask
+            + ', kepala cetak ' + info.printheadPx + ' px.', 'ok');
+        log('Mencetak 1 label uji pada ' + g.widthPx + ' × ' + g.heightPx + ' px…');
+        return printService.print(currentImageUrl, g, 1, printAdjustments(), function (page, total) {
+          log('  halaman ' + page + '/' + total + ' terkirim');
+        });
+      })
+      .then(function () {
+        log('Tersambung dan 1 label uji tercetak.', 'ok');
+        $('print').disabled = false;
+        btn.disabled = false;
+      })
+      .catch(function (err) {
+        log('Gagal: ' + (err && err.message ? err.message : err), 'bad');
+        btn.disabled = false;
+      });
   });
 
   $('print').addEventListener('click', function () {
     var btn = this;
+    if (!printReady) { log('Service cetak belum siap.', 'bad'); return; }
     if (!currentImageUrl) { log('Pilih berkas atau pakai gambar uji dulu.', 'bad'); return; }
     var g = currentSize();
     if (!g) { log('Ukuran label tidak valid.', 'bad'); return; }
     var copies = Math.max(1, parseInt($('copies').value, 10) || 1);
+    var adj = printAdjustments();
 
     btn.disabled = true;
-    log('Mencetak ' + copies + ' salinan pada ' + g.w_px + '×' + g.h_px + ' px…'
-        + ($('fit').checked && currentImageSize ? ' (disesuaikan, tanpa distorsi)' : ' (direntangkan)'));
-    renderForPrint().then(function (img) {
-    Niimbot.printImage(img, {
-      model: MODEL,
-      size: { w_px: g.w_px, h_px: g.h_px, offset_y_px: g.offset_y_px },
-      copies: copies,
-      density: parseInt($('density').value, 10) || MODEL.density,
-      onProgress: function (s) { log('  ' + (typeof s === 'string' ? s : JSON.stringify(s))); },
-    }).then(function () {
-      log('Selesai — ' + copies + ' label tercetak.', 'ok');
-      btn.disabled = false;
-    }).catch(function (err) {
-      var msg = err && err.message ? err.message : String(err);
-      log('Gagal: ' + msg, 'bad');
-      if (/not connected|disconnected|gatt/i.test(msg)) {
-        log('Sambungan Bluetooth terputus. Klik “Sambungkan printer” lagi untuk memilih perangkat.', 'bad');
-      }
-      btn.disabled = false;
-    });
-    }).catch(function (err) {
-      log('Gagal menyiapkan gambar: ' + (err && err.message ? err.message : err), 'bad');
-      btn.disabled = false;
-    });
+    log('Mencetak ' + copies + ' salinan pada ' + g.widthPx + ' × ' + g.heightPx + ' px…');
+    log('  penyesuaian: brightness ' + adj.brightness + '%, contrast ' + adj.contrast
+        + '%, saturasi ' + adj.saturation + '%, kepekatan ' + adj.density
+        + ', geser ' + adj.offsetYPx + ' px, mode ' + adj.fitMode);
+
+    printService.print(currentImageUrl, g, copies, adj, function (page, total) {
+      log('  halaman ' + page + '/' + total + ' terkirim');
+    })
+      .then(function () {
+        log('Selesai — ' + copies + ' label tercetak.', 'ok');
+        btn.disabled = false;
+      })
+      .catch(function (err) {
+        var msg = err && err.message ? err.message : String(err);
+        log('Gagal: ' + msg, 'bad');
+        if (/terputus|disconnected|gatt/i.test(msg)) {
+          log('Klik “Sambungkan printer” lagi untuk memilih perangkat.', 'bad');
+        }
+        btn.disabled = false;
+      });
   });
 
   $('clear').addEventListener('click', function () { logEl.textContent = ''; });

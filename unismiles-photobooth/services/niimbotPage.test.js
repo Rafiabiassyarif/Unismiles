@@ -1,134 +1,107 @@
-// Uji logika halaman uji Niimbot TANPA browser.
-//
-// Web Bluetooth tidak bisa diuji otomatis (butuh pemilih perangkat + printer
-// sungguhan). Yang BISA dan penting diuji otomatis:
-//   1. label-size.js menghitung ukuran dengan benar (fungsi murni).
-//   2. Halaman memakai angka yang sama dengan yang dihitung itu — kalau halaman
-//      mengirim w_px/h_px yang salah, label tercetak terpotong.
-//   3. Batas kepala cetak 576 px benar-benar diterapkan sebelum dicetak.
+/**
+ * Test halaman uji cetak Niimbot.
+ *
+ * Halaman ini adalah HTML statis yang memakai service cetak dari NiimBlueLib.
+ * Yang diperiksa di sini: halaman tidak lagi memuat driver sendiri, ia memakai
+ * service yang sama dengan photobooth, dan pengaturan dari Admin benar-benar
+ * dibaca (bukan disetel di sini).
+ *
+ * Catatan lokasi: halaman berada di ROOT, bukan `public/`, karena ia adalah
+ * entry build Vite — berkas di `public/` disalin apa adanya sehingga skrip
+ * TypeScript-nya tidak akan pernah dikompilasi.
+ */
 
 import assert from 'node:assert';
-import fs from 'node:fs';
-import path from 'node:path';
+import { test } from 'node:test';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const PUB = path.join(here, '..', 'public', 'niimbot');
-const PAGE = fs.readFileSync(path.join(here, '..', 'public', 'niimbot-test.html'), 'utf8');
+const ROOT = path.join(here, '..');
+const PAGE = readFileSync(path.join(ROOT, 'niimbot-test.html'), 'utf8');
+const ENTRY = readFileSync(path.join(ROOT, 'niimbot-print-service.ts'), 'utf8');
+const VITE = readFileSync(path.join(ROOT, 'vite.config.ts'), 'utf8');
 
-// label-size.js menempel ke globalThis (bukan ekspor modul), jadi dibaca lalu
-// dijalankan di konteks ini supaya NiimbotLabelSize tersedia.
-const labelSizeSrc = fs.readFileSync(path.join(PUB, 'label-size.js'), 'utf8');
-new Function(labelSizeSrc)();
-const LS = globalThis.NiimbotLabelSize;
-assert.ok(LS && typeof LS.sizeFromMm === 'function', 'label-size.js harus mengekspos sizeFromMm');
+test('halaman jadi entry build Vite, bukan berkas di public/', () => {
+  // Kalau halaman dikembalikan ke public/, skrip TypeScript-nya akan disalin
+  // mentah dan browser gagal memuatnya — kegagalan yang sudah pernah terjadi.
+  assert.ok(!existsSync(path.join(ROOT, 'public', 'niimbot-test.html')),
+    'halaman tidak boleh ada di public/ lagi');
+  assert.match(VITE, /niimbot-test\.html/, 'halaman harus terdaftar sebagai entry build');
+  assert.match(VITE, /niimbot:\s*path\.resolve\(__dirname, 'niimbot-test\.html'\)/,
+    'entry niimbot harus eksplisit');
+});
 
-const DPI = 300;
-const PRINTHEAD_PX = 576;   // B1 Pro, dari registry.json (terverifikasi di kertas)
+test('halaman memakai service NiimBlueLib, bukan driver sendiri', () => {
+  // Driver protokol lama sudah dihapus: dua implementasi protokol berarti dua
+  // sumber kebenaran yang bisa berbeda perilaku.
+  assert.ok(!existsSync(path.join(ROOT, 'public', 'niimbot', 'niimbot.js')),
+    'driver lama harus sudah dihapus');
+  assert.ok(!existsSync(path.join(ROOT, 'public', 'niimbot', 'label-size.js')),
+    'label-size.js lama harus sudah dihapus');
+  assert.ok(!PAGE.includes('Niimbot.printImage'),
+    'halaman tidak boleh memanggil API driver lama');
+  assert.ok(!PAGE.includes('NiimbotLabelSize'),
+    'halaman tidak boleh memakai label-size lama');
+  assert.match(PAGE, /niimbot-print-service\.ts/, 'halaman harus memuat entry service baru');
+});
 
-const size = (w_mm, h_mm) => LS.sizeFromMm({ w_mm, h_mm, dpi: DPI, printhead_px: PRINTHEAD_PX });
-const px = (mm) => Math.round(mm * DPI / 25.4);
-const mm = (p) => +(p * 25.4 / DPI).toFixed(2);
+test('entry service mengekspos API lewat global dan event siap', () => {
+  // Halaman HTML biasa berjalan sebelum modul selesai dimuat. Tanpa penanda
+  // "siap", tombol cetak bisa diklik sebelum service ada.
+  assert.match(ENTRY, /window\.NiimbotPrint = api/, 'service harus tersedia sebagai global');
+  assert.match(ENTRY, /niimbot-print-service-ready/, 'harus memberi tahu halaman saat siap');
+  assert.match(ENTRY, /from '\.\/services\/niimbotPrinter'/,
+    'entry harus memakai service yang sama dengan photobooth');
+});
 
-console.log('== 1) geometri 54 × 67 mm (permintaan Nadine) ==');
-const s54 = size(54, 67);
-assert.strictEqual(s54.label_px, px(54), 'lebar label yang diminta');
-assert.strictEqual(s54.label_px, 638, '54 mm = 638 px @300dpi');
-assert.strictEqual(s54.w_px, PRINTHEAD_PX, 'dikunci ke kepala cetak');
-assert.strictEqual(s54.clamped, true, 'harus ditandai dikunci — jangan menyensor diam-diam');
-assert.strictEqual(s54.h_px, px(67), 'tinggi tidak dikunci (printer sanggup 350 mm)');
-assert.strictEqual(s54.h_px, 791, '67 mm = 791 px @300dpi');
-console.log(`  ok   ${s54.label_px} px diminta → ${s54.w_px} px tercetak (${s54.label_px - s54.w_px} px = ${mm(s54.label_px - s54.w_px)} mm hilang)`);
-console.log(`  ok   tinggi ${s54.h_px} px = ${mm(s54.h_px)} mm (batas printer 350 mm, aman)`);
+test('halaman menunggu service siap sebelum mengizinkan cetak', () => {
+  assert.match(PAGE, /niimbot-print-service-ready/, 'halaman harus menunggu event siap');
+  assert.match(PAGE, /if \(!printReady\)[\s\S]{0,120}Coba lagi|belum siap/,
+    'klik sebelum siap harus memberi pesan jelas, bukan gagal diam-diam');
+  // Cadangan bila modul selesai dimuat sebelum listener terpasang.
+  assert.match(PAGE, /if \(window\.NiimbotPrint\)/, 'harus ada cadangan pemeriksaan global');
+});
 
-console.log();
-console.log('== 2) 48 × 67 mm (yang disarankan, tanpa kehilangan) ==');
-const s48 = size(48, 67);
-assert.strictEqual(s48.w_px, 567, '48 mm = 567 px');
-assert.strictEqual(s48.clamped, false, 'tidak dikunci');
-assert.strictEqual(s48.h_px, 791);
-console.log(`  ok   ${s48.w_px} × ${s48.h_px} px = ${mm(s48.w_px)} × ${mm(s48.h_px)} mm, tanpa pemotongan`);
+test('pengaturan dari Admin dibaca, tidak disetel di halaman', () => {
+  // Ini inti pemindahan: halaman localhost tidak lagi jadi tempat pengaturan,
+  // karena nilainya tidak terbaca oleh photobooth produksi.
+  assert.match(PAGE, /function applyAdminConfig/, 'halaman harus membaca pengaturan Admin');
+  assert.match(PAGE, /api\/kiosk-status/, 'dibaca lewat local bridge agent');
+  assert.match(PAGE, /id="density"[^>]*readonly/, 'kepekatan tidak boleh disetel di sini');
+  assert.match(PAGE, /id="offset_y"[^>]*readonly/, 'geser vertikal tidak boleh disetel di sini');
+  assert.ok(!PAGE.includes('id="presetLabel"'), 'tombol setel ukuran harus hilang');
+  assert.match(PAGE, /Dari Pengaturan Admin/, 'asal nilai harus ditampilkan terus terang');
+});
 
-console.log();
-console.log('== 3) label 50 mm (kertas maksimum menurut spesifikasi) ==');
-const s50 = size(50, 67);
-assert.strictEqual(s50.w_px, PRINTHEAD_PX, '50 mm = 591 px > 576, jadi dikunci');
-assert.strictEqual(s50.clamped, true);
-console.log(`  ok   591 px diminta → ${s50.w_px} px tercetak (${mm(591 - s50.w_px)} mm hilang)`);
+test('agent yang mati dikatakan, bukan didiamkan', () => {
+  // Kalau halaman diam saja, orang bisa menyimpulkan setelan produksi sudah
+  // netral padahal agent tidak jalan sama sekali.
+  assert.match(PAGE, /kiosk-agent[\s\S]{0,60}tidak jalan/,
+    'halaman harus mengatakan agent tidak jalan');
+  assert.match(PAGE, /Pengaturan Admin/, 'dan mengarahkan ke tempat yang benar');
+});
 
-console.log();
-console.log('== 4) batas yang tidak masuk akal ditolak, bukan menghasilkan NaN ==');
-assert.strictEqual(size(0, 67), null, 'lebar 0 ditolak');
-assert.strictEqual(size(54, -1), null, 'tinggi negatif ditolak');
-assert.strictEqual(size(NaN, 67), null, 'NaN ditolak');
-assert.strictEqual(LS.sizeFromMm({ w_mm: 54, h_mm: 67, dpi: 300, printhead_px: 0 }), null,
-  'printhead 0 ditolak');
-console.log('  ok   0 / negatif / NaN / head 0 semuanya mengembalikan null');
+test('penyesuaian dari Admin diteruskan ke service saat mencetak', () => {
+  // Disimpan tetapi tidak dikirim = Admin terlihat berhasil tanpa efek.
+  assert.match(PAGE, /function printAdjustments/, 'harus menyusun penyesuaian untuk service');
+  assert.match(PAGE, /brightness[\s\S]{0,200}contrast[\s\S]{0,200}saturat/,
+    'brightness/contrast/saturasi harus ikut dikirim');
+  assert.match(PAGE, /density:\s*parseInt/, 'kepekatan harus ikut dikirim');
+  assert.match(PAGE, /offsetYPx:\s*parseInt/, 'geser vertikal harus ikut dikirim');
+  assert.match(PAGE, /fitMode/, 'mode penyesuaian foto harus ikut dikirim');
+});
 
-console.log();
-console.log('== 4b) kertas label 54 x 67 mm (yang dipakai) ==');
-// Kertas label sudah membawa desainnya, jadi frame Admin tidak dipakai.
-// Lebarnya melebihi kepala cetak, dan itu WAJAR dicetak terpotong.
-const LABEL_W = 54, LABEL_H = 67;
-const label = size(LABEL_W, LABEL_H);
-assert.ok(label, 'ukuran 54x67 mm harus diterima, bukan ditolak');
-assert.strictEqual(label.label_px, px(54), 'lebar yang diminta');
-assert.strictEqual(label.label_px, 638, '54 mm = 638 px @300dpi');
-assert.strictEqual(label.w_px, PRINTHEAD_PX, 'dikunci ke kepala cetak 576 px');
-assert.strictEqual(label.clamped, true, 'harus ditandai dikunci supaya bisa diperingatkan');
-const lost = label.label_px - label.w_px;
-assert.strictEqual(lost, 62, '62 px hilang');
-console.log(`  ok   54 mm = ${label.label_px} px -> ${label.w_px} px tercetak `
-  + `(${lost} px = ${mm(lost)} mm terpotong dari sisi kanan)`);
-console.log(`  ok   tinggi ${label.h_px} px = ${mm(label.h_px)} mm (batas printer 350 mm, aman)`);
+test('halaman tidak punya konstanta geometri sendiri', () => {
+  // Geometri dihitung service, supaya halaman tidak bisa berbeda dari
+  // photobooth. Satu sumber kebenaran.
+  assert.match(PAGE, /printService\.labelSize\(/, 'halaman harus memakai perhitungan service');
+  assert.ok(!/sizeFromMm\(/.test(PAGE), 'tidak boleh menghitung sendiri');
+});
 
-// Rasio kertas vs foto: driver merentang gambar, jadi rasio yang beda = gepeng.
-const labAr = label.w_px / label.h_px;
-console.log(`  ok   rasio label yang tercetak ${labAr.toFixed(3)} — gambar harus disesuaikan ke rasio ini`);
-
-console.log();
-console.log('== 5) halaman memakai angka yang sama dengan perhitungan di atas ==');
-// Angka-angka ini harus benar di HTML: kalau salah, label terpotong di printer.
-assert.match(PAGE, /var PRINTHEAD_PX = 576;/, 'halaman harus memakai batas kepala cetak 576 px');
-assert.match(PAGE, /value="54" min="1" step="0\.5"/, 'bawaan lebar 54 mm (dipakai bila agent tidak jalan)');
-assert.match(PAGE, /value="67" min="1" step="0\.5"/, 'bawaan tinggi 67 mm');
-assert.match(PAGE, /sizeFromMm\(\{[\s\S]{0,160}dpi: 300, printhead_px: PRINTHEAD_PX/, 
-  'ukuran harus dihitung lewat label-size dengan batas kepala cetak');
-assert.match(PAGE, /task: 'v4'/, 'B1 Pro memakai print task v4 (bukan b1)');
-assert.match(PAGE, /name_prefixes: \['B1'\]/, 'filter pemilih perangkat = awalan nama B1');
-assert.match(PAGE, /Niimbot\.printImage\(/, 'memakai API printImage dari driver');
-assert.match(PAGE, /clamped/, 'halaman harus memperingatkan kalau ukuran dikunci');
-console.log('  ok   batas 576 px, bawaan 54×67 mm, task v4, dan peringatan clamping ada di halaman');
-
-console.log();
-console.log('== 5b) penyiapan foto & ukuran kertas label di halaman ==');
-// Driver merentang gambar mengisi label (drawImage tanpa jaga rasio), jadi
-// halaman harus menyediakan cara mencetak frame tanpa membuatnya gepeng.
-assert.match(PAGE, /function renderForPrint\(\)/, 'harus ada penyiapan gambar sebelum cetak');
-assert.match(PAGE, /Math\.min\(g\.w_px \/ currentImageSize\.w/, 'skala harus menjaga rasio');
-assert.match(PAGE, /id="fit"/, 'harus ada opsi sesuaikan-tanpa-distorsi');
-// Pengaturan tidak lagi di halaman ini: nilainya dibaca dari kiosk-agent,
-// sumber yang sama dengan photobooth produksi.
-assert.match(PAGE, /function applyAdminConfig/, 'halaman harus membaca pengaturan Admin');
-assert.match(PAGE, /api\/kiosk-status/, 'dibaca lewat local bridge agent');
-assert.ok(!PAGE.includes("id=\"presetLabel\""), 'tombol setel ukuran harus hilang dari halaman uji');
-assert.match(PAGE, /id="density"[^>]*readonly/, 'kepekatan tidak boleh disetel di halaman uji');
-assert.match(PAGE, /id="offset_y"[^>]*readonly/, 'geser vertikal tidak boleh disetel di halaman uji');
-assert.match(PAGE, /renderForPrint\(\)\.then/, 'kedua tombol cetak harus memakai hasil penyiapan');
-console.log('  ok   penyiapan gambar menjaga rasio + tombol ukuran kertas 54x67 mm');
-
-console.log();
-console.log('== 6) skrip driver ada dan bisa dimuat ==');
-for (const f of ['niimbot.js', 'label-size.js', 'registry.json']) {
-  const p = path.join(PUB, f);
-  assert.ok(fs.existsSync(p), `${f} harus ada`);
-  assert.ok(fs.statSync(p).size > 1000, `${f} tidak boleh kosong`);
-}
-const reg = JSON.parse(fs.readFileSync(path.join(PUB, 'registry.json'), 'utf8'));
-assert.strictEqual(reg.models.b1pro.dpi, 300, 'registry: B1 Pro 300 dpi');
-assert.strictEqual(reg.models.b1pro.task, 'v4', 'registry: B1 Pro task v4');
-assert.strictEqual(reg.models.b1pro.id, 4097, 'registry: id model B1 Pro');
-console.log('  ok   3 berkas ada; registry menyebut B1 Pro 300 dpi / v4 / id 4097');
-
-console.log();
-console.log('semua lolos');
+test('aset gambar uji tetap tersedia setelah halaman pindah', () => {
+  // Halaman bergantung pada aset di public/; kalau ikut terhapus, gambar uji mati.
+  assert.ok(existsSync(path.join(ROOT, 'public', 'assets')),
+    'aset public harus tetap ada');
+});

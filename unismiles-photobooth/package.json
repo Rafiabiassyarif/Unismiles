@@ -10,6 +10,7 @@
     "test": "node --test services/*.test.ts services/*.test.js"
   },
   "dependencies": {
+    "@mmote/niimbluelib": "^0.47.0",
     "axios": "^1.18.1",
     "lucide-react": "^0.559.0",
     "react": "^19.2.1",
