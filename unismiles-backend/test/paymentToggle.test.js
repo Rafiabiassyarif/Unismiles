@@ -84,3 +84,72 @@ test('tidak ada jalur lain yang MENULIS status verified', () => {
   // Dan penulisan status pada sesi baru memang memakai binding.
   assert.match(session, /SET\s+payment_status = \?/, 'penulisan status harus lewat binding');
 });
+
+// --- Saklar dari panel Admin ---
+
+const paymentController = read(path.join(backend, 'controllers', 'paymentController.js'));
+
+test('Admin bisa menyalakan dan mematikan permintaan pembayaran', () => {
+  // Sebelumnya kunci ini HANYA bisa diubah lewat SQL langsung, dan itu sebabnya
+  // menyalakannya kembali harus lewat query manual. Sekarang panel Admin punya
+  // kontaknya.
+  assert.match(paymentController, /payment_required,/,
+    'field harus dibaca dari request');
+  assert.match(paymentController, /paymentData\.payment_required = payment_required;/,
+    'nilainya harus benar-benar disimpan ke payment_data');
+});
+
+test('field yang tidak dikirim TIDAK mengubah pembayaran', () => {
+  // Inilah yang paling mudah salah: kalau ditulis tanpa memeriksa, setiap
+  // penyimpanan form — termasuk dari klien lama yang belum punya saklar ini —
+  // akan mematikan pembayaran tanpa ada yang memintanya.
+  assert.match(paymentController, /typeof payment_required === 'boolean'/,
+    'hanya boolean yang boleh mengubah; nilai hilang berarti tidak diubah');
+  // Dan bukan `!!payment_required`, yang akan mengubah nilai hilang jadi false.
+  assert.ok(!/paymentData\.payment_required = !!payment_required/.test(paymentController),
+    'tidak boleh memakai konversi yang membuat nilai hilang jadi false');
+});
+
+test('nilai yang bukan boolean ditolak, bukan dikonversi', () => {
+  // "false" (string) dan 0 tidak boleh menyalakan atau mematikan apa pun.
+  // Menolak dengan pesan jelas lebih baik daripada diam-diam menafsirkan.
+  assert.match(paymentController, /payment_required harus true atau false/,
+    'nilai aneh harus ditolak dengan pesan yang bisa dimengerti');
+});
+
+test('saklar ini berbeda dari verification_mode: disabled', () => {
+  // verification_mode mematikan PEMERIKSAAN bukti bayar; alurnya tetap meminta
+  // bayar. Saklar ini mematikan PERMINTAANNYA. Dua hal berbeda, dan
+  // menggabungkannya akan membuat "disabled" ikut menggratiskan cetak.
+  assert.match(paymentController, /paymentData\.verification_mode = verification_mode/,
+    'verification_mode tetap disimpan terpisah');
+  assert.ok(!/payment_required\s*=\s*verification_mode/.test(paymentController),
+    'saklar tidak boleh diturunkan dari verification_mode');
+});
+
+// --- Sisi Admin ---
+
+const settings = read(path.join(repo, 'unismiles-admin', 'src', 'pages', 'Settings.tsx'));
+
+test('panel Admin memuat nilai yang tersimpan, bukan menebak', () => {
+  assert.match(settings, /setPaymentRequired\(paymentData\.payment_required !== false\)/,
+    'hanya false yang mematikan; nilai hilang berarti meminta bayar');
+});
+
+test('panel Admin mengirim nilainya saat disimpan', () => {
+  assert.match(settings, /payment_required: paymentRequired/,
+    'saklar harus ikut terkirim, kalau tidak Admin hanya terlihat berubah');
+});
+
+test('saklar ada di tab Settings bagian payment', () => {
+  assert.match(settings, /id="toggle-payment-required"/,
+    'kontrolnya harus punya id stabil untuk diuji');
+  assert.match(settings, /id="payment-required-state"/,
+    'harus ada keterangan keadaan yang terlihat');
+  assert.match(settings, /Payment Required/, 'harus ada label yang jelas');
+});
+
+test('bawaan di panel Admin adalah meminta bayar', () => {
+  assert.match(settings, /useState\(true\);[^\n]*\n?[\s\S]{0,200}paymentRequired|const \[paymentRequired, setPaymentRequired\] = useState\(true\)/,
+    'bawaan harus true supaya pemasukan tidak mati tanpa diminta');
+});

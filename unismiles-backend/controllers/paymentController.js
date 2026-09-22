@@ -45,14 +45,15 @@ const uploadAdminQRIS = async (req, res) => {
 const updateAdminPaymentProfile = async (req, res) => {
   try {
     const user_id = req.user.id;
-    const { 
-      merchant_name, 
-      display_name, 
-      unique_amount_enabled, 
-      session_ttl_minutes, 
-      verification_mode, 
+    const {
+      merchant_name,
+      display_name,
+      unique_amount_enabled,
+      session_ttl_minutes,
+      verification_mode,
       merchant_aliases,
-      active_providers
+      active_providers,
+      payment_required,
     } = req.body;
 
     const existing = await PaymentProfile.findDefaultForKiosk(user_id);
@@ -75,6 +76,31 @@ const updateAdminPaymentProfile = async (req, res) => {
     paymentData.active_providers = Array.isArray(active_providers) 
       ? active_providers 
       : String(active_providers || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    // SAKLAR PEMBAYARAN.
+    //
+    // Penjagaan pemasukan: kunci ini sudah dipakai `sessionController` untuk
+    // memutuskan apakah sesi dibuat sebagai menunggu pembayaran atau langsung
+    // terverifikasi. Sampai sekarang hanya bisa diubah lewat SQL langsung —
+    // itu sebabnya menyalakannya kembali harus lewat query manual. Sekarang
+    // Admin bisa.
+    //
+    // Dibedakan dari `verification_mode: 'disabled'`, yang mematikan
+    // PEMERIKSAAN bukti bayar tetapi alurnya tetap meminta bayar. Yang ini
+    // mematikan permintaannya.
+    //
+    // Sengaja hanya diubah kalau field-nya benar-benar dikirim: request lama
+    // yang belum memuat field ini tidak boleh diam-diam mematikan pembayaran.
+    // Yang dikirim tapi bukan boolean juga diabaikan, bukan dikonversi — nilai
+    // aneh tidak boleh menyalakan atau mematikan apa pun.
+    if (typeof payment_required === 'boolean') {
+      paymentData.payment_required = payment_required;
+    } else if (payment_required !== undefined) {
+      return res.status(400).json({
+        success: false,
+        message: 'payment_required harus true atau false.',
+      });
+    }
 
     const payment_data_str = JSON.stringify(paymentData);
 

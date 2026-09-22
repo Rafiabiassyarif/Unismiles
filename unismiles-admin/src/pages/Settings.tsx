@@ -31,6 +31,14 @@ export const SettingsPage: React.FC = () => {
   const [verificationMode, setVerificationMode] = useState('assisted');
   const [merchantAliases, setMerchantAliases] = useState('');
   const [activeProviders, setActiveProviders] = useState<string[]>(['DANA', 'GOPAY', 'OVO', 'SHOPEEPAY']);
+  /**
+   * Saklar permintaan pembayaran.
+   *
+   * Bawaannya true: kalau profil belum pernah mengatur apa pun, kiosk memang
+   * meminta bayar. Membalik nilai bawaan di sini akan mematikan pembayaran
+   * tanpa ada yang memintanya.
+   */
+  const [paymentRequired, setPaymentRequired] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -67,6 +75,8 @@ export const SettingsPage: React.FC = () => {
           setVerificationMode(paymentData.verification_mode || 'assisted');
           setMerchantAliases(Array.isArray(paymentData.merchant_aliases) ? paymentData.merchant_aliases.join(', ') : '');
           setActiveProviders(paymentData.active_providers || ['DANA', 'GOPAY', 'OVO', 'SHOPEEPAY']);
+          // Hanya `false` yang mematikan; nilai hilang/aneh berarti meminta bayar.
+          setPaymentRequired(paymentData.payment_required !== false);
         }
       }
     } catch (error: any) {
@@ -159,7 +169,8 @@ export const SettingsPage: React.FC = () => {
         session_ttl_minutes: sessionTtlMinutes,
         verification_mode: verificationMode,
         merchant_aliases: merchantAliases.split(',').map(s => s.trim()).filter(Boolean),
-        active_providers: activeProviders
+        active_providers: activeProviders,
+        payment_required: paymentRequired
       });
       toast.success('Payment configuration updated successfully');
     } catch (error: any) {
@@ -421,6 +432,52 @@ export const SettingsPage: React.FC = () => {
                   placeholder="e.g. unismile, uni smiles, unismile pt"
                   className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:border-primary/50"
                 />
+              </div>
+
+              {/* Saklar pembayaran: meminta bayar atau tidak sama sekali. */}
+              <div className="bg-black/20 p-5 rounded-2xl border border-white/5 space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-black text-foreground uppercase tracking-wider">Payment Required</p>
+                    <p className="text-[10px] font-bold text-muted mt-1">
+                      Kalau dimatikan, sesi langsung dianggap terverifikasi dan kiosk tidak meminta
+                      bayar sama sekali. Berbeda dari Verification Mode di atas, yang hanya
+                      mematikan pemeriksaan bukti bayar.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={paymentRequired}
+                    id="toggle-payment-required"
+                    onClick={() => setPaymentRequired(v => !v)}
+                    className={`shrink-0 w-16 h-9 rounded-full border transition-all relative cursor-pointer ${
+                      paymentRequired ? 'bg-primary/90 border-primary' : 'bg-white/10 border-white/15'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 w-7 h-7 rounded-full bg-white transition-all ${
+                        paymentRequired ? 'left-8' : 'left-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <p
+                  id="payment-required-state"
+                  className={`text-[10px] font-black uppercase tracking-widest ${
+                    paymentRequired ? 'text-emerald-400' : 'text-amber-300'
+                  }`}
+                >
+                  {paymentRequired
+                    ? 'AKTIF — setiap sesi harus dibayar'
+                    : 'NONAKTIF — cetak bebas tanpa bayar'}
+                </p>
+                {!paymentRequired && (
+                  <p className="text-[10px] font-bold text-amber-300 flex items-center gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    Pemasukan berhenti selama ini nonaktif. Tekan Save Changes untuk menerapkan.
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center gap-3 bg-black/20 p-4 rounded-2xl border border-white/5">
