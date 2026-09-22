@@ -87,23 +87,31 @@ const LABEL_PRESETS = [
     name: 'nimbotpaper-polaroid',
     paperWidthMm: 54,
     paperHeightMm: 67,
-    marginTopMm: 6,
     /**
+     * Area 45,3 mm, bukan 46 mm. Hasil cetak fisik menunjukkan area 46 mm masih
+     * sedikit terlalu besar, jadi dikecilkan 0,7 mm. Angka ini dihitung dari
+     * piksel (535 px pada 300 dpi), bukan dibulatkan ke milimeter, supaya
+     * perubahan yang didapat benar-benar sekecil yang terlihat di kertas.
+     *
+     * Posisi TIDAK digeser: titik tengah kotak tetap di (288,5, 342,5), sama
+     * dengan area 46 mm sebelumnya. Yang berubah hanya seberapa jauh tepinya
+     * dari titik itu.
+     *
      * Kiri/kanan bukan 3 mm. Kepala cetak B1 Pro hanya 48,77 mm, sedangkan
-     * 3 + 46 + 3 = 52 mm — tidak mungkin. Supaya area tetap TEPAT 46 mm, sisanya
-     * (48,77 - 46 = 2,77 mm) dibagi dua: 1,44 mm di kiri, dan sisa 6,56 mm di
-     * kanan karena 5,2 mm sisi kanan label memang di luar jangkauan printer.
-     * Hasilnya area 46 x 46 mm duduk di tengah area yang BISA dicetak.
+     * 3 + 46 + 3 = 52 mm — tidak mungkin. Sisa lebar printable setelah area:
+     * 48,77 - 45,3 = 3,47 mm, dibagi dua, ditambah 5,2 mm sisi kanan label yang
+     * memang di luar jangkauan printer.
      */
-    marginLeftMm: 1.44,
-    marginRightMm: 6.56,
+    marginTopMm: 75 / (300 / 25.4),
+    marginLeftMm: 21 / (300 / 25.4),
+    marginRightMm: 82 / (300 / 25.4),
     /**
      * Bawah 14 mm seperti diminta, TETAPI kotak tingginya harus tepat 46 mm.
      * 6 + 46 + 14 = 66 mm, sedangkan kertasnya 67 mm. Selisih 1 mm itu harus
      * jatuh ke salah satu sisi supaya persis 46 — dan lebih aman di BAWAH,
      * menjauhi area foto, daripada di atas yang mendekati bingkai.
      */
-    marginBottomMm: 67 - 6 - 46,
+    marginBottomMm: 181 / (300 / 25.4),
     /**
      * Kalibrasi posisi fisik, dalam PERSEN MILIMETER (10 = 0,1 mm).
      *
