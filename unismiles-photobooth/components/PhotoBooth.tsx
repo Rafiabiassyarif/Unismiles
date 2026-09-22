@@ -21,7 +21,7 @@ import {
   startSession, completeSession, uploadPhoto, sendPhotoByEmail, fetchPaymentProfile,
   verifyPayment, fetchTemplates, queuePrintJob, getPrintJobStatus, KioskApiError,
   getApiConfig, isAutoPrintEnabled, isManualPrintFallbackEnabled,
-  submitPaymentEvidence, getPaymentVerificationStatus
+  submitPaymentEvidence, getPaymentVerificationStatus, fetchPrintingConfig
 } from '../services/apiService';
 
 // Global Scale (Now 1.0 since we removed transform scale from index.html)
@@ -809,9 +809,20 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     setBtPrintState('connecting');
 
     try {
-      const image = finalUploadedUrl?.startsWith('http') || finalUploadedUrl?.startsWith('data:')
-        ? finalUploadedUrl
-        : await generateCompositeImage();
+      // Yang dicetak hanya FOTONYA, tanpa frame.
+      //
+      // Kertas label sudah punya desain tercetak, jadi menambahkan frame Admin
+      // di atasnya salah dua kali: (1) desain muncul dua kali, dan (2) frame itu
+      // kanvas layout (mis. 708 x 1062 px) yang harus diperkecil ke lebar kepala
+      // cetak 576 px, sehingga foto di dalamnya ikut menyusut dan menyisakan
+      // tepi kosong — itulah "tidak tercetak semua".
+      //
+      // Foto mentah berukuran penuh, jadi `prepareCanvas` bisa melebar-kannya
+      // mengisi label dengan utuh.
+      const rawPhoto = capturedPhotos[0] || null;
+      const image = rawPhoto
+        || (finalUploadedUrl?.startsWith('http') || finalUploadedUrl?.startsWith('data:') ? finalUploadedUrl : null)
+        || await generateCompositeImage();
       if (!image) throw new Error('Foto final belum tersedia.');
 
       const printer = bluetoothPrinterRef.current || new NiimbotPrinter();
@@ -875,6 +886,44 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
           }
       });
       return () => unsubscribe();
+  }, []);
+
+  /**
+   * Ambil pengaturan cetak lewat HTTP juga.
+   *
+   * Konfigurasi cetak dikirim lewat WebSocket, yang hanya hidup kalau
+   * kiosk-agent berjalan — dan tombol "Cetak Bluetooth" justru dipakai ketika
+   * agent tidak ada. Tanpa pengambilan ini, ukuran kertas / kepekatan / geser
+   * vertikal dari Admin tidak pernah sampai, sehingga pengaturan Admin terlihat
+   * tersimpan tanpa efek apa pun.
+   *
+   * Agent tetap menang kalau ia melaporkan nilai: ia lebih baru.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const apply = async () => {
+      const cfg = await fetchPrintingConfig();
+      if (cancelled || !cfg) return;
+      const n = (v: unknown, fallback: number) => {
+        const x = Number(v);
+        return Number.isFinite(x) ? x : fallback;
+      };
+      if (cfg.paper_size) setKioskPaperSize(cfg.paper_size);
+      if (cfg.thermal_density !== undefined) setThermalDensity(n(cfg.thermal_density, 3));
+      if (cfg.thermal_offset_y_px !== undefined) setThermalOffsetYPx(n(cfg.thermal_offset_y_px, 0));
+      setPhotoAdjust(prev => ({
+        brightness: n(cfg.photo_brightness, prev.brightness),
+        contrast: n(cfg.photo_contrast, prev.contrast),
+        saturation: n(cfg.photo_saturation, prev.saturation),
+        fitMode: cfg.photo_fit_mode === 'cover' || cfg.photo_fit_mode === 'stretch'
+          ? cfg.photo_fit_mode
+          : 'fit',
+      }));
+    };
+    void apply();
+    // Sekali saja saat layar siap: pengaturan cetak jarang berubah, dan
+    // pengambilan berulang hanya membebani kiosk.
+    return () => { cancelled = true; };
   }, []);
   
   const [customSubtitle, setCustomSubtitle] = useState('');

@@ -37,10 +37,15 @@ export interface LabelSize {
 /**
  * Hitung ukuran gambar untuk label dari ukuran kertas dalam milimeter.
  *
- * Lebar SELALU dikunci ke kepala cetak. Gambar yang lebih lebar tidak akan
- * tercetak utuh dan printer tidak memberi error apa pun — hasilnya cuma
- * terpotong diam-diam. Melebihi lebar kepala cetak karena itu bukan pilihan
- * yang tersedia, hanya keadaan yang perlu dilaporkan.
+ * Lebar SELALU dikunci ke kepala cetak, dan tinggi ikut diskalakan dengan faktor
+ * yang sama. Itu penting: kalau hanya lebarnya yang dipotong sementara tinggi
+ * dibiarkan penuh, rasio gambar berubah (54 x 67 mm jadi 576 x 791 px = 0,73,
+ * padahal kertasnya 0,81), sehingga gambar gepeng DAN tepi kanan hilang tanpa
+ * pesan error apa pun.
+ *
+ * Konsekuensinya harus jujur disebutkan: ketika kertas lebih lebar daripada
+ * kepala cetak, gambarnya diperkecil supaya muat seluruhnya, bukan dipotong.
+ * Semua yang difoto tetap tercetak; yang berkurang hanya skalanya.
  */
 export function labelSize(
   widthMm: number,
@@ -49,12 +54,21 @@ export function labelSize(
 ): LabelSize {
   const px = (mm: number) => Math.max(1, Math.round((mm / 25.4) * LABEL_DPI));
   const requestedWidthPx = px(widthMm);
-  const widthPx = Math.min(requestedWidthPx, printheadPx);
+  const requestedHeightPx = px(heightMm);
+  const clamped = requestedWidthPx > printheadPx;
+
+  if (!clamped) {
+    return { widthPx: requestedWidthPx, heightPx: requestedHeightPx, requestedWidthPx, clamped: false };
+  }
+
+  // Skala dengan faktor yang sama untuk lebar dan tinggi, supaya rasio kertas
+  // tetap terjaga dan tidak ada bagian gambar yang terpotong.
+  const factor = printheadPx / requestedWidthPx;
   return {
-    widthPx,
-    heightPx: px(heightMm),
+    widthPx: printheadPx,
+    heightPx: Math.max(1, Math.round(requestedHeightPx * factor)),
     requestedWidthPx,
-    clamped: requestedWidthPx > printheadPx,
+    clamped: true,
   };
 }
 
@@ -88,4 +102,55 @@ export function labelMmFromPaperSize(paperSize: string | null | undefined): { wi
     if (widthMm > 0 && heightMm > 0) return { widthMm, heightMm };
   }
   return { widthMm: DEFAULT_LABEL_MM.widthMm, heightMm: DEFAULT_LABEL_MM.heightMm };
+}
+
+
+export interface DrawRect {
+  dx: number;
+  dy: number;
+  dw: number;
+  dh: number;
+}
+
+/**
+ * Posisi dan ukuran gambar di atas label, sesuai mode penyesuaian.
+ *
+ * Dipisah dari `prepareCanvas` supaya bisa DIEKSEKUSI di test — `prepareCanvas`
+ * butuh canvas sungguhan sehingga perhitungannya tidak pernah teruji, dan
+ * kesalahan di sini langsung terlihat di kertas sebagai foto gepeng atau
+ * bingkai putih.
+ *
+ *  - 'fit'     : seluruh foto masuk, sisa label jadi putih (ADA bingkai).
+ *  - 'cover'   : label terisi penuh, rasio dijaga, kelebihan dipotong (TANPA bingkai).
+ *  - 'stretch' : label terisi penuh dengan merusak rasio (gepeng).
+ */
+export function drawRect(
+  mode: 'fit' | 'cover' | 'stretch',
+  canvasW: number,
+  canvasH: number,
+  imgW: number,
+  imgH: number,
+  offsetYPx = 0,
+): DrawRect {
+  const base: DrawRect = { dx: 0, dy: Math.round(offsetYPx), dw: canvasW, dh: canvasH };
+  if (mode === 'stretch' || imgW <= 0 || imgH <= 0) return base;
+
+  // fit = muat di dalam (faktor terkecil), cover = penuhi (faktor terbesar).
+  // Bedanya hanya min vs max; keduanya MENJAGA rasio, jadi tidak ada gepeng.
+  const scale = mode === 'cover'
+    ? Math.max(canvasW / imgW, canvasH / imgH)
+    : Math.min(canvasW / imgW, canvasH / imgH);
+
+  // +2 px hanya untuk cover: menutup celah sub-piksel akibat pembulatan, supaya
+  // tidak ada garis putih tipis di tepi label.
+  const pad = mode === 'cover' ? 2 : 0;
+  const dw = Math.max(1, Math.round(imgW * scale) + pad);
+  const dh = Math.max(1, Math.round(imgH * scale) + pad);
+
+  return {
+    dw,
+    dh,
+    dx: Math.round((canvasW - dw) / 2),
+    dy: Math.round(offsetYPx + (canvasH - dh) / 2),
+  };
 }

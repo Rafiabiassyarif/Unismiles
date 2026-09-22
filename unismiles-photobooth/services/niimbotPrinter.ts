@@ -44,8 +44,12 @@ export interface PrintAdjustments {
   density: number;
   /** Geser vertikal gambar pada kertas, piksel. Positif = turun. */
   offsetYPx: number;
-  /** 'fit' = jaga rasio (bingkai putih); 'stretch' = penuhi label. */
-  fitMode: 'fit' | 'stretch';
+  /**
+   * 'fit' = muat seluruh foto, sisa label jadi putih (ada bingkai).
+   * 'cover' = penuhi label, rasio dijaga, kelebihan dipotong (tanpa bingkai).
+   * 'stretch' = penuhi label dengan merusak rasio (gepeng).
+   */
+  fitMode: 'fit' | 'cover' | 'stretch';
 }
 
 export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
@@ -58,7 +62,8 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
 };
 
 /** Geometri label: dihitung di `labelGeometry.ts` supaya bisa diuji tanpa hardware. */
-export { labelSize, labelMmFromPaperSize, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry';
+import { drawRect } from './labelGeometry';
+export { labelSize, labelMmFromPaperSize, drawRect, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry';
 export type { LabelSize } from './labelGeometry';
 
 export type PrintStatus =
@@ -201,20 +206,9 @@ export class NiimbotPrinter {
     ctx.save();
     ctx.filter = `brightness(${adj.brightness}%) contrast(${adj.contrast}%) saturate(${adj.saturation}%)`;
 
-    let dw = canvas.width;
-    let dh = canvas.height;
-    let dx = 0;
-    let dy = Math.round(adj.offsetYPx);
-
-    if (adj.fitMode === 'fit') {
-      const scale = Math.min(canvas.width / img.naturalWidth, canvas.height / img.naturalHeight);
-      dw = Math.round(img.naturalWidth * scale);
-      dh = Math.round(img.naturalHeight * scale);
-      dx = Math.round((canvas.width - dw) / 2);
-      dy += Math.round((canvas.height - dh) / 2);
-    }
-
-    ctx.drawImage(img, dx, dy, dw, dh);
+    // Perhitungan dipindah ke drawRect() supaya bisa diuji tanpa canvas.
+    const r = drawRect(adj.fitMode, canvas.width, canvas.height, img.naturalWidth, img.naturalHeight, adj.offsetYPx);
+    ctx.drawImage(img, r.dx, r.dy, r.dw, r.dh);
     ctx.restore();
 
     return canvas;

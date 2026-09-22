@@ -56,7 +56,7 @@
     <div class="facts">
       <b>Batas fisik B1 Pro:</b> kepala cetak <b>576 px</b> = <b>48,8 mm</b> (terverifikasi di kertas oleh penulis driver).<br>
       Label <b>54 mm</b> = 638 px → kelebihan <b>62 px = 5,3 mm tidak akan tercetak</b>, tanpa pesan error.<br>
-      Karena itu halaman ini memakai lebar <b>48 mm (567 px)</b> sebagai bawaan. Tinggi 67 mm (791 px) aman — batas tinggi printer 350 mm.
+      Karena itu gambar cetak selalu <b>diperkecil agar utuh</b> (tidak ada bagian yang terpotong), bukan dipotong di sisi kanan.
     </div>
   </section>
 
@@ -202,7 +202,17 @@
 
     if (!printReady) return null;
     // Perhitungan dari service — sumber yang sama dipakai saat mencetak.
-    return printService.labelSize(w_mm, h_mm);
+    var g = printService.labelSize(w_mm, h_mm);
+    // Service mengembalikan widthPx/heightPx/requestedWidthPx; halaman ini
+    // memakai nama pendek. Normalkan DI SINI saja, supaya tidak ada dua
+    // penamaan yang berbeda untuk nilai yang sama — dan supaya tidak ada
+    // pembacaan undefined yang diam-diam menghasilkan NaN.
+    return {
+      w_px: g.widthPx,
+      h_px: g.heightPx,
+      requested_px: g.requestedWidthPx,
+      clamped: g.clamped,
+    };
   }
 
   function refreshGeometry() {
@@ -211,8 +221,12 @@
     var mm = function (px) { return (px * 25.4 / 300).toFixed(2); };
     var txt = 'label ' + g.w_px + ' × ' + g.h_px + ' px  (' + mm(g.w_px) + ' × ' + mm(g.h_px) + ' mm)';
     if (g.clamped) {
-      txt += '  —  DIKUNCI ke lebar kepala cetak: ' + g.requested_px + ' px diminta, ' + g.w_px + ' px tercetak, '
-           + (g.requested_px - g.w_px) + ' px (' + ((g.requested_px - g.w_px) * 25.4 / 300).toFixed(2) + ' mm) hilang';
+      // Penting dibedakan: gambar DIPERKECIL supaya utuh, bukan dipotong.
+      // Menuliskan "hilang" akan membuat orang mencari bagian foto yang
+      // sebenarnya ada di sana.
+      txt += '  —  kertas ' + g.requested_px + ' px lebih lebar dari kepala cetak '
+           + g.w_px + ' px, sehingga gambar DIPERKECIL ' + (100 * g.w_px / g.requested_px).toFixed(1)
+           + '% agar seluruhnya muat. Tidak ada bagian yang terpotong.';
     } else {
       txt += '  —  muat di kepala cetak';
     }
@@ -227,8 +241,15 @@
   // --- Gambar uji bawaan, digambar di canvas lalu jadi data-URL -------------
   // Dipakai data-URL karena driver mengambil gambar lewat fetch(); ini menghindari
   // masalah CORS sepenuhnya.
+  //
+  // Ukurannya diambil dari UKURAN LABEL SESUNGGUHNYA, bukan angka tetap. Gambar
+  // uji berasio beda dengan label akan mencetak bingkai putih, dan bingkai itu
+  // mudah disalahartikan sebagai bug cetak. Pakai ukuran label supaya yang
+  // terlihat di kertas memang apa yang diuji, tanpa bingkai palsu.
   function sampleImage() {
-    var W = 567, H = 791;
+    var g = currentSize();
+    var W = g ? g.w_px : 576;
+    var H = g ? g.h_px : 714;
     var c = document.createElement('canvas');
     c.width = W; c.height = H;
     var x = c.getContext('2d');
@@ -240,8 +261,8 @@
     x.fillText('UJI CETAK', 34, 130);
     x.font = '26px sans-serif';
     x.fillText('Niimbot B1 Pro', 34, 180);
-    x.fillText('300 dpi · lebar 48 mm', 34, 218);
-    x.fillText('Tinggi 67 mm (' + H + ' px)', 34, 254);
+    x.fillText('300 dpi · ' + W + ' px lebar', 34, 218);
+    x.fillText('Tinggi label ' + H + ' px', 34, 254);
     x.fillText('Kepekatan: ' + $('density').value, 34, 290);
     x.fillText(new Date().toLocaleString('id-ID'), 34, 326);
     x.font = 'bold 22px sans-serif';
@@ -258,14 +279,15 @@
       x.fillRect(34 + i * 32, 535, 30, 40);
     }
     x.fillStyle = '#000';
-    // Kotak tepi: menguji apakah sisi kanan/kiri terpotong.
+    // Kotak tepi: menguji apakah sisi kanan/kiri terpotong. Kalau gambar
+    // diperkecil dengan benar, SELURUH kotak ini harus tercetak.
     x.lineWidth = 4;
-    x.strokeRect(22, 610, W - 44, 120);
+    x.strokeRect(2, H - 125, W - 4, 120);
     x.font = 'bold 20px sans-serif';
-    x.fillText('tepi kiri ', 40, 660);
-    x.fillText(' tepi kanan', W - 190, 660);
-    x.fillText('kalau kotak ini terpotong,', 40, 700);
-    x.fillText('lebarnya melebihi kepala cetak', 40, 726);
+    x.fillText('tepi kiri', 12, H - 80);
+    x.fillText('tepi kanan', W - 130, H - 80);
+    x.font = '18px sans-serif';
+    x.fillText('kotak ini harus tercetak UTUH', 40, H - 40);
     return c.toDataURL('image/png');
   }
 
@@ -486,9 +508,12 @@
 
   $('useSample').addEventListener('click', function () {
     currentImageUrl = sampleImage();
-    currentImageSize = { w: 567, h: 791 };
-    log('Gambar uji 567 × 791 px disiapkan.', 'ok');
-    log('Gambar uji disiapkan (567 × 791 px, sesuai label 48 × 67 mm).', 'ok');
+    // Ukuran harus sama dengan canvas yang baru digambar, kalau tidak
+    // informasi rasio di bawah akan salah.
+    var g = currentSize();
+    currentImageSize = { w: (g ? g.w_px : 576), h: (g ? g.h_px : 714) };
+    log('Gambar uji ' + currentImageSize.w + ' × ' + currentImageSize.h
+        + ' px disiapkan — sama dengan ukuran label, jadi tidak ada bingkai putih.', 'ok');
     updateFitInfo();
   });
 
@@ -572,7 +597,7 @@
     btn.disabled = true;
     log('Membuka pemilih perangkat Bluetooth…');
 
-    if (!currentImageUrl) { currentImageUrl = sampleImage(); currentImageSize = { w: 567, h: 791 }; }
+    if (!currentImageUrl) { currentImageUrl = sampleImage(); var gg = currentSize(); currentImageSize = { w: (gg ? gg.w_px : 576), h: (gg ? gg.h_px : 714) }; }
     var g = currentSize();
     if (!g) { log('Ukuran label tidak valid.', 'bad'); btn.disabled = false; return; }
 

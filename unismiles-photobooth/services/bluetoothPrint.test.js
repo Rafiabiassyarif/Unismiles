@@ -71,10 +71,16 @@ test('batal memilih perangkat dibedakan dari kegagalan printer', () => {
     'pesannya harus memberi tahu apa yang harus dilakukan');
 });
 
-test('gambar yang dicetak adalah hasil akhir, bukan foto mentah', () => {
+test('yang dicetak adalah FOTO, tanpa frame Admin', () => {
   const fn = bodyOf('handleBluetoothPrint');
-  assert.match(fn, /finalUploadedUrl/, 'pakai hasil akhir kalau sudah ada');
-  assert.match(fn, /generateCompositeImage\(\)/, 'kalau belum ada, susun hasil akhirnya');
+  // Kertas label sudah ada desain tercetak. Menambahkan frame Admin di atasnya
+  // membuat desain muncul dua kali, dan kanvas frame (mis. 708x1062) harus
+  // diperkecil ke 576 px sehingga fotonya ikut menyusut dan menyisakan tepi.
+  assert.match(fn, /capturedPhotos\[0\]/, 'pakai foto hasil jepretan');
+  assert.ok(!/processedFrame|selectedFrame/.test(fn), 'frame Admin tidak boleh dipakai di jalur ini');
+  // Jalur berframe tetap ada sebagai cadangan kalau foto tidak tersedia.
+  assert.match(fn, /finalUploadedUrl/, 'ada cadangan');
+  assert.match(fn, /generateCompositeImage\(\)/, 'cadangan terakhir');
 });
 
 test('pengaturan Admin dipakai di jalur Bluetooth', () => {

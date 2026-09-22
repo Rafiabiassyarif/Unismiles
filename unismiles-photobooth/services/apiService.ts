@@ -395,6 +395,38 @@ export const getPhotosBySession = async (sessionId: string): Promise<PhotoData[]
   return []; // Not used in V1 kiosk API docs directly for kiosk display, but kept for compat
 };
 
+/**
+ * Pengaturan cetak untuk kiosk ini, lewat HTTP.
+ *
+ * Dipakai jalur cetak Bluetooth langsung, yang tidak melewati kiosk-agent.
+ * Tanpa ini, ukuran kertas / kepekatan / geser vertikal dari Admin tidak pernah
+ * sampai ke photobooth kecuali agent berjalan — sehingga pengaturan Admin
+ * tampak tersimpan tanpa efek.
+ */
+export const fetchPrintingConfig = async (): Promise<{
+  paper_size?: string;
+  photo_brightness?: number;
+  photo_contrast?: number;
+  photo_saturation?: number;
+  photo_fit_mode?: string;
+  thermal_density?: number;
+  thermal_offset_y_px?: number;
+} | null> => {
+  try {
+    const response = await request<ApiResponse<any>>({
+      method: 'GET',
+      url: '/printing-config',
+      headers: { 'Cache-Control': 'no-store, no-cache', Pragma: 'no-cache' },
+      params: { _t: Date.now() }
+    });
+    return response.data?.data || null;
+  } catch {
+    // Kiosk yang belum pernah didaftarkan, atau jaringan mati: kembalikan null
+    // supaya pemanggil memakai nilai netral, bukan gagal mencetak.
+    return null;
+  }
+};
+
 export const fetchTemplates = async (): Promise<any[]> => {
   const response = await request<ApiResponse<any[]>>({
     method: 'GET',

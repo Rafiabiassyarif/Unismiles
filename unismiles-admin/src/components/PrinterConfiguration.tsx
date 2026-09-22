@@ -542,11 +542,12 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
               className={fieldClass} value={config.photo_fit_mode} disabled={!canEdit}
               onChange={e => setField('photo_fit_mode', e.target.value)}
             >
-              <option value="fit">Jaga rasio (bingkai putih, tidak gepeng)</option>
-              <option value="stretch">Penuhi label (bisa gepeng)</option>
+              <option value="cover">Penuhi label tanpa bingkai (rasio dijaga)</option>
+              <option value="fit">Muat seluruh foto (sisa label jadi putih)</option>
+              <option value="stretch">Penuhi label dengan merusak rasio (gepeng)</option>
             </select>
             <span className="text-[10px] text-muted font-bold block">
-              Driver mencetak gambar memenuhi label tanpa menjaga rasio — pilih “jaga rasio” kalau foto tidak boleh gepeng.
+              Untuk kertas label yang sudah ada desain tercetak, pilih “Penuhi label tanpa bingkai”: foto mengisi seluruh label dan rasio tetap dijaga.
             </span>
           </label>
         </div>

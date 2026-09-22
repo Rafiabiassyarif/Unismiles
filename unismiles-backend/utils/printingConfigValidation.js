@@ -34,7 +34,7 @@ const PHOTO_ADJUST_LIMITS = {
   thermal_density: { min: 1, max: 5, fallback: 3 },
   thermal_offset_y_px: { min: -200, max: 200, fallback: 0 },
 };
-const PHOTO_FIT_MODES = ['fit', 'stretch'];
+const PHOTO_FIT_MODES = ['fit', 'cover', 'stretch'];
 
 const FORBIDDEN_FIELDS = new Set(['command', 'shell_command', 'executable_path', 'script', 'driver_command']);
 const ALLOWED_FIELDS = new Set([

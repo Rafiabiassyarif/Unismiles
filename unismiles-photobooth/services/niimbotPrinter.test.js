@@ -64,16 +64,28 @@ test('latar putih diisi TANPA filter aktif', () => {
     'pengisian latar harus selesai sebelum foto digambar');
 });
 
-test('offset vertikal diterapkan pada gambar', () => {
-  assert.match(SERVICE, /let dy = Math\.round\(adj\.offsetYPx\)/,
-    'geser vertikal dari Admin harus dipakai');
-});
-
-test('mode fit menjaga rasio, stretch tidak', () => {
-  assert.match(SERVICE, /if \(adj\.fitMode === 'fit'\)[\s\S]{0,200}Math\.min\(/,
-    'mode fit harus menghitung skala yang menjaga rasio');
+test('perhitungan gambar ada di drawRect, bukan di dalam prepareCanvas', () => {
+  // Perhitungannya SENGAJA dipindah ke labelGeometry.drawRect supaya bisa
+  // dieksekusi di test nyata (labelGeometry.test.ts), bukan hanya dicocokkan
+  // teksnya. Di sini yang diperiksa hanya bahwa prepareCanvas benar-benar
+  // memakai hasilnya — bukan menghitung sendiri.
+  assert.match(SERVICE, /drawRect\(adj\.fitMode, canvas\.width, canvas\.height, img\.naturalWidth, img\.naturalHeight, adj\.offsetYPx\)/,
+    'prepareCanvas harus memakai drawRect');
+  assert.match(SERVICE, /ctx\.drawImage\(img, r\.dx, r\.dy, r\.dw, r\.dh\)/,
+    'menggambar memakai hasil drawRect');
+  // Offset vertikal tidak boleh dihitung ulang di sini; itu tugas drawRect.
+  assert.ok(!/let dy = Math\.round/.test(SERVICE),
+    'perhitungan offset harus ada di drawRect saja, supaya tidak ada dua versi');
   // Default-nya harus fit: stretch bisa membuat foto gepeng tanpa disadari.
   assert.match(SERVICE, /fitMode: 'fit',/, 'bawaan harus fit');
+});
+
+test('tiga mode penyesuaian didukung', () => {
+  assert.match(SERVICE, /fitMode: 'fit' \| 'cover' \| 'stretch'/, 'tipe harus mencakup cover');
+  const geo = readFileSync(new URL('./labelGeometry.ts', import.meta.url), 'utf8');
+  // cover = tanpa bingkai; fit = ada bingkai. Keduanya menjaga rasio.
+  assert.match(geo, /mode === 'cover'[\s\S]{0,80}Math\.max\(/, 'cover memakai skala terbesar');
+  assert.match(geo, /Math\.min\(/, 'fit memakai skala terkecil');
 });
 
 test('alur cetak mengikuti contoh resmi NiimBlueLib', () => {

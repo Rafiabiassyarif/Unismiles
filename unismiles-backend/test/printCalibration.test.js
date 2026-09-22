@@ -178,7 +178,10 @@ test('batas yang diumumkan konsisten dengan yang divalidasi', () => {
     assert.throws(() => validatePrintingConfig({ ...base, [field]: limit.min - 1 }, {}));
     assert.throws(() => validatePrintingConfig({ ...base, [field]: limit.max + 1 }, {}));
   }
-  assert.deepStrictEqual(PHOTO_FIT_MODES, ['fit', 'stretch']);
+  assert.deepStrictEqual(PHOTO_FIT_MODES, ['fit', 'cover', 'stretch']);
+  // 'cover' adalah yang dipakai untuk kertas label yang sudah ada desain
+  // tercetak: label terisi penuh tanpa bingkai, dan rasio tetap dijaga.
+  assert.ok(PHOTO_FIT_MODES.includes('cover'), 'mode tanpa bingkai harus tersedia');
 });
 
 test('saturasi 0 tetap boleh padahal batas bawahnya 0', () => {

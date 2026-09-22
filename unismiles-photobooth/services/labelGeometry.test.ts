@@ -9,7 +9,7 @@
 
 import assert from 'node:assert';
 import { test } from 'node:test';
-import { labelSize, mmToPx, labelMmFromPaperSize, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+import { labelSize, mmToPx, labelMmFromPaperSize, drawRect, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
 
 test('konstanta kepala cetak sesuai pengukuran di kertas, bukan tabel library', () => {
   assert.strictEqual(B1_PRO_PRINTHEAD_PX, 576);
@@ -28,18 +28,35 @@ test('konversi mm ke px pada 300 dpi', () => {
   assert.strictEqual(mmToPx(48), 567);
 });
 
-test('kertas 54 x 67 mm: lebar dipotong, tinggi utuh', () => {
-  // Inilah kertas yang dipakai. Lebarnya melebihi kepala cetak, dan itu WAJAR —
-  // 5,25 mm sisi kanan tidak tercetak.
+test('kertas 54 x 67 mm: diperkecil agar utuh, rasio kertas terjaga', () => {
+  // Inilah kertas yang dipakai. Kertas lebih lebar daripada kepala cetak, jadi
+  // gambarnya diperkecil dengan faktor yang sama untuk lebar dan tinggi —
+  // BUKAN tinggi dibiarkan penuh. Kalau hanya lebarnya yang dipotong, rasio
+  // berubah jadi 576/791 = 0,73 padahal kertasnya 0,81, sehingga gambar gepeng
+  // dan tepi kanan hilang tanpa pesan error.
   const s = labelSize(54, 67);
   assert.strictEqual(s.requestedWidthPx, 638, 'lebar yang diminta');
   assert.strictEqual(s.widthPx, 576, 'dikunci ke kepala cetak');
-  assert.strictEqual(s.heightPx, 791, 'tinggi tidak dikunci (printer sanggup 350 mm)');
-  assert.strictEqual(s.clamped, true, 'harus ditandai dipotong supaya bisa diperingatkan');
+  assert.strictEqual(s.clamped, true, 'harus ditandai supaya bisa diberitahukan');
 
-  const lostPx = s.requestedWidthPx - s.widthPx;
-  assert.strictEqual(lostPx, 62, '62 px hilang');
-  assert.strictEqual(+(lostPx / LABEL_DPI * 25.4).toFixed(2), 5.25, 'yaitu 5,25 mm');
+  // Tinggi ikut diskalakan: 791 x (576/638) = 714.
+  assert.strictEqual(s.heightPx, 714, 'tinggi ikut diskalakan, bukan dibiarkan penuh');
+
+  // Yang menentukan hasil cetak: rasio gambar harus tetap rasio kertas.
+  const aspectKertas = 54 / 67;
+  const aspectGambar = s.widthPx / s.heightPx;
+  assert.ok(Math.abs(aspectGambar - aspectKertas) < 0.005,
+    `rasio harus tetap ${aspectKertas.toFixed(3)}, dapat ${aspectGambar.toFixed(3)}`);
+});
+
+test('tidak ada bagian gambar yang hilang saat kertas dilebarkan', () => {
+  // Inti keluhan "tidak ke print semua": sebelumnya 62 px (5,25 mm) sisi kanan
+  // terbuang. Sekarang gambarnya diperkecil supaya seluruhnya muat.
+  const s = labelSize(54, 67);
+  assert.ok(s.widthPx <= B1_PRO_PRINTHEAD_PX, 'lebar tidak boleh melebihi kepala cetak');
+  assert.strictEqual(s.widthPx, B1_PRO_PRINTHEAD_PX, 'lebar dipakai penuh');
+  // Tinggi hasil skala harus proporsional, bukan sisa yang menyebabkan gepeng.
+  assert.ok(s.heightPx < mmToPx(67), 'tinggi mengecil mengikuti skala');
 });
 
 test('kertas 48 x 67 mm: tercetak penuh tanpa pemotongan', () => {
@@ -123,4 +140,103 @@ test('bawaan konsisten dengan kertas label yang dipakai', () => {
   const size = labelSize(DEFAULT_LABEL_MM.widthMm, DEFAULT_LABEL_MM.heightMm);
   assert.strictEqual(size.widthPx, 576, 'lebar dikunci ke kepala cetak');
   assert.strictEqual(size.clamped, true, 'harus jujur bahwa ada yang terpotong');
+});
+
+test('rasio label selalu sama dengan rasio kertas, berapa pun ukurannya', () => {
+  // Regresi: sebelumnya hanya lebar yang dikunci ke kepala cetak sementara
+  // tinggi dibiarkan penuh, sehingga rasio berubah dan gambar gepeng. Sekarang
+  // keduanya diskalakan dengan faktor yang sama.
+  const kertas: Array<[number, number]> = [[54, 67], [48, 150], [60, 40], [40, 30], [90, 100]];
+  for (const [w, h] of kertas) {
+    const s = labelSize(w, h);
+    const rasioKertas = w / h;
+    const rasioGambar = s.widthPx / s.heightPx;
+    assert.ok(Math.abs(rasioGambar - rasioKertas) < 0.02,
+      `kertas ${w}x${h} mm: rasio gambar ${rasioGambar.toFixed(3)} harus mendekati ${rasioKertas.toFixed(3)}`);
+  }
+});
+
+test('lebar kertas yang lebih kecil dari kepala cetak tidak diperkecil', () => {
+  const s = labelSize(40, 30);
+  assert.strictEqual(s.clamped, false);
+  assert.strictEqual(s.widthPx, mmToPx(40), 'dipakai apa adanya, tidak diperkecil');
+  assert.strictEqual(s.heightPx, mmToPx(30));
+});
+
+// Foto kamera lanskap 4:3 pada label tegak 576 x 714 px. Kasus nyata: inilah
+// yang menghasilkan bingkai putih di sisi atas/bawah.
+const LABEL_W = 576, LABEL_H = 714, FOTO_W = 1600, FOTO_H = 1200;
+
+test('mode cover: label terisi penuh, tidak ada bingkai', () => {
+  const r = drawRect('cover', LABEL_W, LABEL_H, FOTO_W, FOTO_H);
+  assert.ok(r.dw >= LABEL_W, `lebar ${r.dw} harus menutupi label ${LABEL_W}`);
+  assert.ok(r.dh >= LABEL_H, `tinggi ${r.dh} harus menutupi label ${LABEL_H}`);
+  // Menutupi penuh = tidak ada tepi label yang dibiarkan putih.
+  assert.ok(r.dx <= 0 && r.dx + r.dw >= LABEL_W, 'harus menutupi dari tepi kiri ke kanan');
+  assert.ok(r.dy <= 0 && r.dy + r.dh >= LABEL_H, 'harus menutupi dari tepi atas ke bawah');
+});
+
+test('mode cover menjaga rasio foto, jadi tidak gepeng', () => {
+  const r = drawRect('cover', LABEL_W, LABEL_H, FOTO_W, FOTO_H);
+  const rasioFoto = FOTO_W / FOTO_H;
+  const rasioGambar = r.dw / r.dh;
+  // +2 px padding membuat selisih kecil; yang penting tidak mendekati gepeng.
+  assert.ok(Math.abs(rasioGambar - rasioFoto) < 0.02,
+    `rasio harus tetap ${rasioFoto.toFixed(3)}, dapat ${rasioGambar.toFixed(3)}`);
+});
+
+test('mode fit: seluruh foto masuk, sisa label dibiarkan putih', () => {
+  const r = drawRect('fit', LABEL_W, LABEL_H, FOTO_W, FOTO_H);
+  // Seluruh foto masuk berarti gambar tidak melebihi label.
+  assert.ok(r.dw <= LABEL_W, `lebar ${r.dw} tidak boleh melebihi label ${LABEL_W}`);
+  assert.ok(r.dh <= LABEL_H, `tinggi ${r.dh} tidak boleh melebihi label ${LABEL_H}`);
+  // Dan memang ada sisa (inilah bingkai putihnya).
+  assert.ok(r.dh < LABEL_H, 'pada foto lanskap harus ada sisa di atas/bawah');
+  // Tetap terpusat, bukan menempel ke satu sisi.
+  assert.ok(Math.abs(r.dy - (LABEL_H - r.dh) / 2) <= 1, 'harus terpusat vertikal');
+});
+
+test('mode stretch: mengisi label dengan merusak rasio', () => {
+  const r = drawRect('stretch', LABEL_W, LABEL_H, FOTO_W, FOTO_H);
+  assert.strictEqual(r.dw, LABEL_W);
+  assert.strictEqual(r.dh, LABEL_H);
+  assert.strictEqual(r.dx, 0);
+  assert.strictEqual(r.dy, 0);
+});
+
+test('mode cover memakai skala sekecil mungkin yang masih menutupi', () => {
+  // Ukuran kelebihan bergantung rasio foto — foto lanskap di label tegak memang
+  // terpotong banyak lebarnya, dan itu wajar. Yang harus diperiksa bukan
+  // persentase terpotong, melainkan bahwa skalanya TEPAT sebesar yang perlu:
+  // sisi yang paling ketat harus pas 1,0 (dengan toleransi padding 2 px).
+  const r = drawRect('cover', LABEL_W, LABEL_H, FOTO_W, FOTO_H);
+  const kecukupan = Math.min(r.dw / LABEL_W, r.dh / LABEL_H);
+  assert.ok(kecukupan >= 1, 'harus menutupi label');
+  assert.ok(kecukupan < 1.01,
+    `skala harus sepas-pasnya, bukan berlebihan (dapat ${kecukupan.toFixed(4)})`);
+});
+
+test('mode cover: sisi yang ketat menempel, bukan ada celah', () => {
+  // Untuk foto lanskap di label tegak, TINGGI yang menempel penuh dan lebar
+  // yang berlebih. Kalau terbalik, skalanya salah rumus (min vs max).
+  const r = drawRect('cover', LABEL_W, LABEL_H, FOTO_W, FOTO_H);
+  assert.ok(Math.abs(r.dh - LABEL_H) <= 2, `tinggi harus menempel label, dapat ${r.dh} vs ${LABEL_H}`);
+  assert.ok(r.dw > LABEL_W, 'lebar harus berlebih supaya tidak ada bingkai kiri/kanan');
+});
+
+test('geser vertikal dari Admin tetap dihormati di ketiga mode', () => {
+  for (const mode of ['fit', 'cover', 'stretch'] as const) {
+    const tanpa = drawRect(mode, LABEL_W, LABEL_H, FOTO_W, FOTO_H, 0);
+    const geser = drawRect(mode, LABEL_W, LABEL_H, FOTO_W, FOTO_H, -40);
+    assert.strictEqual(geser.dy, tanpa.dy - 40, `mode ${mode}: geser -40 harus menaikkan gambar 40 px`);
+  }
+});
+
+test('ukuran gambar rusak tidak menghasilkan NaN', () => {
+  for (const mode of ['fit', 'cover', 'stretch'] as const) {
+    const r = drawRect(mode, LABEL_W, LABEL_H, 0, 0);
+    for (const [k, v] of Object.entries(r)) {
+      assert.ok(Number.isFinite(v), `mode ${mode}: ${k} harus angka, dapat ${v}`);
+    }
+  }
 });
