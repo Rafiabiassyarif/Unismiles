@@ -26,3 +26,12 @@ dist-ssr
 .env
 .env.local
 *.env
+
+# Skrip pengukuran sekali-pakai (ukur-*.mts, v.mts, cek-*.mts, mv.mts).
+# Beberapa kali ikut ter-commit tanpa sengaja dan jadi sampah di repo; kalau
+# memang perlu disimpan, taruh di scripts/ yang punya nama jelas.
+/ukur-*.mts
+/cek-*.mts
+/mv.mts
+/v.mts
+/hit.mts
