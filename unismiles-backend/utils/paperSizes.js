@@ -13,12 +13,31 @@
  *             lebar cetak efektif 48 mm, tinggi 8-350 mm.
  */
 
-/** Batas fisik printer label termal yang dipakai (NIIMBOT B1 Pro). */
+/**
+ * Batas fisik printer label termal yang dipakai (NIIMBOT B1 Pro).
+ *
+ * DUA ANGKA YANG BERBEDA — jangan disamakan:
+ *
+ *   maxPrintWidthMm = 48,77 mm  -> LEBAR KEPALA CETAK. Ini yang menentukan
+ *       berapa banyak yang benar-benar tercetak. Diukur di perangkat nyata:
+ *       kepala B1 Pro melaporkan 576 px @300 dpi, dan pengujian di kertas
+ *       menunjukkan kolom 0-575 keluar sedangkan kolom 576 dst tidak keluar
+ *       (tanpa pesan error apa pun). Jadi gambar WAJIB dikunci ke angka ini.
+ *
+ *   maxPaperWidthMm = 60 mm  -> LEBAR KERTAS yang masih wajar. Kertas boleh
+ *       LEBIH LEBAR dari kepala cetak; bagian yang berlebih memang tidak
+ *       tercetak. Label 54 mm yang dipakai UniSmiles justru begini: 5,25 mm
+ *       sisi kanannya tidak tercetak. Menolak 54 mm akan salah — kertasnya
+ *       nyata dan bisa dipakai.
+ *
+ * Angka 60 mm semata-mata penjaga salah ketik (mis. 540 mm), bukan batas
+ * kemampuan printer.
+ */
 const THERMAL_LIMITS = {
-  /** Lebar kertas label maksimum (mm). */
-  maxPaperWidthMm: 50,
-  /** Lebar area cetak efektif (mm). Batas nyata untuk gambar. */
-  maxPrintWidthMm: 48,
+  /** Lebar kertas label maksimum yang masih wajar (mm). */
+  maxPaperWidthMm: 60,
+  /** Lebar area cetak efektif = lebar kepala cetak (mm). Ini yang mengunci gambar. */
+  maxPrintWidthMm: 48.77,
   /** Tinggi cetak minimum (mm). */
   minHeightMm: 8,
   /** Tinggi cetak maksimum (mm). */
@@ -78,10 +97,13 @@ function validateCustomSize(value, limits = THERMAL_LIMITS) {
     return { ok: false, message: `Ukuran kustom harus berformat "CUSTOM <lebar>X<tinggi> MM", contoh CUSTOM 48X150 MM.` };
   }
   const { widthMm, heightMm } = parsed;
-  if (widthMm > limits.maxPrintWidthMm) {
+  // Lebar kertas boleh melebihi kepala cetak — bagian berlebih tidak tercetak,
+  // dan itu keadaan normal untuk label 54 mm. Yang ditolak hanya ukuran yang
+  // jelas salah ketik.
+  if (widthMm > limits.maxPaperWidthMm) {
     return {
       ok: false,
-      message: `Lebar ${widthMm} mm melebihi lebar cetak efektif printer termal (${limits.maxPrintWidthMm} mm). Gunakan lebar maksimal ${limits.maxPrintWidthMm} mm.`,
+      message: `Lebar ${widthMm} mm melebihi lebar kertas maksimum (${limits.maxPaperWidthMm} mm).`,
     };
   }
   if (heightMm < limits.minHeightMm || heightMm > limits.maxHeightMm) {

@@ -5,6 +5,21 @@ export interface KioskAgentState {
   resolution: string;
   paperSize: string;
   allowedLayouts?: string[];
+  /**
+   * Penyesuaian tampilan foto hasil cetak + kalibrasi termal, diatur dari
+   * halaman Pengaturan Admin. Photobooth-lah yang menggambar hasil akhir, jadi
+   * nilai ini dipakai di sini — bukan di agent.
+   *
+   * CATATAN: ini untuk FOTO HASIL, bukan frame yang dikirim ke OCR verifikasi
+   * pembayaran. Jalur OCR punya filter sendiri yang sudah dikalibrasi supaya
+   * nominal struk terbaca; mengubahnya akan merusak verifikasi pembayaran.
+   */
+  photoBrightness?: number;
+  photoContrast?: number;
+  photoSaturation?: number;
+  thermalDensity?: number;
+  thermalOffsetYPx?: number;
+  photoFitMode?: 'fit' | 'stretch';
 }
 
 type StateCallback = (state: KioskAgentState) => void;
@@ -22,6 +37,13 @@ class KioskAgentBridge {
     volume: 100,
     resolution: '1080x1920',
     paperSize: '4R',
+    // Netral sampai agent melaporkan nilai dari Admin.
+    photoBrightness: 100,
+    photoContrast: 100,
+    photoSaturation: 100,
+    thermalDensity: 3,
+    thermalOffsetYPx: 0,
+    photoFitMode: 'fit',
   };
 
   constructor() {

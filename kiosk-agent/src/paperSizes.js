@@ -11,10 +11,17 @@
  * daftar supaya ketidaksamaan tertangkap.
  */
 
-/** Batas fisik printer label termal (NIIMBOT B1 Pro). */
+/**
+ * Batas fisik printer label termal (NIIMBOT B1 Pro).
+ *
+ * maxPrintWidthMm (48,77 mm) = lebar kepala cetak; gambar dikunci ke angka ini.
+ * maxPaperWidthMm (60 mm) = lebar KERTAS yang masih wajar. Kertas boleh lebih
+ * lebar dari kepala cetak — label 54 mm memang begitu, 5,25 mm kanannya tidak
+ * tercetak. Jangan samakan kedua angka ini.
+ */
 const THERMAL_LIMITS = {
-  maxPaperWidthMm: 50,
-  maxPrintWidthMm: 48,
+  maxPaperWidthMm: 60,
+  maxPrintWidthMm: 48.77,
   minHeightMm: 8,
   maxHeightMm: 350,
   dpi: 300,
@@ -66,8 +73,9 @@ function validateCustomSize(value, limits = THERMAL_LIMITS) {
     return { ok: false, message: 'Ukuran kustom harus berformat "CUSTOM <lebar>X<tinggi> MM".' };
   }
   const { widthMm, heightMm } = parsed;
-  if (widthMm > limits.maxPrintWidthMm) {
-    return { ok: false, message: `Lebar ${widthMm} mm melebihi lebar cetak efektif (${limits.maxPrintWidthMm} mm).` };
+  // Lebar kertas boleh melebihi kepala cetak; bagian berlebih tidak tercetak.
+  if (widthMm > limits.maxPaperWidthMm) {
+    return { ok: false, message: `Lebar ${widthMm} mm melebihi lebar kertas maksimum (${limits.maxPaperWidthMm} mm).` };
   }
   if (heightMm < limits.minHeightMm || heightMm > limits.maxHeightMm) {
     return { ok: false, message: `Tinggi ${heightMm} mm di luar rentang ${limits.minHeightMm}-${limits.maxHeightMm} mm.` };

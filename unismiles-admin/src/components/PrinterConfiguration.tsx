@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Printer, RefreshCw, Save, TestTube2, Wifi, WifiOff } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Printer, RefreshCw, Save, Sliders, TestTube2, Wifi, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
@@ -71,6 +71,13 @@ type PrinterConfig = {
   retry_count: number;
   config_version: number;
   allowed_layouts?: string[];
+  // Kalibrasi cetak + penyesuaian tampilan foto (halaman Pengaturan Admin).
+  photo_brightness: number;
+  photo_contrast: number;
+  photo_saturation: number;
+  thermal_density: number;
+  thermal_offset_y_px: number;
+  photo_fit_mode: string;
 };
 
 const DEFAULT_CONFIG: PrinterConfig = {
@@ -84,6 +91,13 @@ const DEFAULT_CONFIG: PrinterConfig = {
   retry_count: 2,
   config_version: 1,
   allowed_layouts: [],
+  // Netral: 100% tidak mengubah foto. Ini juga bawaan backend.
+  photo_brightness: 100,
+  photo_contrast: 100,
+  photo_saturation: 100,
+  thermal_density: 3,
+  thermal_offset_y_px: 0,
+  photo_fit_mode: 'fit',
 };
 
 function errorMessage(error: any) {
@@ -177,6 +191,12 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
         adapter: config.printing_enabled ? config.adapter : 'disabled',
         printer_name: config.printing_enabled ? config.printer_name : null,
         paper_size: config.paper_size,
+        photo_brightness: config.photo_brightness,
+        photo_contrast: config.photo_contrast,
+        photo_saturation: config.photo_saturation,
+        thermal_density: config.thermal_density,
+        thermal_offset_y_px: config.thermal_offset_y_px,
+        photo_fit_mode: config.photo_fit_mode,
         orientation: config.orientation,
         copies_limit: config.copies_limit,
         timeout_ms: config.timeout_ms,
@@ -384,6 +404,100 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
       </div>
 
       {!adapterSupported && <div className="text-xs text-amber-300 font-bold flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Adapter dari konfigurasi lama belum didukung Agent ini.</div>}
+
+      {/* ------------------------------------------------------------------
+          Penyesuaian tampilan foto + kalibrasi cetak.
+
+          Sebelumnya nilai-nilai ini hanya bisa diubah di halaman uji localhost
+          (kepekatan, geser vertikal, ukuran kertas) atau ter-hardcode di
+          Photobooth (brightness/contrast/saturasi). Setelah pindah ke sini,
+          photobooth memakainya dari konfigurasi ini — jadi tidak perlu lagi
+          membuka halaman uji atau deploy ulang untuk menyetel hasil cetak.
+
+          Batas slider di sini SAMA dengan yang divalidasi backend. Kalau
+          berbeda, slider akan menawarkan nilai yang ditolak saat disimpan.
+         ------------------------------------------------------------------ */}
+      <div className="p-5 rounded-2xl bg-black/20 border border-white/5 space-y-5">
+        <div>
+          <p className="text-sm font-black uppercase tracking-tight flex items-center gap-2">
+            <Sliders className="w-4 h-4 text-primary" /> Photo & Print Calibration
+          </p>
+          <p className="text-[10px] text-muted font-bold mt-1">
+            Berlaku untuk FOTO HASIL cetak. Nilai 100% tidak mengubah foto apa pun.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          <label className="space-y-2">
+            <span className="label">Brightness <span className="text-primary">{config.photo_brightness}%</span></span>
+            <input
+              type="range" min={50} max={150} step={1}
+              value={config.photo_brightness} disabled={!canEdit}
+              onChange={e => setField('photo_brightness', Number(e.target.value))}
+              className="w-full h-1 accent-primary cursor-pointer disabled:opacity-50"
+            />
+            <span className="text-[10px] text-muted font-bold block">50–150%. Terlalu tinggi membuat foto hilang di printer termal.</span>
+          </label>
+
+          <label className="space-y-2">
+            <span className="label">Contrast <span className="text-primary">{config.photo_contrast}%</span></span>
+            <input
+              type="range" min={50} max={150} step={1}
+              value={config.photo_contrast} disabled={!canEdit}
+              onChange={e => setField('photo_contrast', Number(e.target.value))}
+              className="w-full h-1 accent-primary cursor-pointer disabled:opacity-50"
+            />
+            <span className="text-[10px] text-muted font-bold block">50–150%.</span>
+          </label>
+
+          <label className="space-y-2">
+            <span className="label">Saturation <span className="text-primary">{config.photo_saturation}%</span></span>
+            <input
+              type="range" min={0} max={150} step={1}
+              value={config.photo_saturation} disabled={!canEdit}
+              onChange={e => setField('photo_saturation', Number(e.target.value))}
+              className="w-full h-1 accent-primary cursor-pointer disabled:opacity-50"
+            />
+            <span className="text-[10px] text-muted font-bold block">0–150%. 0 = hitam putih.</span>
+          </label>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 border-t border-white/5 pt-5">
+          <label className="space-y-2">
+            <span className="label">Kepekatan termal (1–5)</span>
+            <input
+              className={fieldClass} type="number" min={1} max={5}
+              value={config.thermal_density} disabled={!canEdit}
+              onChange={e => setField('thermal_density', Number(e.target.value))}
+            />
+            <span className="text-[10px] text-muted font-bold block">Hanya untuk printer label termal (Niimbot).</span>
+          </label>
+
+          <label className="space-y-2">
+            <span className="label">Geser vertikal (−200…200 px)</span>
+            <input
+              className={fieldClass} type="number" min={-200} max={200}
+              value={config.thermal_offset_y_px} disabled={!canEdit}
+              onChange={e => setField('thermal_offset_y_px', Number(e.target.value))}
+            />
+            <span className="text-[10px] text-muted font-bold block">Positif = turun, negatif = naik. Untuk kalibrasi posisi di kertas.</span>
+          </label>
+
+          <label className="space-y-2">
+            <span className="label">Penyesuaian foto di label</span>
+            <select
+              className={fieldClass} value={config.photo_fit_mode} disabled={!canEdit}
+              onChange={e => setField('photo_fit_mode', e.target.value)}
+            >
+              <option value="fit">Jaga rasio (bingkai putih, tidak gepeng)</option>
+              <option value="stretch">Penuhi label (bisa gepeng)</option>
+            </select>
+            <span className="text-[10px] text-muted font-bold block">
+              Driver mencetak gambar memenuhi label tanpa menjaga rasio — pilih “jaga rasio” kalau foto tidak boleh gepeng.
+            </span>
+          </label>
+        </div>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className="p-5 rounded-2xl bg-black/20 border border-white/5 space-y-3"><p className="text-[10px] font-black text-muted uppercase tracking-widest">Desired Configuration</p><p className="text-sm font-black">Version {config.config_version}</p><p className="text-xs text-muted">{status.pending ? 'Pending — menunggu Agent menerapkan konfigurasi.' : 'Stored'}</p></div>

@@ -21,6 +21,14 @@ test('normalizes disabled printing and clears adapter/printer', () => {
     timeout_ms: 60000,
     retry_count: 2,
     allowed_layouts: [],
+    // Penyesuaian tampilan + kalibrasi: nilai netral, tidak mengubah foto.
+    // Ikut di sini supaya perubahan bawaan tertangkap test, bukan diam-diam.
+    photo_brightness: 100,
+    photo_contrast: 100,
+    photo_saturation: 100,
+    thermal_density: 3,
+    thermal_offset_y_px: 0,
+    photo_fit_mode: 'fit',
   });
 });
 

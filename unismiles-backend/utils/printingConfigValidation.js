@@ -11,10 +11,36 @@ const { PAPER_SIZES, isKnownPaperSize, validateCustomSize, isThermalSize } = req
  */
 const ADAPTERS = ['disabled', 'cups', 'windows', 'mock', 'thermal'];
 const ORIENTATIONS = ['portrait', 'landscape'];
+
+/**
+ * Penyesuaian tampilan foto hasil cetak + kalibrasi termal.
+ *
+ * Satu sumber kebenaran untuk batas nilai, dipakai backend DAN dicerminkan di
+ * Admin. Sebelumnya nilai-nilai ini hanya hidup di halaman uji localhost
+ * (kertas, kepekatan, geser vertikal) atau ter-hardcode di Photobooth
+ * (brightness/contrast/saturasi).
+ *
+ * PENTING — batas berikut adalah pengaman, bukan hiasan:
+ *  - brightness/contrast di luar 50-150 akan merusak foto (putih total atau
+ *    hitam total), dan pada printer termal 1-bit hasilnya hilang sama sekali.
+ *  - saturation 0 memang sah (hitam putih).
+ *  - density di luar 1-5 tidak dikenal driver Niimbot.
+ *  - offset di luar ±200 px hanya menggeser gambar keluar dari kertas.
+ */
+const PHOTO_ADJUST_LIMITS = {
+  photo_brightness: { min: 50, max: 150, fallback: 100 },
+  photo_contrast: { min: 50, max: 150, fallback: 100 },
+  photo_saturation: { min: 0, max: 150, fallback: 100 },
+  thermal_density: { min: 1, max: 5, fallback: 3 },
+  thermal_offset_y_px: { min: -200, max: 200, fallback: 0 },
+};
+const PHOTO_FIT_MODES = ['fit', 'stretch'];
+
 const FORBIDDEN_FIELDS = new Set(['command', 'shell_command', 'executable_path', 'script', 'driver_command']);
 const ALLOWED_FIELDS = new Set([
   'printing_enabled', 'adapter', 'printer_name', 'paper_size', 'orientation',
   'copies_limit', 'timeout_ms', 'retry_count', 'allowed_layouts',
+  ...Object.keys(PHOTO_ADJUST_LIMITS), 'photo_fit_mode',
 ]);
 
 class PrintingConfigValidationError extends Error {
@@ -66,6 +92,14 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     timeout_ms: Number(existing.timeout_ms ?? 60000),
     retry_count: Number(existing.retry_count ?? 2),
     allowed_layouts: existing.allowed_layouts || [],
+    // Tambahan kalibrasi + penyesuaian tampilan. Nilai lama dipakai kalau kolom
+    // belum ada, supaya konfigurasi yang sudah tersimpan tidak rusak.
+    photo_brightness: Number(existing.photo_brightness ?? PHOTO_ADJUST_LIMITS.photo_brightness.fallback),
+    photo_contrast: Number(existing.photo_contrast ?? PHOTO_ADJUST_LIMITS.photo_contrast.fallback),
+    photo_saturation: Number(existing.photo_saturation ?? PHOTO_ADJUST_LIMITS.photo_saturation.fallback),
+    thermal_density: Number(existing.thermal_density ?? PHOTO_ADJUST_LIMITS.thermal_density.fallback),
+    thermal_offset_y_px: Number(existing.thermal_offset_y_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_y_px.fallback),
+    photo_fit_mode: existing.photo_fit_mode || 'fit',
     ...input,
   };
 
@@ -100,6 +134,18 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     retry_count: integerField(merged.retry_count, 'retry_count', 0, 3),
     allowed_layouts: Array.isArray(merged.allowed_layouts) ? merged.allowed_layouts.map(String) : [],
   };
+
+  // Penyesuaian tampilan + kalibrasi termal. Divalidasi dengan batas fisiknya
+  // sendiri supaya tidak ada nilai yang tersimpan tetapi pasti merusak hasil
+  // cetak (mis. brightness 400 membuat foto putih total).
+  for (const [field, limit] of Object.entries(PHOTO_ADJUST_LIMITS)) {
+    normalized[field] = integerField(merged[field], field, limit.min, limit.max);
+  }
+  const fitMode = String(merged.photo_fit_mode || 'fit').toLowerCase();
+  if (!PHOTO_FIT_MODES.includes(fitMode)) {
+    throw new PrintingConfigValidationError(`photo_fit_mode must be one of: ${PHOTO_FIT_MODES.join(', ')}.`);
+  }
+  normalized.photo_fit_mode = fitMode;
 
   if (!enabled) {
     normalized.adapter = 'disabled';
@@ -142,6 +188,15 @@ function toSocketPrintingConfig(row) {
         return [];
       }
     })(),
+    // Penyesuaian tampilan + kalibrasi ikut dikirim ke kiosk-agent, yang
+    // meneruskannya ke photobooth lewat local bridge. Tanpa ini, nilai yang
+    // disimpan Admin tidak akan pernah sampai ke tempat yang mencetak.
+    photo_brightness: Number(row.photo_brightness ?? PHOTO_ADJUST_LIMITS.photo_brightness.fallback),
+    photo_contrast: Number(row.photo_contrast ?? PHOTO_ADJUST_LIMITS.photo_contrast.fallback),
+    photo_saturation: Number(row.photo_saturation ?? PHOTO_ADJUST_LIMITS.photo_saturation.fallback),
+    thermal_density: Number(row.thermal_density ?? PHOTO_ADJUST_LIMITS.thermal_density.fallback),
+    thermal_offset_y_px: Number(row.thermal_offset_y_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_y_px.fallback),
+    photo_fit_mode: row.photo_fit_mode || 'fit',
   };
 }
 
@@ -151,6 +206,8 @@ module.exports = {
   ORIENTATIONS,
   ALLOWED_FIELDS,
   FORBIDDEN_FIELDS,
+  PHOTO_ADJUST_LIMITS,
+  PHOTO_FIT_MODES,
   PrintingConfigValidationError,
   validatePrintingConfig,
   toSocketPrintingConfig,

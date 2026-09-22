@@ -734,6 +734,23 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const [selectedLayoutId, setSelectedLayoutId] = useState<GridLayoutId | null>(null);
   const [capturedPhotos, setCapturedPhotos] = useState<string[]>([]);
   const [selectedFilter, setSelectedFilter] = useState<PhotoFilter | null>(null);
+
+  /**
+   * Penyesuaian tampilan foto hasil cetak dari halaman Pengaturan Admin.
+   *
+   * Sebelumnya nilai-nilai ini ter-hardcode di sini (contrast 1.24 / brightness
+   * 1.04 / saturate 0.9) sehingga untuk mengubahnya harus menyentuh kode dan
+   * deploy ulang. Sekarang datang dari Admin lewat perantara kiosk-agent.
+   *
+   * Bawaan netral (100%) supaya kalau agent tidak melaporkan apa pun, foto
+   * tetap dicetak apa adanya — bukan diam-diam berubah.
+   */
+  const [photoAdjust, setPhotoAdjust] = useState({
+    brightness: 100,
+    contrast: 100,
+    saturation: 100,
+    fitMode: 'fit' as 'fit' | 'stretch',
+  });
   const [selectedFrame, setSelectedFrame] = useState<FrameStyle | null>(null);
   const [editTab, setEditTab] = useState<'FRAMES' | 'FILTERS'>('FRAMES');
   
@@ -759,6 +776,18 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
   useEffect(() => {
       const unsubscribe = kioskAgentBridge.subscribe((agentState) => {
+          // Penyesuaian tampilan foto dari Admin. Diterapkan hanya kalau
+          // angkanya sah, supaya nilai rusak tidak merusak seluruh render.
+          const num = (v: unknown, fallback: number) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : fallback;
+          };
+          setPhotoAdjust({
+            brightness: num(agentState.photoBrightness, 100),
+            contrast: num(agentState.photoContrast, 100),
+            saturation: num(agentState.photoSaturation, 100),
+            fitMode: agentState.photoFitMode === 'stretch' ? 'stretch' : 'fit',
+          });
           if (agentState.paperSize) {
               setKioskPaperSize(agentState.paperSize);
           }
@@ -2253,9 +2282,17 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         try {
           const img = await loadImg(photo);
           ctx.save();
-          if (selectedFilter?.cssFilter && selectedFilter.cssFilter !== 'none') {
-            ctx.filter = selectedFilter.cssFilter;
-          }
+          // Dua hal berbeda digabung di sini, dan keduanya harus berlaku:
+          //   1. Filter gaya pilihan pengguna (mis. "Vintage").
+          //   2. Penyesuaian tampilan dari halaman Pengaturan Admin.
+          // Dijumlahkan sebagai string `filter` CSS karena canvas hanya
+          // menerima satu nilai — menimpa salah satunya akan menghilangkan
+          // efek yang lain tanpa peringatan.
+          const adminAdjust = `brightness(${photoAdjust.brightness}%) contrast(${photoAdjust.contrast}%) saturate(${photoAdjust.saturation}%)`;
+          const userFilter = selectedFilter?.cssFilter && selectedFilter.cssFilter !== 'none'
+            ? selectedFilter.cssFilter
+            : '';
+          ctx.filter = [userFilter, adminAdjust].filter(Boolean).join(' ');
           ctx.beginPath();
           ctx.rect(slot.x, slot.y, slot.width, slot.height);
           ctx.clip();

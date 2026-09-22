@@ -20,7 +20,7 @@ test('preset termal semuanya muat lebar cetak printer label', () => {
     const width = Number(match[1]);
     const height = Number(match[2]);
     assert.ok(width <= backendPaper.THERMAL_LIMITS.maxPrintWidthMm,
-      `${preset}: lebar ${width} mm melebihi ${backendPaper.THERMAL_LIMITS.maxPrintWidthMm} mm`);
+      `${preset}: lebar ${width} mm melebihi kepala cetak ${backendPaper.THERMAL_LIMITS.maxPrintWidthMm} mm`);
     assert.ok(height >= backendPaper.THERMAL_LIMITS.minHeightMm
       && height <= backendPaper.THERMAL_LIMITS.maxHeightMm,
       `${preset}: tinggi ${height} mm di luar rentang printer`);
@@ -33,14 +33,21 @@ test('ukuran foto lama tetap diterima supaya konfigurasi lama tidak rusak', () =
   }
 });
 
-test('ukuran kustom divalidasi terhadap batas fisik printer', () => {
+test('ukuran kustom divalidasi terhadap batas kertas', () => {
   assert.strictEqual(backendPaper.validateCustomSize('CUSTOM 48X150 MM').ok, true);
   assert.strictEqual(backendPaper.validateCustomSize('CUSTOM 40x60mm').ok, true);
 
-  // Lebih lebar dari lebar cetak efektif: ini yang akan terpotong di printer.
-  const tooWide = backendPaper.validateCustomSize('CUSTOM 60X150 MM');
+  // Ukuran kertas yang DIPAKAI UniSmiles: 54 x 67 mm. Harus DITERIMA walau
+  // kepalanya hanya 48,77 mm — kertasnya nyata, hanya 5,25 mm kanannya tidak
+  // tercetak. Menolaknya akan memblokir kertas yang benar-benar dipakai.
+  const label = backendPaper.validateCustomSize('CUSTOM 54X67 MM');
+  assert.strictEqual(label.ok, true, 'kertas label 54 x 67 mm harus diterima');
+
+  // Jelas salah ketik (540 mm): ditolak, dan pesannya menyebut batas KERTAS,
+  // bukan batas kepala cetak — dua angka yang berbeda.
+  const tooWide = backendPaper.validateCustomSize('CUSTOM 540X150 MM');
   assert.strictEqual(tooWide.ok, false);
-  assert.match(tooWide.message, /lebar cetak efektif/i);
+  assert.match(tooWide.message, /lebar kertas maksimum/i);
 
   // Terlalu pendek / terlalu tinggi.
   assert.strictEqual(backendPaper.validateCustomSize('CUSTOM 40X5 MM').ok, false);
@@ -51,10 +58,23 @@ test('ukuran kustom divalidasi terhadap batas fisik printer', () => {
   assert.strictEqual(backendPaper.validateCustomSize('').ok, false);
 });
 
+test('lebar kepala cetak dan lebar kertas adalah dua angka berbeda', () => {
+  // Kepala cetak 576 px @300dpi = 48,77 mm -> ini yang mengunci GAMBAR.
+  assert.strictEqual(backendPaper.THERMAL_LIMITS.maxPrintWidthMm, 48.77);
+  // Kertas boleh lebih lebar dari kepala cetak.
+  assert.ok(backendPaper.THERMAL_LIMITS.maxPaperWidthMm > backendPaper.THERMAL_LIMITS.maxPrintWidthMm,
+    'batas kertas harus di atas batas kepala cetak');
+  const printWidthPx = Math.round(backendPaper.THERMAL_LIMITS.maxPrintWidthMm / 25.4 * 300);
+  assert.strictEqual(printWidthPx, 576, 'kepala cetak B1 Pro = 576 px');
+});
+
 test('ukuran piksel dihitung dari 300 dpi', () => {
   // 48 mm @300dpi = 567 px; 150 mm = 1772 px.
   const px = backendPaper.pixelSize('CUSTOM 48X150 MM');
   assert.strictEqual(px.widthPx, 567);
+  // Lebar kertas 54 mm tetap dihitung apa adanya (638 px) — penguncian ke
+  // kepala cetak terjadi di sisi cetak/photobooth, bukan di sini.
+  assert.strictEqual(backendPaper.pixelSize('CUSTOM 54X67 MM').widthPx, 638);
   assert.strictEqual(px.heightPx, 1772);
   assert.strictEqual(px.dpi, 300);
 
@@ -76,10 +96,10 @@ test('konfigurasi ukuran kustom diterima lewat validasi', () => {
 test('konfigurasi ukuran kustom di luar batas ditolak dengan pesan yang jelas', () => {
   assert.throws(
     () => validatePrintingConfig(
-      { printing_enabled: false, adapter: 'disabled', paper_size: 'CUSTOM 80X150 MM' },
+      { printing_enabled: false, adapter: 'disabled', paper_size: 'CUSTOM 540X150 MM' },
       { printing_enabled: false, adapter: 'disabled' },
     ),
-    /lebar cetak efektif/i,
+    /lebar kertas maksimum/i,
   );
 });
 
@@ -121,8 +141,8 @@ test('agent menerima ukuran yang sama seperti backend', () => {
     assert.strictEqual(agentPaper.isSupportedPaperSize(sample), true, `agent harus menerima ${sample}`);
   }
   // Yang di luar batas harus ditolak di kedua sisi.
-  assert.strictEqual(agentPaper.isSupportedPaperSize('CUSTOM 80X150 MM'), false);
-  assert.strictEqual(backendPaper.validateCustomSize('CUSTOM 80X150 MM').ok, false);
+  assert.strictEqual(agentPaper.isSupportedPaperSize('CUSTOM 540X150 MM'), false);
+  assert.strictEqual(backendPaper.validateCustomSize('CUSTOM 540X150 MM').ok, false);
 });
 
 test('agent mengenal adapter thermal', () => {

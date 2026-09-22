@@ -38,6 +38,13 @@ class KioskWSClient {
       timeoutMs: printerConfig.timeoutMs || 60000,
       maxImageBytes: printerConfig.maxImageBytes || 15 * 1024 * 1024,
       retryCount: printerConfig.retryCount || 2,
+      // Kalibrasi cetak + penyesuaian tampilan (dari Admin, lewat backend).
+      photoBrightness: printerConfig.photoBrightness ?? 100,
+      photoContrast: printerConfig.photoContrast ?? 100,
+      photoSaturation: printerConfig.photoSaturation ?? 100,
+      thermalDensity: printerConfig.thermalDensity ?? 3,
+      thermalOffsetYPx: printerConfig.thermalOffsetYPx ?? 0,
+      photoFitMode: printerConfig.photoFitMode || 'fit',
     };
     this.fetchImpl = fetchImpl;
     this.availablePrinters = [];
@@ -52,6 +59,13 @@ class KioskWSClient {
       maintenanceMode: false,
       resolution: '1080x1920',
       paperSize: '4x6',
+      // Nilai netral sampai Admin mengirim konfigurasi cetak.
+      photoBrightness: 100,
+      photoContrast: 100,
+      photoSaturation: 100,
+      thermalDensity: 3,
+      thermalOffsetYPx: 0,
+      photoFitMode: 'fit',
       printerStatus: 'UNKNOWN',
       lastPrintError: null,
       printing: {
@@ -684,6 +698,22 @@ class KioskWSClient {
       this.reportedState.paperSize = printing.paper_size;
     }
 
+    // Kalibrasi cetak + penyesuaian tampilan foto. Sama alasannya dengan
+    // paperSize di atas: disimpan ke printerConfig saja tidak cukup — photobooth
+    // membaca reportedState lewat local bridge, jadi di sinilah nilainya harus
+    // ikut dilaporkan atau Admin akan terlihat tersimpan tanpa efek apa pun.
+    if (printing) {
+      const calib = {
+        photoBrightness: Number(printing.photo_brightness ?? 100),
+        photoContrast: Number(printing.photo_contrast ?? 100),
+        photoSaturation: Number(printing.photo_saturation ?? 100),
+        thermalDensity: Number(printing.thermal_density ?? 3),
+        thermalOffsetYPx: Number(printing.thermal_offset_y_px ?? 0),
+        photoFitMode: String(printing.photo_fit_mode || 'fit').toLowerCase(),
+      };
+      Object.assign(this.reportedState, calib);
+    }
+
     if (printing) {
       await this.applyPrintingConfig(printing);
     }
@@ -744,6 +774,18 @@ class KioskWSClient {
       copiesLimit: Number(config.copies_limit || this.printerConfig.copiesLimit || 1),
       timeoutMs: Number(config.timeout_ms || this.printerConfig.timeoutMs || 60000),
       retryCount: Number(config.retry_count ?? this.printerConfig.retryCount ?? 2),
+      // Kalibrasi cetak + penyesuaian tampilan foto dari Admin.
+      //
+      // Nilai ini WAJIB sampai ke photobooth: photobooth yang menggambar hasil
+      // akhir dan memanggil printer, sedangkan agent hanya meneruskan. Kalau
+      // hanya disimpan di sini tanpa ikut dilaporkan lewat reportedState,
+      // Admin akan terlihat "tersimpan" tetapi cetakan tidak berubah.
+      photoBrightness: Number(config.photo_brightness ?? this.printerConfig.photoBrightness ?? 100),
+      photoContrast: Number(config.photo_contrast ?? this.printerConfig.photoContrast ?? 100),
+      photoSaturation: Number(config.photo_saturation ?? this.printerConfig.photoSaturation ?? 100),
+      thermalDensity: Number(config.thermal_density ?? this.printerConfig.thermalDensity ?? 3),
+      thermalOffsetYPx: Number(config.thermal_offset_y_px ?? this.printerConfig.thermalOffsetYPx ?? 0),
+      photoFitMode: String(config.photo_fit_mode || this.printerConfig.photoFitMode || 'fit').toLowerCase(),
     };
 
     if (!SUPPORTED_ADAPTER_NAMES.includes(nextConfig.adapter)) throw new Error('Unsupported printer adapter received from backend');
