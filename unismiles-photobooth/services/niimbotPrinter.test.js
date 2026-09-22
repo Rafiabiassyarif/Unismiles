@@ -148,3 +148,40 @@ test('dependensi tercatat di package.json', () => {
   assert.match(pkg.dependencies['@mmote/niimbluelib'], /^\^?0\.4/,
     'versi 0.4x dipakai karena API print task stabil di sana');
 });
+
+test('gambar diubah ke hitam-putih murni sebelum dikirim ke printer', () => {
+  // Tanpa langkah ini SELURUH label tercetak hitam pekat: encoder NiimBlueLib
+  // (`image_encoder.js` baris 73) memperlakukan setiap piksel yang bukan putih
+  // murni sebagai tinta penuh, dan foto tidak punya piksel yang persis 255.
+  assert.match(SERVICE, /ditherToBlackAndWhite/,
+    'harus mengubah gambar ke hitam-putih murni sebelum encoding');
+  assert.match(SERVICE, /ctx\.getImageData\(/,
+    'piksel harus dibaca dari kanvas');
+  assert.match(SERVICE, /ctx\.putImageData\(/,
+    'hasilnya harus ditulis kembali sebelum encodeCanvas');
+  assert.match(SERVICE, /ImageEncoder\.encodeCanvas\(canvas/,
+    'yang dikodekan adalah kanvas setelah diubah');
+});
+
+test('dithering dilakukan SETELAH filter Admin', () => {
+  // Kalau sebelum filter, filter mengembalikan nilai antara dan merusak hasil
+  // hitam-putihnya — pengaturan terang/kontras Admin jadi tidak berpengaruh.
+  // Catatan: yang dicari adalah PEMANGGILAN (dengan tanda kurung), bukan baris
+  // `import` — mencari tanpa kurung membuat import di kepala berkas terpilih dan
+  // urutannya jadi selalu "sebelum".
+  const iFilter = SERVICE.indexOf('ctx.filter =');
+  const iDither = SERVICE.indexOf('ditherToBlackAndWhite(imageData.data');
+  assert.ok(iFilter > 0, 'filter Admin harus ada');
+  assert.ok(iDither > 0, 'pemanggilan dithering harus ada');
+  assert.ok(iFilter < iDither,
+    'filter Admin harus diterapkan lebih dulu baru diubah ke hitam-putih');
+});
+
+test('dithering dipakai lewat satu fungsi teruji, bukan ditulis ulang', () => {
+  // Perhitungannya di services/oneBitImage.ts supaya bisa DIEKSEKUSI di test:
+  // kesalahan di sini hanya terlihat di kertas.
+  assert.match(SERVICE, /import \{ ditherToBlackAndWhite \} from '\.\/oneBitImage'/,
+    'harus mengimpor dari modul teruji, bukan menyalin perhitungannya');
+  assert.strictEqual((SERVICE.match(/ditherToBlackAndWhite\(/g) || []).length, 1,
+    'satu tempat saja yang mengubah gambar');
+});

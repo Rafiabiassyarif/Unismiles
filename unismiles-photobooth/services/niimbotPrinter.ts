@@ -23,6 +23,7 @@
  */
 
 import { B1_PRO_PRINTHEAD_PX, type LabelSize } from './labelGeometry';
+import { ditherToBlackAndWhite } from './oneBitImage';
 import {
   ImageEncoder,
   PageColorType,
@@ -210,6 +211,19 @@ export class NiimbotPrinter {
     const r = drawRect(adj.fitMode, canvas.width, canvas.height, img.naturalWidth, img.naturalHeight, adj.offsetYPx);
     ctx.drawImage(img, r.dx, r.dy, r.dw, r.dh);
     ctx.restore();
+
+    // WAJIB, dan dilakukan setelah filter: encoder NiimBlueLib mencetak setiap
+    // piksel yang bukan putih murni sebagai tinta penuh
+    // (`color !== 0xffffff` di image_encoder.js). Foto tidak punya piksel yang
+    // persis putih, jadi tanpa langkah ini SELURUH label keluar hitam pekat.
+    // Library tidak menyediakan dithering maupun ambang, jadi dihitung di sini.
+    //
+    // Diletakkan setelah filter supaya pengaturan terang/kontras dari Admin ikut
+    // menentukan hasil hitam-putihnya — kalau sebelum, filter akan mengembalikan
+    // nilai antara dan merusak hasil dithering.
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    ditherToBlackAndWhite(imageData.data, canvas.width, canvas.height);
+    ctx.putImageData(imageData, 0, 0);
 
     return canvas;
   }
