@@ -40,48 +40,58 @@ terpotong, jadi jangan kaget.
 
 ---
 
-## 1b. Frame photobooth vs kertas printer
+## 1b. Kenyataan penting soal lebar 54 mm
 
-Frame photobooth punya ukuran sendiri, dan **semuanya lebih lebar** dari kepala
-cetak B1 Pro:
+Kertas label Anda **54 × 67 mm**, tetapi kepala cetak B1 Pro hanya **576 px =
+48,77 mm**. Ini bukan soal pengaturan — ini batas perangkat keras.
 
-| Frame | Kanvas | Lebar vs kepala cetak | Akibat |
-|---|---|---|---|
-| 1x1 | 708 × 1062 px | 708 vs 576 px | **terpotong 11,2 mm** |
-| 2x1 | 591 × 1772 px | 591 vs 576 px | terpotong 1,3 mm |
-| 3x1 | 591 × 1772 px | 591 vs 576 px | terpotong 1,3 mm |
+Buktinya dari pengujian penulis driver di kertas: mencetak empat garis uji 4 px di
+kolom 568, 572, 576, dan 580, garis di kolom 568 dan 572 **keluar**, kolom 576 dan
+580 **tidak keluar**. Jadi kolom 0–575 tercetak, 576 ke atas tidak. Melebihi
+kepala cetak **tidak memunculkan error apa pun** — hasilnya cuma terpotong diam-diam.
 
-Ada **dua masalah berbeda** di sini, dan solusinya juga berbeda:
+Akibatnya untuk kertas 54 mm:
 
-**(a) Lebar berlebih → dipotong.** Bagian kanan frame hilang, tanpa pesan error.
-Solusinya: **perkecil frame di Admin**, atau terima pemotongan. Halaman uji selalu
-mengunci lebar ke 576 px, jadi tidak ada yang bisa lolos diam-diam.
+| | nilai |
+|---|---|
+| Lebar yang diminta | 54 mm = 638 px |
+| Yang tercetak | 576 px = **48,77 mm** |
+| Hilang | 62 px = **5,25 mm** dari sisi kanan |
 
-**(b) Rasio tidak sama → gepeng.** Driver **merentangkan** gambar memenuhi label
-(`drawImage(bmp, 0, dy, w, h)`), tanpa menghiraukan rasio. Jadi kalau label
-48 × 67 mm (rasio 0,717) dipakai untuk frame 1x1 (rasio 0,667), fotonya **gepeng** —
-bukan terpotong.
+**Tiga pilihan Anda:**
 
-Solusi untuk (b) ada dua, dan halaman uji menyediakan keduanya:
+1. **Terima 5,25 mm terpotong.** Halaman uji memperingatkan angkanya, jadi tidak
+   ada kejutan. Kalau desain pada label punya margin di kanan, ini tidak masalah.
+2. **Pakai kertas 50 × 67 mm.** Hanya 1,3 mm terpotong — hampir tidak terlihat.
+3. **Pakai kertas 48 × 67 mm.** Tercetak penuh, nol pemotongan.
 
-1. **Pakai tombol ukuran frame** di halaman uji. Setiap tombol menghasilkan label
-   yang rasionya **sama persis** dengan frame aslinya, dengan lebar dikunci 48,77 mm:
+Yang **tidak** bisa dilakukan: mengecilkan gambar supaya 54 mm muat seluruhnya.
+Kepala cetak tetap 48,77 mm; sisa 5,25 mm tidak dapat dijangkau, bukan hanya
+tidak terpakai.
 
-   | Frame | Label yang dihasilkan | Rasio |
-   |---|---|---|
-   | 1x1 | 49 × 73 mm | 0,667 ✓ |
-   | 2x1 | 49 × 146 mm | 0,334 ✓ |
-   | 3x1 | 49 × 146 mm | 0,334 ✓ |
+---
 
-   Ini yang paling bersih: foto tercetak penuh, tanpa bingkai, tanpa gepeng.
+## 1c. Karena frame Admin tidak dipakai
 
-2. **Centang "Sesuaikan ke label tanpa distorsi."** Gambar diskalakan
-   mempertahankan rasio lalu diberi **bingkai putih** di sisinya. Berguna kalau
-   ukuran kertas sudah terlanjur dipotong dan tidak bisa diubah. Fotonya tidak
-   gepeng, tapi tidak memenuhi kertas — ada tepi putih.
+Kertas label sudah membawa desainnya sendiri, jadi photobooth hanya mengisi
+fotonya. Yang perlu diperhatikan akibat keputusan ini:
 
-Ringkasnya: **rasio label harus sama dengan rasio frame.** Kalau tidak, pilih
-bingkai putih (opsi 2) atau ubah ukuran kertas (opsi 1).
+**Foto harus satu, dan itu polaroid.** Frame Admin tidak lagi menentukan jumlah
+slot, jadi jumlah foto ditentukan di sisi photobooth (1 kali jepret), bukan dari
+`frame_templates`.
+
+**Rasio foto harus mendekati rasio kertas.** Driver **merentangkan** gambar
+memenuhi label (`drawImage(bmp, 0, dy, w, h)`) — rasio yang berbeda membuat foto
+gepeng, bukan terpotong. Rasio kertas 54 × 67 mm yang **tercetak** adalah
+576 : 791 = 0,728.
+
+Halaman uji menangani ini dengan opsi **"Jaga rasio foto"** (bawaan: aktif):
+foto diskalakan mempertahankan rasio lalu diberi bingkai putih di sisinya. Foto
+tidak gepeng, tetapi ada tepi putih. Kalau tidak dicentang, foto dipaksa
+memenuhi label dan akan gepeng.
+
+**Untuk hasil penuh tanpa bingkai:** ambil foto pada rasio 0,728 (misalnya
+700 × 962 px). Halaman uji memberi tahu rasio fotonya saat berkas dipilih.
 
 ## 2. Cara mencoba di laptop Anda
 
@@ -155,7 +165,8 @@ photobooth. Bedanya penting:
 | Cetak dari browser ke B1 Pro | ✅ halaman uji siap |
 | Ukuran label 48 × 67 mm terhitung benar | ✅ diuji, 45 test lolos |
 | Masuk otomatis setelah sesi foto selesai | ❌ belum |
-| Frame diambil langsung dari kiosk | ❌ belum — presetnya masih ditulis di halaman uji |
+| Ambil foto polaroid 1x dari photobooth | ❌ belum — masih perlu 1 sesi foto yang sudah ada |
+| Rasio foto dikunci ke 0,728 saat menjepret | ❌ belum — sekarang disesuaikan setelah foto diambil |
 | Ukuran dari Admin (Kiosk Manager) | ❌ belum — sekarang tombol preset di halaman uji |
 | Sambungan otomatis (tanpa pilih perangkat) | ❌ belum |
 

@@ -66,33 +66,31 @@ assert.strictEqual(LS.sizeFromMm({ w_mm: 54, h_mm: 67, dpi: 300, printhead_px: 0
 console.log('  ok   0 / negatif / NaN / head 0 semuanya mengembalikan null');
 
 console.log();
-console.log('== 4b) frame photobooth vs kertas printer ==');
-// Angka kanvas frame yang nyata di sistem (dari layout_config frame_templates).
-const FRAMES = [
-  { name: '1x1', w: 708, h: 1062 },
-  { name: '2x1', w: 591, h: 1772 },
-  { name: '3x1', w: 591, h: 1772 },
-];
-for (const f of FRAMES) {
-  // Lebar frame melebihi kepala cetak -> harus dipotong, bukan dicetak apa adanya.
-  assert.ok(f.w > PRINTHEAD_PX,
-    `${f.name}: lebar frame ${f.w} px memang melebihi kepala cetak ${PRINTHEAD_PX} px`);
-  // Label yang rasionya sama dengan frame tidak membuat gambar gepeng.
-  const w_mm = PRINTHEAD_PX * 25.4 / DPI;
-  const h_mm = w_mm * (f.h / f.w);
-  assert.ok(h_mm <= 350, `${f.name}: tinggi label ${h_mm.toFixed(1)} mm harus di bawah batas 350 mm`);
-  assert.ok(Math.abs((w_mm / h_mm) - (f.w / f.h)) < 0.001,
-    `${f.name}: rasio label harus sama dengan rasio frame supaya tidak gepeng`);
-  console.log(`  ok   ${f.name}: lebar ${f.w} px -> dikunci ${PRINTHEAD_PX} px `
-    + `(terpotong ${((f.w - PRINTHEAD_PX) * 25.4 / DPI).toFixed(1)} mm); `
-    + `label ${w_mm.toFixed(0)}×${h_mm.toFixed(0)} mm menjaga rasio`);
-}
+console.log('== 4b) kertas label 54 x 67 mm (yang dipakai) ==');
+// Kertas label sudah membawa desainnya, jadi frame Admin tidak dipakai.
+// Lebarnya melebihi kepala cetak, dan itu WAJAR dicetak terpotong.
+const LABEL_W = 54, LABEL_H = 67;
+const label = size(LABEL_W, LABEL_H);
+assert.ok(label, 'ukuran 54x67 mm harus diterima, bukan ditolak');
+assert.strictEqual(label.label_px, px(54), 'lebar yang diminta');
+assert.strictEqual(label.label_px, 638, '54 mm = 638 px @300dpi');
+assert.strictEqual(label.w_px, PRINTHEAD_PX, 'dikunci ke kepala cetak 576 px');
+assert.strictEqual(label.clamped, true, 'harus ditandai dikunci supaya bisa diperingatkan');
+const lost = label.label_px - label.w_px;
+assert.strictEqual(lost, 62, '62 px hilang');
+console.log(`  ok   54 mm = ${label.label_px} px -> ${label.w_px} px tercetak `
+  + `(${lost} px = ${mm(lost)} mm terpotong dari sisi kanan)`);
+console.log(`  ok   tinggi ${label.h_px} px = ${mm(label.h_px)} mm (batas printer 350 mm, aman)`);
+
+// Rasio kertas vs foto: driver merentang gambar, jadi rasio yang beda = gepeng.
+const labAr = label.w_px / label.h_px;
+console.log(`  ok   rasio label yang tercetak ${labAr.toFixed(3)} — gambar harus disesuaikan ke rasio ini`);
 
 console.log();
 console.log('== 5) halaman memakai angka yang sama dengan perhitungan di atas ==');
 // Angka-angka ini harus benar di HTML: kalau salah, label terpotong di printer.
 assert.match(PAGE, /var PRINTHEAD_PX = 576;/, 'halaman harus memakai batas kepala cetak 576 px');
-assert.match(PAGE, /value="48" min="1" step="0\.5"/, 'bawaan lebar 48 mm (bukan 54)');
+assert.match(PAGE, /value="54" min="1" step="0\.5"/, 'bawaan lebar 54 mm (kertas yang dipakai)');
 assert.match(PAGE, /value="67" min="1" step="0\.5"/, 'bawaan tinggi 67 mm');
 assert.match(PAGE, /sizeFromMm\(\{[\s\S]{0,160}dpi: 300, printhead_px: PRINTHEAD_PX/, 
   'ukuran harus dihitung lewat label-size dengan batas kepala cetak');
@@ -100,18 +98,19 @@ assert.match(PAGE, /task: 'v4'/, 'B1 Pro memakai print task v4 (bukan b1)');
 assert.match(PAGE, /name_prefixes: \['B1'\]/, 'filter pemilih perangkat = awalan nama B1');
 assert.match(PAGE, /Niimbot\.printImage\(/, 'memakai API printImage dari driver');
 assert.match(PAGE, /clamped/, 'halaman harus memperingatkan kalau ukuran dikunci');
-console.log('  ok   batas 576 px, bawaan 48×67 mm, task v4, dan peringatan clamping ada di halaman');
+console.log('  ok   batas 576 px, bawaan 54×67 mm, task v4, dan peringatan clamping ada di halaman');
 
 console.log();
-console.log('== 5b) penanganan frame vs label di halaman ==');
+console.log('== 5b) penyiapan foto & ukuran kertas label di halaman ==');
 // Driver merentang gambar mengisi label (drawImage tanpa jaga rasio), jadi
 // halaman harus menyediakan cara mencetak frame tanpa membuatnya gepeng.
 assert.match(PAGE, /function renderForPrint\(\)/, 'harus ada penyiapan gambar sebelum cetak');
 assert.match(PAGE, /Math\.min\(g\.w_px \/ currentImageSize\.w/, 'skala harus menjaga rasio');
 assert.match(PAGE, /id="fit"/, 'harus ada opsi sesuaikan-tanpa-distorsi');
-assert.match(PAGE, /FRAMES = \[/, 'harus ada preset ukuran per frame');
+assert.match(PAGE, /var LABEL = \{ w_mm: 54, h_mm: 67 \}/, 'ukuran kertas label 54x67 mm');
+assert.match(PAGE, /id="presetLabel"/, 'tombol ukuran kertas label');
 assert.match(PAGE, /renderForPrint\(\)\.then/, 'kedua tombol cetak harus memakai hasil penyiapan');
-console.log('  ok   penyiapan gambar menjaga rasio, opsi fit, dan preset frame ada');
+console.log('  ok   penyiapan gambar menjaga rasio + tombol ukuran kertas 54x67 mm');
 
 console.log();
 console.log('== 6) skrip driver ada dan bisa dimuat ==');
