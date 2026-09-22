@@ -102,8 +102,14 @@ const LABEL_PRESETS = [
      * 48,77 - 45,3 = 3,47 mm, dibagi dua, ditambah 5,2 mm sisi kanan label yang
      * memang di luar jangkauan printer.
      */
-    marginTopMm: 75 / (300 / 25.4),
-    marginLeftMm: 21 / (300 / 25.4),
+    marginTopMm: 28 / (300 / 25.4),
+    /**
+     * Kiri 0 px, bukan 24 px. Permintaannya "lebarkan kiri 24 px", tetapi margin
+     * kiri hanya punya 21 px — kurang 3 px (0,25 mm) dan tidak ada lagi ruang,
+     * karena di sebelah kiri sudah tepi kertas. Jadi yang diterapkan adalah
+     * maksimum yang mungkin. Bukan pembulatan: 3 px itu memang di luar kertas.
+     */
+    marginLeftMm: 0 / (300 / 25.4),
     marginRightMm: 82 / (300 / 25.4),
     /**
      * Bawah 14 mm seperti diminta, TETAPI kotak tingginya harus tepat 46 mm.
