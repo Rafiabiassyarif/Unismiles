@@ -1,15 +1,72 @@
-/**
- * Test geometri label — menjalankan perhitungan sungguhan, bukan memeriksa teks.
- *
- * `services/labelGeometry.ts` sengaja bebas dependensi supaya bisa diimpor di
- * sini tanpa Web Bluetooth. Perhitungan lebar adalah penentu utama hasil cetak:
- * salah 9 px berarti tepi label terpotong dan printer tidak memberi error apa
- * pun. Karena itu ia harus benar-benar dieksekusi, bukan sekadar dibaca.
- */
-
-import assert from 'node:assert';
+import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { labelSize, mmToPx, labelMmFromPaperSize, drawRect, printBox, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+
+// --- Kalibrasi: menggeser KOTAK, tidak mengubah ukuran ---
+//
+// Rentangnya terbatas secara fisik: area 46 mm memakai 543 px dari 576 px yang
+// bisa dicetak, jadi hanya ada 33 px (2,79 mm) ruang geser mendatar. Vertical
+// longgar. Itu batas printer, bukan batasan perangkat lunak.
+
+const POL = { W: 638, H: 791, top: 71, right: 78, left: 17, bottom: 177 };
+
+test('kalibrasi menggeser kotak tanpa mengubah ukuran area', () => {
+  const { W, H, top, right, left, bottom } = POL;
+  const nol = drawRect('cover', W, H, 628, 782, 0, 0, top, right, left, bottom);
+  const kanan = drawRect('cover', W, H, 628, 782, 0, 10, top, right, left, bottom);
+  const kiri = drawRect('cover', W, H, 628, 782, 0, -10, top, right, left, bottom);
+
+  assert.strictEqual(kanan.clipX - nol.clipX, 10, 'positif menggeser kotak ke kanan');
+  assert.strictEqual(kiri.clipX - nol.clipX, -10, 'negatif menggeser kotak ke kiri');
+  // Yang TIDAK boleh berubah: ukuran area dan ukuran foto.
+  assert.strictEqual(kanan.clipW, nol.clipW, 'lebar area tidak berubah');
+  assert.strictEqual(kanan.clipH, nol.clipH, 'tinggi area tidak berubah');
+  assert.strictEqual(kanan.dw, nol.dw, 'lebar foto tidak berubah (tidak ada scaling)');
+  assert.strictEqual(kanan.dh, nol.dh, 'tinggi foto tidak berubah (tidak ada scaling)');
+  // Sumbu lain tidak ikut.
+  assert.strictEqual(kanan.clipY, nol.clipY, 'kalibrasi X tidak menggeser Y');
+});
+
+test('kalibrasi dua sumbu berdiri sendiri-sendiri', () => {
+  const { W, H, top, right, left, bottom } = POL;
+  const a = drawRect('cover', W, H, 628, 782, 20, 10, top, right, left, bottom);
+  const b = drawRect('cover', W, H, 628, 782, -30, -10, top, right, left, bottom);
+  assert.strictEqual(a.clipX - b.clipX, 20, 'selisih mendatar = 10 - (-10)');
+  assert.strictEqual(a.clipY - b.clipY, 50, 'selisih vertikal = 20 - (-30)');
+});
+
+test('kalibrasi juga berlaku pada mode stretch', () => {
+  const { W, H, top, right, left, bottom } = POL;
+  const nol = drawRect('stretch', W, H, 628, 782, 0, 0, top, right, left, bottom);
+  const geser = drawRect('stretch', W, H, 628, 782, 7, -13, top, right, left, bottom);
+  assert.strictEqual(geser.clipX - nol.clipX, -13, 'stretch: kotak bergeser mendatar');
+  assert.strictEqual(geser.clipY - nol.clipY, 7, 'stretch: kotak bergeser vertikal');
+  assert.strictEqual(geser.clipW, nol.clipW, 'stretch: ukuran area tetap');
+});
+
+test('kalibrasi dihormati di ketiga mode', () => {
+  const { W, H, top, right, left, bottom } = POL;
+  for (const mode of ['fit', 'cover', 'stretch'] as const) {
+    const nol = drawRect(mode, W, H, 628, 782, 0, 0, top, right, left, bottom);
+    const maju = drawRect(mode, W, H, 628, 782, 12, 0, top, right, left, bottom);
+    assert.strictEqual(maju.clipY - nol.clipY, 12, `${mode}: kotak bergeser vertikal 12 px`);
+    assert.strictEqual(maju.clipW, nol.clipW, `${mode}: lebar area tidak berubah`);
+    assert.strictEqual(maju.clipH, nol.clipH, `${mode}: tinggi area tidak berubah`);
+  }
+});
+
+test('kalibrasi berhenti di batas kepala cetak tanpa mengecilkan area', () => {
+  const { W, H, top, right, left, bottom } = POL;
+  // Offset jauh melebihi ruang yang ada: kotak harus BERHENTI di batas, bukan
+  // mengecil. Kalau ukurannya berubah, yang terjadi bukan kalibrasi tapi crop.
+  // printhead diteruskan seperti di aplikasi; tanpa itu kanvas dianggap bisa dicetak penuh.
+  const jauh = drawRect('cover', W, H, 628, 782, 0, 500, top, right, left, bottom, B1_PRO_PRINTHEAD_PX);
+  const nol = drawRect('cover', W, H, 628, 782, 0, 0, top, right, left, bottom, B1_PRO_PRINTHEAD_PX);
+  assert.strictEqual(jauh.clipW, nol.clipW, 'lebar area tetap walau offset ekstrem');
+  assert.strictEqual(jauh.clipH, nol.clipH, 'tinggi area tetap walau offset ekstrem');
+  // Dan tidak ada tinta yang dijanjikan di luar kepala cetak.
+  assert.ok(jauh.clipX + jauh.clipW <= 576, 'tepi kanan area tidak melewati kepala cetak');
+});
 
 test('konstanta kepala cetak sesuai pengukuran di kertas, bukan tabel library', () => {
   assert.strictEqual(B1_PRO_PRINTHEAD_PX, 576);
@@ -113,13 +170,6 @@ test('mode cover: sisi yang ketat menempel, bukan ada celah', () => {
   assert.ok(r.dw >= 576 && r.dh >= 541, 'tidak ada celah di sisi mana pun');
 });
 
-test('geser vertikal dari Admin tetap dihormati di ketiga mode', () => {
-  for (const mode of ['fit', 'cover', 'stretch'] as const) {
-    const nol = drawRect(mode, 576, 541, 628, 782, 0, 0);
-    const maju = drawRect(mode, 576, 541, 628, 782, 12, 0);
-    assert.strictEqual(maju.dy - nol.dy, 12, `${mode}: geser vertikal 12 px`);
-  }
-});
 
 test('ukuran gambar rusak tidak menghasilkan NaN', () => {
   const r = drawRect('cover', 576, 541, 0, 0, 0, 0);
@@ -142,30 +192,8 @@ test('ukuran slot dibulatkan ke piksel utuh', () => {
   assert.ok(Number.isInteger(slot?.width) && Number.isInteger(slot?.height));
 });
 
-test('geser mendatar memindahkan gambar tanpa mengubah ukurannya', () => {
-  const nol = drawRect('cover', 576, 720, 1600, 1200, 0, 0);
-  const kanan = drawRect('cover', 576, 720, 1600, 1200, 0, 24);
-  const kiri = drawRect('cover', 576, 720, 1600, 1200, 0, -24);
-  assert.strictEqual(kanan.dw, nol.dw, 'lebar tidak berubah');
-  assert.strictEqual(kanan.dh, nol.dh, 'tinggi tidak berubah');
-  assert.strictEqual(kanan.dx - nol.dx, 24, 'positif menggeser ke kanan');
-  assert.strictEqual(kiri.dx - nol.dx, -24, 'negatif menggeser ke kiri');
-  assert.strictEqual(kanan.dy, nol.dy, 'geser mendatar tidak mengubah posisi vertikal');
-});
 
-test('geser mendatar dan vertikal berdiri sendiri-sendiri', () => {
-  const a = drawRect('cover', 576, 720, 1600, 1200, 10, 20);
-  const b = drawRect('cover', 576, 720, 1600, 1200, -30, -40);
-  assert.strictEqual(a.dx - b.dx, 60, 'selisih mendatar = 20 - (-40)');
-  assert.strictEqual(a.dy - b.dy, 40, 'selisih vertikal = 10 - (-30)');
-});
 
-test('geser mendatar juga berlaku pada mode stretch', () => {
-  const nol = drawRect('stretch', 576, 720, 1600, 1200, 0, 0);
-  const geser = drawRect('stretch', 576, 720, 1600, 1200, 7, -13);
-  assert.strictEqual(geser.dx - nol.dx, -13, 'stretch: mendatar ikut bergeser');
-  assert.strictEqual(geser.dy - nol.dy, 7, 'stretch: vertikal ikut bergeser');
-});
 
 // --- Kotak cetak dari margin empat sisi (template label Polaroid) ---
 //
@@ -173,16 +201,17 @@ test('geser mendatar juga berlaku pada mode stretch', () => {
 // tengahnya boleh diisi. Marginnya: atas 6 mm, kanan 3 mm, kiri 3 mm, bawah 15 mm.
 // Angka bawah 15, bukan 14, supaya kotaknya persis 46 mm — 6 + 46 + 14 = 66,
 // sedangkan kertasnya 67 mm, jadi ada 1 mm yang harus jatuh ke suatu sisi.
-const POLAROID = { W: 638, H: 792, top: 71, right: 35, left: 35, bottom: 177 };
+const POLAROID = { W: 638, H: 791, top: 71, right: 78, left: 17, bottom: 177 };
 
 test('printBox menempatkan area cetak sesuai margin empat sisi', () => {
   const b = printBox(POLAROID.W, POLAROID.H, POLAROID.top, POLAROID.right, POLAROID.left, POLAROID.bottom);
-  assert.strictEqual(b.x, 35, 'kiri 35 px');
+  assert.strictEqual(b.x, 17, 'kiri 17 px');
   assert.strictEqual(b.y, 71, 'atas 71 px');
-  assert.strictEqual(b.w, 638 - 35 - 35, 'lebar = kanvas - kiri - kanan');
-  assert.strictEqual(b.h, 792 - 71 - 177, 'tinggi = kanvas - atas - bawah');
-  // 568 x 544 px = 48,1 x 46,1 mm pada 300 dpi.
-  assert.strictEqual(mmToPx(48), 567, '48 mm = 567 px pada 300 dpi');
+  // Area = 638 - 17 - 78 = 543 px, dan 791 - 71 - 177 = 543 px.
+  // 543 px pada 300 dpi = 45,97 mm -> target 46 x 46 mm terpenuhi (selisih 0,03 mm).
+  assert.strictEqual(b.w, 543, 'lebar area 46 mm');
+  assert.strictEqual(b.h, 543, 'tinggi area 46 mm');
+  assert.strictEqual(mmToPx(46), 543, '46 mm = 543 px pada 300 dpi');
 });
 
 test('kotak cetak tidak pernah negatif walau margin melebihi kanvas', () => {
@@ -219,13 +248,39 @@ test('tanpa margin, perilaku lama tidak berubah', () => {
   assert.strictEqual(nol.dx, Math.round((W - nol.dw) / 2), 'terpusat mendatar');
 });
 
-test('offset masih bekerja DI DALAM kotak', () => {
+test('offset menggeser SELURUH kotak cetak, bukan gambar di dalamnya', () => {
   const { W, H, top, right, left, bottom } = POLAROID;
   const a = drawRect('cover', W, H, 628, 782, 0, 0, top, right, left, bottom);
-  const geser = drawRect('cover', W, H, 628, 782, 0, 10, top, right, left, bottom);
-  assert.strictEqual(geser.dx - a.dx, 10, 'geser mendatar 10 px');
-  // Dan kotak cetaknya tidak ikut bergeser — margin yang menentukan, bukan offset.
-  assert.strictEqual(geser.clipX, a.clipX, 'bidang cetak tidak ikut geser');
+  const geser = drawRect('cover', W, H, 628, 782, 9, 24, top, right, left, bottom);
+
+  // Inti kalibrasi: KOTAK yang pindah, beserta isinya.
+  assert.strictEqual(geser.clipX - a.clipX, 24, 'kotak bergeser 24 px mendatar');
+  assert.strictEqual(geser.clipY - a.clipY, 9, 'kotak bergeser 9 px vertikal');
+  assert.strictEqual(geser.dx - a.dx, 24, 'foto ikut bergeser bersama kotak');
+  assert.strictEqual(geser.dy - a.dy, 9, 'foto ikut bergeser bersama kotak');
+
+  // Dan yang TIDAK boleh berubah: ukuran area cetak. Kalau ukurannya berubah,
+  // yang terjadi bukan kalibrasi melainkan crop.
+  assert.strictEqual(geser.clipW, a.clipW, 'lebar area cetak tidak berubah');
+  assert.strictEqual(geser.clipH, a.clipH, 'tinggi area cetak tidak berubah');
+  assert.strictEqual(geser.dw, a.dw, 'lebar foto tidak berubah (tidak ada scaling)');
+  assert.strictEqual(geser.dh, a.dh, 'tinggi foto tidak berubah (tidak ada scaling)');
+});
+
+test('foto tidak pernah keluar dari kotak walau offset besar', () => {
+  const { W, H, top, right, left, bottom } = POLAROID;
+  // Kalau offset diterapkan pada gambar (bukan kotak), foto akan keluar kotak
+  // dan terpotong. Untuk setiap offset, tepi foto harus tetap di dalam kotak.
+  for (const [ox, oy] of [[0, 0], [50, 0], [-50, 0], [0, 60], [30, -40], [-24, 59]]) {
+    const r = drawRect('cover', W, H, 628, 782, oy, ox, top, right, left, bottom);
+    assert.ok(r.dx <= r.clipX + 1, `x=${ox} y=${oy}: tepi kiri foto tidak keluar kotak`);
+    assert.ok(r.dy <= r.clipY + 1, `x=${ox} y=${oy}: tepi atas foto tidak keluar kotak`);
+    assert.ok(r.dx + r.dw >= r.clipX + r.clipW - 1, `x=${ox} y=${oy}: sisi kanan kotak terisi`);
+    assert.ok(r.dy + r.dh >= r.clipY + r.clipH - 1, `x=${ox} y=${oy}: sisi bawah kotak terisi`);
+    // Ukuran kotak selalu sama: 46 x 46 mm.
+    assert.strictEqual(r.clipW, 543, `x=${ox} y=${oy}: lebar area cetak tetap 46 mm`);
+    assert.strictEqual(r.clipH, 543, `x=${ox} y=${oy}: tinggi area cetak tetap 46 mm`);
+  }
 });
 
 test('mode stretch juga memakai kotak, bukan seluruh kanvas', () => {

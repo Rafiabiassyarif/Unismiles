@@ -152,17 +152,23 @@ export function printBox(
   marginLeftPx = 0,
   marginBottomPx = 0,
   printableWidthPx: number = canvasW,
+  offsetXPx = 0,
+  offsetYPx = 0,
 ): { x: number; y: number; w: number; h: number } {
-  const x = clampInt(Math.max(0, marginLeftPx), 0, canvasW);
-  const y = clampInt(Math.max(0, marginTopPx), 0, canvasH);
+  // UKURAN kotak ditentukan HANYA oleh margin. Offset tidak pernah mengubahnya.
+  //
+  // Ini yang membuat area tetap 46 x 46 mm: kalibrasi memindahkan kotaknya,
+  // tidak mengecilkannya. Kalau ukuran ikut dijepit atau dikurangi, yang terjadi
+  // bukan kalibrasi melainkan crop — foto terpotong dan areanya menyusut.
+  const maxW = Math.max(0, Math.min(canvasW, printableWidthPx));
+  const w = clampInt(canvasW - Math.max(0, marginLeftPx) - Math.max(0, marginRightPx), 0, maxW);
+  const h = clampInt(canvasH - Math.max(0, marginTopPx) - Math.max(0, marginBottomPx), 0, canvasH);
 
-  // Tepi kanan kotak tidak pernah melewati KEPALA CETAK. Kertas label 54 mm
-  // lebih lebar dari yang bisa dicetak (48,77 mm), jadi piksel di sebelah kanan
-  // batas itu tidak akan pernah keluar. Tanpa jepit ini, area cetak "46 mm"
-  // tampak terpenuhi di perhitungan tetapi 1,2 mm-nya hilang di kertas.
-  const rightEdge = Math.min(clampInt(canvasW - Math.max(0, marginRightPx), 0, canvasW), printableWidthPx);
-  const w = clampInt(rightEdge - x, 0, canvasW);
-  const h = clampInt(canvasH - y - Math.max(0, marginBottomPx), 0, canvasH);
+  // Yang dibatasi hanya TEMPAT BERHENTI-nya: kotak tidak boleh keluar dari
+  // kertas maupun dari jangkauan kepala cetak. Sampai di batas, ia berhenti —
+  // ukurannya tetap.
+  const x = clampInt(Math.max(0, marginLeftPx) + offsetXPx, 0, Math.max(0, maxW - w));
+  const y = clampInt(Math.max(0, marginTopPx) + offsetYPx, 0, Math.max(0, canvasH - h));
   return { x, y, w, h };
 }
 
@@ -196,11 +202,15 @@ export function drawRect(
   marginBottomPx = 0,
   printableWidthPx: number = canvasW,
 ): DrawRect {
-  const box = printBox(canvasW, canvasH, marginTopPx, marginRightPx, marginLeftPx, marginBottomPx, printableWidthPx);
+  // Offset diteruskan ke printBox: yang bergeser adalah AREA CETAK, bukan foto
+  // di dalamnya. Dulu offset ditambahkan ke posisi gambar sementara kotaknya
+  // tetap, sehingga kalibrasi justru memotong foto dan mengubah ukuran area.
+  const box = printBox(canvasW, canvasH, marginTopPx, marginRightPx, marginLeftPx, marginBottomPx,
+    printableWidthPx, offsetXPx, offsetYPx);
   const clip = { clipX: box.x, clipY: box.y, clipW: box.w, clipH: box.h };
 
-  // Mode stretch (atau gambar rusak): kotak dipenuhi tanpa menjaga rasio.
-  const base: DrawRect = { dx: box.x + Math.round(offsetXPx), dy: box.y + Math.round(offsetYPx), dw: box.w, dh: box.h, ...clip };
+  // Mode stretch (atau gambar rusak): KOTAK dipenuhi apa adanya.
+  const base: DrawRect = { dx: box.x, dy: box.y, dw: box.w, dh: box.h, ...clip };
   if (mode === 'stretch' || imgW <= 0 || imgH <= 0 || box.w <= 0 || box.h <= 0) return base;
 
   // fit = muat di dalam kotak (faktor terkecil), cover = penuhi kotak (terbesar).
@@ -215,13 +225,14 @@ export function drawRect(
   const dw = Math.max(1, Math.round(imgW * scale) + pad);
   const dh = Math.max(1, Math.round(imgH * scale) + pad);
 
-  // Dipusatkan di dalam KOTAK (bukan kanvas), lalu digeser sesuai offset.
+  // Dipusatkan di dalam KOTAK. Tidak ada offset di sini: kalau ada, foto akan
+  // bergeser keluar kotak dan terpotong — persis yang harus dihindari.
   return {
     ...clip,
     dw,
     dh,
-    dx: box.x + Math.round(offsetXPx + (box.w - dw) / 2),
-    dy: box.y + Math.round(offsetYPx + (box.h - dh) / 2),
+    dx: Math.round(box.x + (box.w - dw) / 2),
+    dy: Math.round(box.y + (box.h - dh) / 2),
   };
 }
 

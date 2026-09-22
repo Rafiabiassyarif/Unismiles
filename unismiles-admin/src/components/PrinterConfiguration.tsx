@@ -39,7 +39,10 @@ const THERMAL_PRESETS = [
  * Yang ditampilkan ke pengguna diberi keterangan ukuran area cetaknya.
  */
 const LABEL_PRESETS = [
-  { value: 'nimbotpaper-polaroid', label: 'NIIMBOT Polaroid 54 × 67 mm — area cetak 46 × 46 mm' },
+  {
+    value: 'nimbotpaper-polaroid',
+    label: 'NIIMBOT Polaroid 54 × 67 mm — area cetak 46 × 46 mm (atas 6 mm, bawah 15 mm)',
+  },
 ] as const;
 
 const LABEL_PRESET_VALUES = LABEL_PRESETS.map(p => p.value);
@@ -545,24 +548,32 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
           </label>
 
           <label className="space-y-2">
-            <span className="label">Geser vertikal (−200…200 px)</span>
+            <span className="label">Kalibrasi posisi Y — atas/bawah (−200…200 px)</span>
             <input
               className={fieldClass} type="number" min={-200} max={200}
               value={config.thermal_offset_y_px} disabled={!canEdit}
               onChange={e => setField('thermal_offset_y_px', Number(e.target.value))}
             />
-            <span className="text-[10px] text-muted font-bold block">Positif = turun, negatif = naik. Untuk kalibrasi posisi di kertas.</span>
+            <span className="text-[10px] text-muted font-bold block">
+              Positif = kotak cetak turun, negatif = naik. 12 px = 1 mm. Menggeser SELURUH area foto; ukuran 46 × 46 mm tidak berubah.
+            </span>
+            <span className="text-[10px] text-amber-300 font-bold block">
+              Rentang geser vertikal ≈ ±{(config.paper_size ? 8 : 8)} mm. Kalau sudah mentok, areanya akan berhenti, bukan mengecil.
+            </span>
           </label>
 
           <label className="space-y-2">
-            <span className="label">Geser mendatar (−200…200 px)</span>
+            <span className="label">Kalibrasi posisi X — kiri/kanan (−200…200 px)</span>
             <input
               className={fieldClass} type="number" min={-200} max={200}
               value={config.thermal_offset_x_px} disabled={!canEdit}
               onChange={e => setField('thermal_offset_x_px', Number(e.target.value))}
             />
             <span className="text-[10px] text-muted font-bold block">
-              Positif = ke kanan, negatif = ke kiri. Dipakai kalau gambar tidak sejajar dengan desain yang sudah tercetak di label.
+              Positif = kotak cetak ke kanan, negatif = ke kiri. 12 px = 1 mm. Ukuran area foto tidak ikut berubah.
+            </span>
+            <span className="text-[10px] text-amber-300 font-bold block">
+              Rentang geser mendatar hanya ≈ ±1,4 mm: area 46 mm memakai 543 px dari 576 px kepala cetak.
             </span>
           </label>
 

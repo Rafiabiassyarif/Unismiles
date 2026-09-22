@@ -88,8 +88,15 @@ const LABEL_PRESETS = [
     paperWidthMm: 54,
     paperHeightMm: 67,
     marginTopMm: 6,
-    marginRightMm: 3,
-    marginLeftMm: 3,
+    /**
+     * Kiri/kanan bukan 3 mm. Kepala cetak B1 Pro hanya 48,77 mm, sedangkan
+     * 3 + 46 + 3 = 52 mm — tidak mungkin. Supaya area tetap TEPAT 46 mm, sisanya
+     * (48,77 - 46 = 2,77 mm) dibagi dua: 1,44 mm di kiri, dan sisa 6,56 mm di
+     * kanan karena 5,2 mm sisi kanan label memang di luar jangkauan printer.
+     * Hasilnya area 46 x 46 mm duduk di tengah area yang BISA dicetak.
+     */
+    marginLeftMm: 1.44,
+    marginRightMm: 6.56,
     /**
      * Bawah 14 mm seperti diminta, TETAPI kotak tingginya harus tepat 46 mm.
      * 6 + 46 + 14 = 66 mm, sedangkan kertasnya 67 mm. Selisih 1 mm itu harus
@@ -97,6 +104,17 @@ const LABEL_PRESETS = [
      * menjauhi area foto, daripada di atas yang mendekati bingkai.
      */
     marginBottomMm: 67 - 6 - 46,
+    /**
+     * Kalibrasi posisi fisik, dalam PERSEN MILIMETER (10 = 0,1 mm).
+     *
+     * Dipakai karena kertas label tidak selalu duduk persis di posisi yang sama
+     * di dalam printer. Perhitungan piksel tidak bisa mengetahuinya — hanya
+     * hasil cetak nyata yang bisa. Nilai di sini hanya NILAI AWAL; angka yang
+     * disimpan dari Admin selalu menang, supaya kalibrasi operator tidak
+     * tertimpa saat preset dipilih ulang.
+     */
+    offsetXMm: 0,
+    offsetYMm: 0,
   },
 ];
 

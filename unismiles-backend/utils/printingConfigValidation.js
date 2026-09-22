@@ -173,6 +173,18 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     normalized.print_margin_right_px = px(labelPreset.marginRightMm);
     normalized.print_margin_left_px = px(labelPreset.marginLeftMm);
     normalized.print_margin_bottom_px = px(labelPreset.marginBottomMm);
+
+    // Kalibrasi: preset hanya sebagai NILAI AWAL. Kalau Admin sudah pernah
+    // menyimpan angka, angka itu yang dipakai — kalibrasi operator datang dari
+    // hasil cetak nyata dan tidak boleh tertimpa hanya karena preset dipilih.
+    const belumPernah = input.thermal_offset_x_px === undefined && existing.thermal_offset_x_px === undefined;
+    if (belumPernah && labelPreset.offsetXMm !== undefined) {
+      normalized.thermal_offset_x_px = Math.round(labelPreset.offsetXMm * 300 / 25.4);
+    }
+    const belumY = input.thermal_offset_y_px === undefined && existing.thermal_offset_y_px === undefined;
+    if (belumY && labelPreset.offsetYMm !== undefined) {
+      normalized.thermal_offset_y_px = Math.round(labelPreset.offsetYMm * 300 / 25.4);
+    }
   }
 
   if (!enabled) {

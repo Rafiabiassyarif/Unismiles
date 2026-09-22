@@ -284,7 +284,8 @@ export class NiimbotPrinter {
     // kotak hanya membuang waktu, dan menjaga perhitungan tinta tetap setara
     // dengan yang benar-benar keluar di kertas.
     const inkBox = printBox(canvas.width, canvas.height,
-      adj.marginTopPx, adj.marginRightPx, adj.marginLeftPx, adj.marginBottomPx, B1_PRO_PRINTHEAD_PX);
+      adj.marginTopPx, adj.marginRightPx, adj.marginLeftPx, adj.marginBottomPx, B1_PRO_PRINTHEAD_PX,
+      adj.offsetXPx, adj.offsetYPx);
     ditherToBlackAndWhite(imageData.data, canvas.width, canvas.height, ONE_BIT_THRESHOLD, inkBox);
     ctx.putImageData(imageData, 0, 0);
 
