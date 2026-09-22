@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+# Nilai untuk build produksi TIDAK rahasia (URL publik) dan HARUS ikut git:
+# tanpa ini, build di mesin lain jatuh ke localhost dan login admin gagal.
+!.env.production
