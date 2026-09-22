@@ -91,6 +91,11 @@ export interface SessionData {
   challenge_id?: string;
   /** Kode unik Rp1-Rp99 yang ditambahkan ke harga dasar untuk transaksi ini. */
   unique_code?: number | null;
+  /**
+   * false = pembayaran sedang dimatikan di sisi server untuk keperluan uji,
+   * sehingga layar bayar dilewati. Sesi tetap ditandai 'verified' di database.
+   */
+  payment_required?: boolean;
 }
 
 export interface PhotoData {
@@ -270,7 +275,10 @@ export const startSession = async (
     amount: Number.isFinite(amount) && amount > 0 ? amount : null,
     status: 'active',
     challenge_id: challengeId,
-    unique_code: Number.isInteger(uniqueCode) && uniqueCode > 0 ? uniqueCode : null
+    unique_code: Number.isInteger(uniqueCode) && uniqueCode > 0 ? uniqueCode : null,
+    // false = server sedang mematikan pembayaran (payment_profiles.payment_required
+    // = false) untuk keperluan uji; layar bayar dilewati.
+    payment_required: (data.data as any)?.payment_required !== false
   };
 };
 

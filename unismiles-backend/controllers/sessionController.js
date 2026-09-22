@@ -47,6 +47,16 @@ const startSession = async (req, res) => {
     // while the Admin frame price remains the base amount.
     let uniqueAmountEnabled = true;
     let sessionTtlMins = 5;
+    // Jalur uji tanpa pembayaran.
+    //
+    // Dipakai saat mencetak/menguji kiosk tanpa harus membayar QRIS lebih dulu.
+    // DIBACA DARI DATA YANG SUDAH ADA (payment_profiles.payment_data), jadi tidak
+    // ada tabel atau kolom baru — dan menyalakannya kembali cukup dengan satu
+    // UPDATE: set payment_required = true.
+    //
+    // Bukan bypass UI: sesinya memang ditandai 'verified' di database, sehingga
+    // penjagaan pembayaran di endpoint upload dan cetak tetap berlaku apa adanya.
+    let paymentRequired = true;
     if (profiles.length) {
       try {
         const pData = typeof profiles[0].payment_data === 'string'
@@ -54,6 +64,7 @@ const startSession = async (req, res) => {
           : profiles[0].payment_data || {};
         uniqueAmountEnabled = pData.unique_amount_enabled !== false;
         sessionTtlMins = Number(pData.session_ttl_minutes) || 5;
+        paymentRequired = pData.payment_required !== false;
       } catch (e) {}
     }
 
@@ -81,16 +92,20 @@ const startSession = async (req, res) => {
 
     await Session.create({ session_code, kiosk_id, frame_template_id });
 
-    // Set payment columns on the session
+    // Set payment columns on the session.
+    //
+    // Kalau pembayaran dimatikan untuk uji, sesi langsung ditandai 'verified' —
+    // dan pemanggil diberi tahu lewat flag di respons supaya photobooth bisa
+    // MELEWATI layar bayar, bukan menampilkannya lalu menggantung.
     const challengeId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + sessionTtlMins * 60 * 1000);
       await pool.query(
-        `UPDATE sessions SET 
-           payment_status = 'pending', 
-           payment_required_amount = ?, 
-           payment_expires_at = ? 
+        `UPDATE sessions SET
+           payment_status = ?,
+           payment_required_amount = ?,
+           payment_expires_at = ?
          WHERE session_code = ?`,
-        [finalAmount, expiresAt, session_code]
+        [paymentRequired ? 'pending' : 'verified', finalAmount, expiresAt, session_code]
       );
 
     return res.status(201).json({
@@ -104,7 +119,10 @@ const startSession = async (req, res) => {
         unique_code: finalUniqueCode,
         payment_expires_at: expiresAt.toISOString(),
         verification_challenge_id: challengeId,
-        payment_method: 'qris_visual_proof'
+        payment_method: 'qris_visual_proof',
+        // false = pembayaran sedang dimatikan lewat payment_profiles; layar uji
+        // memakainya untuk melompat langsung ke pengambilan foto.
+        payment_required: paymentRequired
       }
     });
   } catch (error) {

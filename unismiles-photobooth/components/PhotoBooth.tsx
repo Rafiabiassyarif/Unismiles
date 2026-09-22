@@ -1749,7 +1749,16 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       setSessionAmount(sessionData.amount ?? null);
       setUniqueCode(sessionData.unique_code ?? null);
       setChallengeId(sessionData.challenge_id || '');
-      setStep('PAYMENT');
+      // Pembayaran bisa dimatikan dari sisi server (payment_profiles.payment_required
+      // = false) untuk keperluan uji. Sesi sudah ditandai 'verified' di database,
+      // jadi melewati layar ini tidak melewati penjagaan apa pun — upload dan cetak
+      // tetap memeriksa status pembayaran seperti biasa.
+      if (sessionData.payment_required === false) {
+        setVerificationStatus('verified');
+        setStep('CAPTURE');
+      } else {
+        setStep('PAYMENT');
+      }
     } catch (error) {
       const message = error instanceof KioskApiError ? error.message : 'Sesi gagal dibuat di backend utama.';
       setFlowError(message);
