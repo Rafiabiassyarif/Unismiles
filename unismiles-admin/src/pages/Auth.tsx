@@ -64,7 +64,23 @@ export const Auth: React.FC = () => {
       } else if (err?.code === 'ECONNABORTED' || /timeout/i.test(String(err?.message))) {
         errorMessage = 'Backend tidak merespons (timeout). Coba lagi sebentar.';
       } else {
-        errorMessage = 'Backend tidak dapat dihubungi. Periksa koneksi, lalu coba lagi.';
+        // TIDAK ADA RESPONS sama sekali.
+        //
+        // Pesan lama hanya berkata "periksa koneksi" dan menyembunyikan alamat
+        // yang benar-benar dipanggil. Akibatnya, saat backend sebenarnya HIDUP
+        // (dibuktikan: preflight 204, login 401 dari luar), pemeriksaan jadi
+        // diarahkan ke server padahal masalahnya di tempat lain. Alamat yang
+        // dipanggil dicantumkan supaya bisa langsung dibandingkan.
+        //
+        // Penyebab yang mungkin, dan cara membedakannya:
+        //   - dibuka dari http://localhost:3001 (vite dev) tanpa backend lokal
+        //   - berkas di server tidak lengkap, sehingga 404 berupa HTML tanpa
+        //     header CORS -> browser melaporkannya sebagai galat jaringan
+        //   - diblokir sebelum sampai ke server (proxy/VPN/extension)
+        const dipanggil = String(err?.config?.baseURL || '') + String(err?.config?.url || '');
+        const kode = err?.code ? ` [${err.code}]` : '';
+        errorMessage = `Tidak ada respons dari backend${kode}. Alamat yang dipanggil: ${dipanggil || 'tidak diketahui'}.`
+          + ' Buka panel dari https://unismilees.uniinside.net, bukan dari server dev lokal.';
       }
       setError(errorMessage);
     } finally {
