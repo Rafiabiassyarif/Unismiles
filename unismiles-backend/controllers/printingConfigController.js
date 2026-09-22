@@ -96,6 +96,55 @@ const controller = {
     } catch (error) { return next(error); }
   },
 
+  /**
+   * Laporan status printer dari browser kiosk (Web Bluetooth).
+   *
+   * Hanya browser yang tahu status printer label NIIMBOT: printer itu tidak
+   * muncul sebagai printer sistem, jadi kiosk-agent tidak bisa melaporkannya.
+   *
+   * Nilai yang diterima dibatasi ketat — endpoint ini memakai kunci kiosk, dan
+   * data dari browser tidak boleh bisa menulis apa pun selain status printer.
+   */
+  async reportFromBrowser(req, res, next) {
+    try {
+      const kioskId = req.kiosk?.id;
+      if (!kioskId) return res.status(401).json({ success: false, message: 'Kiosk identity required.' });
+
+      const body = req.body || {};
+      const status = typeof body.status === 'string' ? body.status.slice(0, 30) : null;
+      const printerName = typeof body.printer_name === 'string' ? body.printer_name.slice(0, 255) : null;
+      const paperStatus = typeof body.paper_status === 'string' ? body.paper_status.slice(0, 30) : null;
+      const lastError = typeof body.last_error === 'string' ? body.last_error.slice(0, 255) : null;
+
+      // Daftar status yang bermakna bagi panel Admin. Nilai lain ditolak supaya
+      // panel tidak menampilkan apa pun yang tidak dikenal.
+      const ALLOWED_STATUS = ['READY', 'OFFLINE', 'ERROR', 'UNKNOWN'];
+      if (status && !ALLOWED_STATUS.includes(status)) {
+        return res.status(400).json({ success: false, message: `status must be one of: ${ALLOWED_STATUS.join(', ')}.` });
+      }
+
+      const row = await printingConfigModel.getOrCreate(kioskId);
+      const current = printingConfigModel.format(row);
+
+      // config_version dari laporan ini harus sama dengan versi konfigurasi yang
+      // melayani, supaya panel Admin menandai "Applied" dengan benar.
+      await printingConfigModel.updateReported(kioskId, {
+        config_version: current.config.config_version,
+        adapter: current.reported?.adapter || current.config.adapter,
+        printer_name: printerName,
+        status,
+        paper_status: paperStatus,
+        prints_remaining: current.reported?.prints_remaining ?? null,
+        last_print_error: lastError,
+        supported_adapters: current.reported?.supported_adapters || [],
+        available_printers: current.reported?.available_printers || [],
+        reported_at: new Date(),
+      });
+
+      return res.status(200).json({ success: true, message: 'Printer status recorded.' });
+    } catch (error) { return next(error); }
+  },
+
   async test(req, res, next) {
     try {
       const kiosk = await kioskModel.getKioskById(req.params.kioskId);

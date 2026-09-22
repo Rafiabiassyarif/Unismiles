@@ -9,6 +9,7 @@ const paymentController = require('../../controllers/paymentController');
 
 const kioskController = require('../../controllers/kioskController');
 const printJobController = require('../../controllers/printJobController');
+const printingConfigController = require('../../controllers/printingConfigController');
 const { createRateLimiter } = require('../../utils/security');
 
 router.use(verifyApiKey);
@@ -40,5 +41,21 @@ router.put('/sessions/:session_code/complete', sessionController.completeSession
 router.post('/sessions/:session_code/send-email', createRateLimiter({ windowMs: 10 * 60_000, max: 3, keyGenerator: req => `${req.kiosk?.id || 'unknown'}:${req.ip}` }), sessionController.sendDigitalCopy);
 router.post('/sessions/:session_code/print', printJobController.createPrintJob);
 router.get('/print-jobs/:job_id', printJobController.getPrintJob);
+
+/**
+ * Laporan status printer langsung dari browser kiosk.
+ *
+ * Kenapa dari browser, bukan dari kiosk-agent: printer label NIIMBOT tersambung
+ * lewat Web Bluetooth DI BROWSER, jadi hanya browser yang tahu printer mana yang
+ * sedang terpakai dan apakah sambungannya hidup. Agent OS tidak melihat printer
+ * itu sama sekali (NIIMBOT bukan printer sistem).
+ *
+ * Tanpa ini, panel Admin hanya bisa menampilkan status printer sistem — dan
+ * untuk kiosk berlabel termal, statusnya akan selalu kosong.
+ *
+ * Hasilnya tersimpan di kolom reported_* milik kiosk_printing_configs, jadi
+ * panel Admin memakai tampilan yang sudah ada (Desired/Reported Configuration).
+ */
+router.post('/printer-status', printingConfigController.reportFromBrowser);
 
 module.exports = router;

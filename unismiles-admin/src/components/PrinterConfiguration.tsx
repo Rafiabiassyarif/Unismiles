@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Printer, RefreshCw, Save, Sliders, TestTube2, Wifi, WifiOff } from 'lucide-react';
+import { AlertTriangle, Bluetooth, CheckCircle2, Printer, RefreshCw, Save, Sliders, TestTube2, Wifi, WifiOff } from 'lucide-react';
 import { toast } from 'sonner';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
@@ -113,7 +113,6 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
@@ -404,6 +403,60 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
       </div>
 
       {!adapterSupported && <div className="text-xs text-amber-300 font-bold flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Adapter dari konfigurasi lama belum didukung Agent ini.</div>}
+
+      {/* ------------------------------------------------------------------
+          Status printer label (NIIMBOT).
+
+          Tidak ada tombol sambung di sini, dan itu disengaja: printer label
+          tersambung lewat Web Bluetooth DI BROWSER KIOSK, bukan di admin. Tab
+          browser admin tidak bisa dipakai untuk mencetak di kiosk — sambungan
+          Bluetooth terikat pada satu tab, bukan pada akun.
+
+          Karena itu status di bawah berasal dari LAPORAN browser kiosk lewat
+          POST /kiosk/printer-status. Halaman cetak photobooth yang melaporkannya
+          setiap kali printer tersambung.
+         ------------------------------------------------------------------ */}
+      <div className="p-5 rounded-2xl bg-black/20 border border-white/5 space-y-4">
+        <div>
+          <p className="text-sm font-black uppercase tracking-tight flex items-center gap-2">
+            <Bluetooth className="w-4 h-4 text-primary" /> Printer Label (Bluetooth)
+          </p>
+          <p className="text-[10px] text-muted font-bold mt-1">
+            Printer NIIMBOT tidak muncul sebagai printer sistem. Sambungannya dilakukan
+            di browser kiosk, lalu statusnya dilaporkan ke sini.
+          </p>
+        </div>
+
+        {reported?.printer_name || reported?.status ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+            <div>
+              <p className="label">Status</p>
+              <p className={cn('font-black mt-1',
+                reported?.status === 'READY' ? 'text-emerald-400'
+                  : reported?.status === 'ERROR' ? 'text-red-300' : 'text-amber-300')}>
+                {reported?.status || '—'}
+              </p>
+            </div>
+            <div>
+              <p className="label">Printer</p>
+              <p className="font-black mt-1 truncate">{reported?.printer_name || '—'}</p>
+            </div>
+            <div>
+              <p className="label">Dilaporkan pada</p>
+              <p className="font-black mt-1">{reported?.reported_at
+                ? new Date(reported.reported_at).toLocaleString('id-ID') : '—'}</p>
+            </div>
+          </div>
+        ) : (
+          <div className="text-xs text-amber-300 font-bold flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              Belum ada laporan dari kiosk. Buka halaman cetak di browser kiosk,
+              sambungkan printnya, lalu statusnya akan muncul di sini.
+            </span>
+          </div>
+        )}
+      </div>
 
       {/* ------------------------------------------------------------------
           Penyesuaian tampilan foto + kalibrasi cetak.

@@ -114,13 +114,52 @@ export class NiimbotPrinter {
       this.printTaskName = detected;
     }
 
+    const deviceName = (info as { deviceName?: string } | undefined)?.deviceName || 'tidak diketahui';
+
+    // Laporkan ke Admin. Tidak di-await: status bukan alasan menunda cetak.
+    void this.reportStatus('READY', { printerName: deviceName });
+
     return {
-      deviceName: (info as { deviceName?: string } | undefined)?.deviceName || 'tidak diketahui',
+      deviceName,
       model: meta?.model || 'tidak diketahui',
       printTask: this.printTaskName,
       // Dari pengukuran di kertas, bukan dari tabel model — lihat catatan berkas.
       printheadPx: B1_PRO_PRINTHEAD_PX,
     };
+  }
+
+  /**
+   * Laporkan status printer ke backend supaya panel Admin bisa menampilkannya.
+   *
+   * Hanya browser yang tahu status ini: printer label NIIMBOT tersambung lewat
+   * Web Bluetooth di sini, dan tidak muncul sebagai printer sistem — jadi
+   * kiosk-agent tidak bisa melaporkannya.
+   *
+   * Kegagalan pelaporan TIDAK boleh menggagalkan cetak: status hanya informasi
+   * bagi Admin, sedangkan label yang tidak tercetak adalah kerugian nyata.
+   */
+  async reportStatus(
+    status: 'READY' | 'OFFLINE' | 'ERROR' | 'UNKNOWN',
+    details: { printerName?: string; paperStatus?: string; lastError?: string } = {},
+  ): Promise<void> {
+    const apiKey = readKioskApiKey();
+    const baseUrl = readApiBaseUrl();
+    if (!apiKey || !baseUrl) return;
+
+    try {
+      await fetch(`${baseUrl.replace(/\/$/, '')}/kiosk/printer-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({
+          status,
+          printer_name: details.printerName ?? null,
+          paper_status: details.paperStatus ?? null,
+          last_error: details.lastError ?? null,
+        }),
+      });
+    } catch {
+      // Sengaja ditelan: lihat catatan di atas.
+    }
   }
 
   async disconnect(): Promise<void> {
@@ -243,4 +282,30 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error('Gambar tidak bisa dimuat.'));
     img.src = src;
   });
+}
+
+
+/**
+ * Kunci API kiosk.
+ *
+ * Dibaca dari localStorage dengan kunci yang sama dipakai `storageService`, lalu
+ * dari env build. Kalau tidak ada, pelaporan status dilewati — lebih baik tidak
+ * ada status di Admin daripada mencetak dengan kredensial salah.
+ */
+function readKioskApiKey(): string {
+  try {
+    const direct = localStorage.getItem('unismiles_kiosk_api_key');
+    if (direct) return direct.trim();
+    const cfg = localStorage.getItem('unismiles_config');
+    if (cfg) {
+      const parsed = JSON.parse(cfg);
+      if (parsed?.apiKey) return String(parsed.apiKey).trim();
+    }
+  } catch { /* localStorage bisa diblokir; perlakukan sebagai tidak ada */ }
+  return String(import.meta.env.VITE_KIOSK_API_KEY || '').trim();
+}
+
+/** Base URL API backend. */
+function readApiBaseUrl(): string {
+  return String(import.meta.env.VITE_API_BASE_URL || '').trim();
 }
