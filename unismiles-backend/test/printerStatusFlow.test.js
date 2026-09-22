@@ -90,3 +90,22 @@ test('pelaporan gagal secara diam saat kunci tidak ada', () => {
   assert.match(printer, /if \(!apiKey \|\| !baseUrl\) return;/,
     'harus berhenti diam-diam kalau kunci/URL tidak tersedia');
 });
+
+test('endpoint kiosk mengirim SEMUA field kalibrasi, bukan sebagian', () => {
+  // Kegagalan nyata: thermal_offset_x_px tersimpan di DB dan diteruskan lewat
+  // socket + model, tetapi TIDAK ada di respons GET /kiosk/printing-config.
+  // Photobooth membaca dari endpoint itu, jadi nilai kalibrasi mendatar
+  // diam-diam tidak pernah sampai — Admin terlihat tersimpan tanpa efek.
+  //
+  // Daftar field diturunkan dari PHOTO_ADJUST_LIMITS supaya menambah kolom baru
+  // tanpa menambahkannya ke respons akan GAGAL di sini, bukan di kertas.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const ctrl = fs.readFileSync(path.join(__dirname, '..', 'controllers', 'printingConfigController.js'), 'utf8');
+  const { PHOTO_ADJUST_LIMITS } = require('../utils/printingConfigValidation');
+
+  const badan = ctrl.slice(ctrl.indexOf('getForKiosk'));
+  const hilang = Object.keys(PHOTO_ADJUST_LIMITS).filter(k => !new RegExp('\\b' + k + '\\s*:').test(badan));
+  assert.deepStrictEqual(hilang, [],
+    'field kalibrasi ini tidak dikirim ke photobooth: ' + hilang.join(', '));
+});

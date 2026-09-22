@@ -180,6 +180,7 @@ const controller = {
           photo_saturation: config.photo_saturation,
           thermal_density: config.thermal_density,
           thermal_offset_y_px: config.thermal_offset_y_px,
+          thermal_offset_x_px: config.thermal_offset_x_px,
           photo_fit_mode: config.photo_fit_mode,
           config_version: config.config_version,
         },
