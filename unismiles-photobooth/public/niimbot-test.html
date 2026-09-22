@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Uji Cetak Niimbot B1 Pro</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 24px;
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f172a; color: #e2e8f0;
+    }
+    main { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: #94a3b8; margin: 0 0 22px; font-size: 13px; }
+    section {
+      background: #1e293b; border: 1px solid #334155; border-radius: 12px;
+      padding: 18px; margin-bottom: 16px;
+    }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+         color: #94a3b8; margin: 0 0 14px; }
+    label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 6px; }
+    input, select {
+      width: 100%; box-sizing: border-box; background: #0f172a; color: #e2e8f0;
+      border: 1px solid #334155; border-radius: 8px; padding: 9px 11px; font: inherit;
+    }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    button {
+      background: #2563eb; color: #fff; border: 0; border-radius: 8px;
+      padding: 10px 16px; font: inherit; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.ghost { background: #334155; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+    #log {
+      background: #020617; border: 1px solid #334155; border-radius: 8px;
+      padding: 12px; height: 220px; overflow-y: auto; white-space: pre-wrap;
+      font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin-top: 14px;
+    }
+    .warn { background: #451a03; border-color: #92400e; color: #fde68a; }
+    .ok { color: #4ade80; }
+    .bad { color: #f87171; }
+    code { background: #020617; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+    .facts { font-size: 13px; color: #cbd5e1; }
+    .facts b { color: #e2e8f0; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Uji Cetak — Niimbot B1 Pro</h1>
+  <p class="sub">Halaman uji mandiri. Buka di Chrome/Edge. Web Bluetooth hanya aktif di HTTPS atau <code>localhost</code>.</p>
+
+  <section class="warn">
+    <div class="facts">
+      <b>Batas fisik B1 Pro:</b> kepala cetak <b>576 px</b> = <b>48,8 mm</b> (terverifikasi di kertas oleh penulis driver).<br>
+      Label <b>54 mm</b> = 638 px → kelebihan <b>62 px = 5,3 mm tidak akan tercetak</b>, tanpa pesan error.<br>
+      Karena itu halaman ini memakai lebar <b>48 mm (567 px)</b> sebagai bawaan. Tinggi 67 mm (791 px) aman — batas tinggi printer 350 mm.
+    </div>
+  </section>
+
+  <section>
+    <h2>1. Ukuran label</h2>
+    <div class="row3">
+      <div>
+        <label>Lebar (mm)</label>
+        <input id="w_mm" type="number" value="48" min="1" step="0.5">
+      </div>
+      <div>
+        <label>Tinggi (mm)</label>
+        <input id="h_mm" type="number" value="67" min="1" step="0.5">
+      </div>
+      <div>
+        <label>Geser vertikal (px)</label>
+        <input id="offset_y" type="number" value="0" step="1">
+      </div>
+    </div>
+    <p class="facts" id="geom">—</p>
+  </section>
+
+  <section>
+    <h2>2. Gambar yang dicetak</h2>
+    <div class="row">
+      <div>
+        <label>Pilih berkas (dari laptop)</label>
+        <input id="file" type="file" accept="image/*">
+      </div>
+      <div>
+        <label>atau pakai gambar uji bawaan</label>
+        <button class="ghost" id="useSample" type="button">Pakai gambar uji</button>
+      </div>
+    </div>
+    <div class="row3">
+      <div>
+        <label>Jumlah salinan</label>
+        <input id="copies" type="number" value="1" min="1" max="10">
+      </div>
+      <div>
+        <label>Kepekatan (1–5)</label>
+        <input id="density" type="number" value="3" min="1" max="5">
+      </div>
+      <div>
+        <label>Pratinjau</label>
+        <div id="preview" style="font-size:12px;color:#94a3b8;">belum ada</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="connect" type="button">1. Sambungkan printer</button>
+      <button id="print" type="button" disabled>2. Cetak</button>
+      <button class="ghost" id="clear" type="button">Bersihkan log</button>
+    </div>
+    <div id="log"></div>
+  </section>
+
+  <section>
+    <h2>Catatan penting</h2>
+    <div class="facts">
+      <b>Sambungan putus = harus pilih printer lagi.</b> Driver ini memanggil pemilih perangkat
+      hanya sekali, dan Bluetooth-nya dilepas printer saat idle. Jadi setiap kali printer mati
+      sendiri atau pindah perangkat, klik “Sambungkan printer” lagi.<br><br>
+      <b>Gambar diambil lewat jaringan</b> (<code>fetch</code>), jadi berkas lokal harus dibaca
+      sebagai data-URL (halaman ini sudah begitu) dan gambar dari server harus mengizinkan CORS.
+    </div>
+  </section>
+</main>
+
+<script src="/niimbot/niimbot.js"></script>
+<script src="/niimbot/label-size.js"></script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var logEl = $('log');
+
+  function log(msg, cls) {
+    var t = new Date().toLocaleTimeString('id-ID');
+    var line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.textContent = '[' + t + '] ' + msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+    console.log(msg);
+  }
+
+  // --- Model B1 Pro (dari registry.json repo) ------------------------------
+  // id 4097, 300 dpi, protocol v4, density bawaan 3.
+  var MODEL = {
+    name_prefixes: ['B1'],
+    task: 'v4',
+    density: 3,
+    label_type: 1,
+    speed: 1,
+  };
+
+  // Batas kepala cetak B1 Pro, dari registry.json: 576 px, terverifikasi di kertas.
+  var PRINTHEAD_PX = 576;
+
+  function currentSize() {
+    var w_mm = parseFloat($('w_mm').value);
+    var h_mm = parseFloat($('h_mm').value);
+    var offset = parseInt($('offset_y').value, 10) || 0;
+
+    var geom = NiimbotLabelSize.sizeFromMm({
+      w_mm: w_mm, h_mm: h_mm, dpi: 300, printhead_px: PRINTHEAD_PX,
+    });
+    if (!geom) return null;
+    geom.offset_y_px = offset;
+    geom.requested_px = Math.round(w_mm * 300 / 25.4);
+    return geom;
+  }
+
+  function refreshGeometry() {
+    var g = currentSize();
+    if (!g) { $('geom').textContent = 'Ukuran tidak valid.'; return; }
+    var mm = function (px) { return (px * 25.4 / 300).toFixed(2); };
+    var txt = 'label ' + g.w_px + ' × ' + g.h_px + ' px  (' + mm(g.w_px) + ' × ' + mm(g.h_px) + ' mm)';
+    if (g.clamped) {
+      txt += '  —  DIKUNCI ke lebar kepala cetak: ' + g.requested_px + ' px diminta, ' + g.w_px + ' px tercetak, '
+           + (g.requested_px - g.w_px) + ' px (' + ((g.requested_px - g.w_px) * 25.4 / 300).toFixed(2) + ' mm) hilang';
+    } else {
+      txt += '  —  muat di kepala cetak';
+    }
+    $('geom').textContent = txt;
+  }
+
+  ['w_mm', 'h_mm', 'offset_y'].forEach(function (id) {
+    $(id).addEventListener('input', refreshGeometry);
+  });
+  refreshGeometry();
+
+  // --- Gambar uji bawaan, digambar di canvas lalu jadi data-URL -------------
+  // Dipakai data-URL karena driver mengambil gambar lewat fetch(); ini menghindari
+  // masalah CORS sepenuhnya.
+  function sampleImage() {
+    var W = 567, H = 791;
+    var c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    var x = c.getContext('2d');
+    x.fillStyle = '#fff'; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#000';
+    x.fillRect(20, 20, W - 40, 6);
+    x.fillRect(20, 34, W - 40, 2);
+    x.font = 'bold 46px sans-serif';
+    x.fillText('UJI CETAK', 34, 130);
+    x.font = '26px sans-serif';
+    x.fillText('Niimbot B1 Pro', 34, 180);
+    x.fillText('300 dpi · lebar 48 mm', 34, 218);
+    x.fillText('Tinggi 67 mm (' + H + ' px)', 34, 254);
+    x.fillText('Kepekatan: ' + $('density').value, 34, 290);
+    x.fillText(new Date().toLocaleString('id-ID'), 34, 326);
+    x.font = 'bold 22px sans-serif';
+    x.fillText('1 2 3 4 5 6 7 8 9 0', 34, 400);
+    x.font = '20px sans-serif';
+    x.fillText('ABCDEFGHIJKLMNOPQRSTUVWXYZ', 34, 436);
+    x.fillText('abcdefghijklmnopqrstuvwxyz', 34, 466);
+    // Blok abu-abu: 16 tingkat, untuk memeriksa hasil skala abu-abu.
+    x.font = '18px sans-serif';
+    x.fillText('Skala abu-abu:', 34, 520);
+    for (var i = 0; i < 16; i++) {
+      var v = Math.round(i * 255 / 15);
+      x.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+      x.fillRect(34 + i * 32, 535, 30, 40);
+    }
+    x.fillStyle = '#000';
+    // Kotak tepi: menguji apakah sisi kanan/kiri terpotong.
+    x.lineWidth = 4;
+    x.strokeRect(22, 610, W - 44, 120);
+    x.font = 'bold 20px sans-serif';
+    x.fillText('tepi kiri ', 40, 660);
+    x.fillText(' tepi kanan', W - 190, 660);
+    x.fillText('kalau kotak ini terpotong,', 40, 700);
+    x.fillText('lebarnya melebihi kepala cetak', 40, 726);
+    return c.toDataURL('image/png');
+  }
+
+  var currentImageUrl = null;
+
+  function setPreview(label) {
+    $('preview').textContent = label;
+  }
+
+  $('useSample').addEventListener('click', function () {
+    currentImageUrl = sampleImage();
+    setPreview('gambar uji ' + '567×791');
+    log('Gambar uji disiapkan (567 × 791 px, sesuai label 48 × 67 mm).', 'ok');
+  });
+
+  $('file').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      currentImageUrl = reader.result;
+      var img = new Image();
+      img.onload = function () {
+        setPreview(f.name + ' (' + img.naturalWidth + '×' + img.naturalHeight + ')');
+        var g = currentSize();
+        if (g && img.naturalWidth !== g.w_px) {
+          log('Perhatian: gambar ' + img.naturalWidth + ' px akan direntangkan/dipadatkan ke ' + g.w_px
+              + ' px (aspek rasio diabaikan driver). Siapkan gambar pada rasio label.', 'bad');
+        } else {
+          log('Berkas siap: ' + f.name, 'ok');
+        }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(f);
+  });
+
+  // --- Sambung & cetak -----------------------------------------------------
+  $('connect').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true;
+    log('Membuka pemilih perangkat Bluetooth…');
+    // Niimbot.printImage akan membuka pemilih; untuk sekadar menyambung kita
+    // pakai gambar uji 1×. Kita cegah cetak nyata dengan memeriksa dukungan dulu.
+    if (!Niimbot.isSupported()) {
+      log('Web Bluetooth tidak tersedia. Pakai Chrome/Edge, dan buka lewat https:// atau localhost.', 'bad');
+      btn.disabled = false;
+      return;
+    }
+    if (!currentImageUrl) { currentImageUrl = sampleImage(); setPreview('gambar uji 567×791'); }
+    var g = currentSize();
+    if (!g) { log('Ukuran label tidak valid.', 'bad'); btn.disabled = false; return; }
+
+    log('Menyambung sebagai ' + MODEL.task + ' (' + g.w_px + '×' + g.h_px + ' px). Cetak 1 label uji…');
+    // copies=1 dengan ukuran terkecil: cara paling andal untuk memastikan sambungan hidup.
+    Niimbot.printImage(currentImageUrl, {
+      model: MODEL,
+      size: { w_px: g.w_px, h_px: g.h_px, offset_y_px: g.offset_y_px },
+      copies: 1,
+      density: parseInt($('density').value, 10) || MODEL.density,
+      onProgress: function (s) { log('  ' + (typeof s === 'string' ? s : JSON.stringify(s))); },
+    }).then(function () {
+      log('Tersambung dan 1 label uji tercetak.', 'ok');
+      $('print').disabled = false;
+      btn.disabled = false;
+      var info = Niimbot.printer;
+      if (info) log('Printer terdeteksi: ' + JSON.stringify(info));
+    }).catch(function (err) {
+      log('Gagal: ' + (err && err.message ? err.message : err), 'bad');
+      btn.disabled = false;
+    });
+  });
+
+  $('print').addEventListener('click', function () {
+    var btn = this;
+    if (!currentImageUrl) { log('Pilih berkas atau pakai gambar uji dulu.', 'bad'); return; }
+    var g = currentSize();
+    if (!g) { log('Ukuran label tidak valid.', 'bad'); return; }
+    var copies = Math.max(1, parseInt($('copies').value, 10) || 1);
+
+    btn.disabled = true;
+    log('Mencetak ' + copies + ' salinan pada ' + g.w_px + '×' + g.h_px + ' px…');
+    Niimbot.printImage(currentImageUrl, {
+      model: MODEL,
+      size: { w_px: g.w_px, h_px: g.h_px, offset_y_px: g.offset_y_px },
+      copies: copies,
+      density: parseInt($('density').value, 10) || MODEL.density,
+      onProgress: function (s) { log('  ' + (typeof s === 'string' ? s : JSON.stringify(s))); },
+    }).then(function () {
+      log('Selesai — ' + copies + ' label tercetak.', 'ok');
+      btn.disabled = false;
+    }).catch(function (err) {
+      var msg = err && err.message ? err.message : String(err);
+      log('Gagal: ' + msg, 'bad');
+      if (/not connected|disconnected|gatt/i.test(msg)) {
+        log('Sambungan Bluetooth terputus. Klik “Sambungkan printer” lagi untuk memilih perangkat.', 'bad');
+      }
+      btn.disabled = false;
+    });
+  });
+
+  $('clear').addEventListener('click', function () { logEl.textContent = ''; });
+
+  log('Siap. Langkah: pilih gambar → Sambungkan printer → Cetak.');
+  log('Batas kepala cetak B1 Pro: ' + PRINTHEAD_PX + ' px (' + (PRINTHEAD_PX * 25.4 / 300).toFixed(2) + ' mm).');
+})();
+</script>
+</body>
+</html>
