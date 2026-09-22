@@ -89,6 +89,18 @@ test('tidak ada jalur lain yang MENULIS status verified', () => {
 
 const paymentController = read(path.join(backend, 'controllers', 'paymentController.js'));
 
+/**
+ * Buang komentar sebelum memeriksa pola kode.
+ *
+ * Diperlukan di sini: komentar penjelas menyebut pola LAMA sebagai contoh cacat,
+ * dan pemeriksaan teks biasa akan membacanya sebagai kode yang masih ada. Itu
+ * membuat test gagal pada perbaikan yang benar — dan lebih buruk, membuat orang
+ * menghapus penjelasannya supaya test hijau.
+ */
+const kodeSaja = (src) => src
+  .replace(/\/\*[\s\S]*?\*\//g, '')
+  .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
 test('Admin bisa menyalakan dan mematikan permintaan pembayaran', () => {
   // Sebelumnya kunci ini HANYA bisa diubah lewat SQL langsung, dan itu sebabnya
   // menyalakannya kembali harus lewat query manual. Sekarang panel Admin punya
@@ -152,4 +164,32 @@ test('saklar ada di tab Settings bagian payment', () => {
 test('bawaan di panel Admin adalah meminta bayar', () => {
   assert.match(settings, /useState\(true\);[^\n]*\n?[\s\S]{0,200}paymentRequired|const \[paymentRequired, setPaymentRequired\] = useState\(true\)/,
     'bawaan harus true supaya pemasukan tidak mati tanpa diminta');
+});
+
+// --- Dua penulis ke satu kolom JSON tidak boleh saling menimpa ---
+
+test('unggah gambar QRIS tidak menghapus pengaturan lain', () => {
+  // INI AKAR MASALAHNYA: sebelum ini, unggah gambar menulis
+  // JSON.stringify({ qris_image_url }) — mengganti SELURUH payment_data.
+  // Jadi mematikan pembayaran dari Admin lalu mengganti gambar QRIS akan
+  // menghapus saklarnya, dan kiosk kembali meminta bayar. Gejalanya persis
+  // seperti laporan "sudah disable tapi masih ada proses payment".
+  const kode = kodeSaja(paymentController);
+  assert.ok(!/JSON\.stringify\(\{ qris_image_url: fileUrl \}\)/.test(kode),
+    'tidak boleh menulis objek baru yang hanya berisi gambar QRIS');
+  // Spasi di dalam objek dibiarkan longgar; yang penting penggabungannya ada.
+  assert.match(kode, /\{[^}]*\.\.\.paymentData[^}]*qris_image_url: fileUrl[^}]*\}/,
+    'unggahan harus MENGGABUNG dengan pengaturan yang sudah ada');
+});
+
+test('kedua penulis payment_data menggabung, bukan menimpa', () => {
+  // Ada dua jalur yang menulis kolom yang sama: update profil dan unggah
+  // gambar. Keduanya harus membaca dulu, baru menggabung — kalau salah satu
+  // menimpa, pengaturan pengguna hilang tanpa pesan apa pun.
+  const kode = kodeSaja(paymentController);
+  const jumlahBaca = (kode.match(/findDefaultForKiosk/g) || []).length;
+  assert.ok(jumlahBaca >= 2,
+    'kedua penulis harus membaca yang ada dulu (ditemukan ' + jumlahBaca + ')');
+  const jumlahGabung = (kode.match(/\.\.\.paymentData/g) || []).length;
+  assert.ok(jumlahGabung >= 1, 'harus ada penggabungan eksplisit');
 });

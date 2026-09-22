@@ -31,10 +31,33 @@ const uploadAdminQRIS = async (req, res) => {
     await assertImageFile(req.file, { allowed: ['png', 'jpeg', 'webp'], maxBytes: 5 * 1024 * 1024 });
     const user_id = req.user.id;
     const fileUrl = '/uploads/' + req.file.filename;
-    const payment_data = JSON.stringify({ qris_image_url: fileUrl });
-    
-    await PaymentProfile.upsertProfile({ user_id, payment_data });
-    
+
+    // GABUNG, jangan timpa.
+    //
+    // Sebelumnya di sini ditulis `JSON.stringify({ qris_image_url: fileUrl })`
+    // — yaitu MENGGANTI seluruh payment_data. Akibatnya setiap kali gambar QRIS
+    // diunggah, SEMUA pengaturan lain di dalamnya hilang: saklar
+    // `payment_required`, mode verifikasi, alias merchant, dan lain-lain.
+    //
+    // Gejalanya persis seperti yang dilaporkan: pembayaran sudah dimatikan dari
+    // Admin, tetapi kiosk tetap meminta bayar — karena nilai yang dimatikan itu
+    // sudah terhapus oleh unggahan gambar, dan pembacanya jatuh ke bawaan
+    // "harus bayar" (bawaan yang memang benar untuk keamanan).
+    //
+    // Dua penulis ke satu kolom JSON harus MENGGABUNG, bukan saling menimpa.
+    const existing = await PaymentProfile.findDefaultForKiosk(user_id);
+    let paymentData = {};
+    if (existing && existing.payment_data) {
+      try {
+        paymentData = typeof existing.payment_data === 'string'
+          ? JSON.parse(existing.payment_data)
+          : existing.payment_data;
+      } catch (e) { /* data rusak: mulai dari objek kosong */ }
+    }
+    paymentData = { ...paymentData, qris_image_url: fileUrl };
+
+    await PaymentProfile.upsertProfile({ user_id, payment_data: JSON.stringify(paymentData) });
+
     return res.status(200).json({ success: true, url: fileUrl });
   } catch (error) {
     if (req.file?.path) await fs.unlink(req.file.path).catch(() => {});
