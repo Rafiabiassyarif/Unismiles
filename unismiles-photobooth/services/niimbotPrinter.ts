@@ -45,6 +45,8 @@ export interface PrintAdjustments {
   density: number;
   /** Geser vertikal gambar pada kertas, piksel. Positif = turun. */
   offsetYPx: number;
+  /** Geser mendatar gambar pada kertas, piksel. Positif = kanan. */
+  offsetXPx: number;
   /**
    * 'fit' = muat seluruh foto, sisa label jadi putih (ada bingkai).
    * 'cover' = penuhi label, rasio dijaga, kelebihan dipotong (tanpa bingkai).
@@ -59,6 +61,7 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
   saturation: 100,
   density: 3,
   offsetYPx: 0,
+  offsetXPx: 0,
   fitMode: 'fit',
 };
 
@@ -241,7 +244,8 @@ export class NiimbotPrinter {
     ctx.filter = `brightness(${adj.brightness}%) contrast(${adj.contrast}%) saturate(${adj.saturation}%)`;
 
     // Perhitungan dipindah ke drawRect() supaya bisa diuji tanpa canvas.
-    const r = drawRect(adj.fitMode, canvas.width, canvas.height, img.naturalWidth, img.naturalHeight, adj.offsetYPx);
+    const r = drawRect(adj.fitMode, canvas.width, canvas.height, img.naturalWidth, img.naturalHeight,
+      adj.offsetYPx, adj.offsetXPx);
     ctx.drawImage(img, r.dx, r.dy, r.dw, r.dh);
     ctx.restore();
 

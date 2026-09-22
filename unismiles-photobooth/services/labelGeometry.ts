@@ -131,8 +131,14 @@ export function drawRect(
   imgW: number,
   imgH: number,
   offsetYPx = 0,
+  offsetXPx = 0,
 ): DrawRect {
-  const base: DrawRect = { dx: 0, dy: Math.round(offsetYPx), dw: canvasW, dh: canvasH };
+  const base: DrawRect = {
+    dx: Math.round(offsetXPx),
+    dy: Math.round(offsetYPx),
+    dw: canvasW,
+    dh: canvasH,
+  };
   if (mode === 'stretch' || imgW <= 0 || imgH <= 0) return base;
 
   // fit = muat di dalam (faktor terkecil), cover = penuhi (faktor terbesar).
@@ -147,10 +153,12 @@ export function drawRect(
   const dw = Math.max(1, Math.round(imgW * scale) + pad);
   const dh = Math.max(1, Math.round(imgH * scale) + pad);
 
+  // Geser mendatar TIDAK ikut dibagi dua: pengguna menggesernya dari posisi
+  // terpusat, jadi offset adalah perpindahan dari pusat — bukan koordinat absolut.
   return {
     dw,
     dh,
-    dx: Math.round((canvasW - dw) / 2),
+    dx: Math.round(offsetXPx + (canvasW - dw) / 2),
     dy: Math.round(offsetYPx + (canvasH - dh) / 2),
   };
 }

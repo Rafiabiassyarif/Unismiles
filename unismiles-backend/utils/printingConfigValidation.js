@@ -33,6 +33,10 @@ const PHOTO_ADJUST_LIMITS = {
   photo_saturation: { min: 0, max: 150, fallback: 100 },
   thermal_density: { min: 1, max: 5, fallback: 3 },
   thermal_offset_y_px: { min: -200, max: 200, fallback: 0 },
+  // Geser mendatar. Tanpa ini, gambar yang tidak sejajar MENDATAR dengan
+  // desain tercetak di kertas label tidak bisa dikalibrasi dari Admin sama
+  // sekali — harus menyentuh kode dan deploy ulang.
+  thermal_offset_x_px: { min: -200, max: 200, fallback: 0 },
 };
 const PHOTO_FIT_MODES = ['fit', 'cover', 'stretch'];
 
@@ -99,6 +103,7 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     photo_saturation: Number(existing.photo_saturation ?? PHOTO_ADJUST_LIMITS.photo_saturation.fallback),
     thermal_density: Number(existing.thermal_density ?? PHOTO_ADJUST_LIMITS.thermal_density.fallback),
     thermal_offset_y_px: Number(existing.thermal_offset_y_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_y_px.fallback),
+    thermal_offset_x_px: Number(existing.thermal_offset_x_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback),
     photo_fit_mode: existing.photo_fit_mode || 'fit',
     ...input,
   };
@@ -203,6 +208,7 @@ function toSocketPrintingConfig(row) {
     photo_saturation: Number(row.photo_saturation ?? PHOTO_ADJUST_LIMITS.photo_saturation.fallback),
     thermal_density: Number(row.thermal_density ?? PHOTO_ADJUST_LIMITS.thermal_density.fallback),
     thermal_offset_y_px: Number(row.thermal_offset_y_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_y_px.fallback),
+    thermal_offset_x_px: Number(row.thermal_offset_x_px ?? PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback),
     photo_fit_mode: row.photo_fit_mode || 'fit',
   };
 }

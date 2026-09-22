@@ -25,6 +25,7 @@ function format(row) {
     photo_saturation: Number(row.photo_saturation ?? 100),
     thermal_density: Number(row.thermal_density ?? 3),
     thermal_offset_y_px: Number(row.thermal_offset_y_px ?? 0),
+    thermal_offset_x_px: Number(row.thermal_offset_x_px ?? 0),
     photo_fit_mode: row.photo_fit_mode || 'fit',
     updated_by: row.updated_by || null,
     updated_at: row.updated_at,
@@ -75,13 +76,14 @@ const model = {
     await pool.query(
       `INSERT INTO kiosk_printing_configs
        (kiosk_id, printing_enabled, adapter, printer_name, paper_size, orientation, copies_limit, timeout_ms, retry_count, allowed_layouts, config_version, updated_by,
-        photo_brightness, photo_contrast, photo_saturation, thermal_density, thermal_offset_y_px, photo_fit_mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)`,
+        photo_brightness, photo_contrast, photo_saturation, thermal_density, thermal_offset_y_px, thermal_offset_x_px, photo_fit_mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [kioskId, defaults.printing_enabled !== undefined ? (defaults.printing_enabled ? 1 : 0) : 1, defaults.adapter || 'disabled', defaults.printer_name || 'AUTO',
         defaults.paper_size || '4R', defaults.orientation || 'portrait', defaults.copies_limit || 1,
         defaults.timeout_ms || 60000, defaults.retry_count ?? 2, JSON.stringify(defaults.allowed_layouts || []), updatedBy,
         defaults.photo_brightness ?? 100, defaults.photo_contrast ?? 100, defaults.photo_saturation ?? 100,
-        defaults.thermal_density ?? 3, defaults.thermal_offset_y_px ?? 0, defaults.photo_fit_mode || 'fit']
+        defaults.thermal_density ?? 3, defaults.thermal_offset_y_px ?? 0, defaults.thermal_offset_x_px ?? 0,
+        defaults.photo_fit_mode || 'fit']
     );
     return this.findByKioskId(kioskId);
   },
@@ -89,7 +91,7 @@ const model = {
   async updateDesired(kioskId, config, updatedBy) {
     const current = await this.getOrCreate(kioskId);
     const unchanged = ['printing_enabled', 'adapter', 'printer_name', 'paper_size', 'orientation', 'copies_limit', 'timeout_ms', 'retry_count',
-      'photo_brightness', 'photo_contrast', 'photo_saturation', 'thermal_density', 'thermal_offset_y_px', 'photo_fit_mode']
+      'photo_brightness', 'photo_contrast', 'photo_saturation', 'thermal_density', 'thermal_offset_y_px', 'thermal_offset_x_px', 'photo_fit_mode']
       .every(field => String(current[field] ?? '') === String(config[field] ?? '')) &&
       JSON.stringify(current.allowed_layouts || []) === JSON.stringify(config.allowed_layouts || []);
     if (unchanged) return current;
@@ -99,12 +101,13 @@ const model = {
       `UPDATE kiosk_printing_configs
        SET printing_enabled = ?, adapter = ?, printer_name = ?, paper_size = ?, orientation = ?,
            copies_limit = ?, timeout_ms = ?, retry_count = ?, allowed_layouts = ?, config_version = ?, updated_by = ?,
-           photo_brightness = ?, photo_contrast = ?, photo_saturation = ?, thermal_density = ?, thermal_offset_y_px = ?, photo_fit_mode = ?
+           photo_brightness = ?, photo_contrast = ?, photo_saturation = ?, thermal_density = ?, thermal_offset_y_px = ?, thermal_offset_x_px = ?, photo_fit_mode = ?
        WHERE kiosk_id = ?`,
       [config.printing_enabled ? 1 : 0, config.adapter, config.printer_name, config.paper_size, config.orientation,
         config.copies_limit, config.timeout_ms, config.retry_count, JSON.stringify(config.allowed_layouts || []), nextVersion, updatedBy || null,
         config.photo_brightness ?? 100, config.photo_contrast ?? 100, config.photo_saturation ?? 100,
-        config.thermal_density ?? 3, config.thermal_offset_y_px ?? 0, config.photo_fit_mode || 'fit', kioskId]
+        config.thermal_density ?? 3, config.thermal_offset_y_px ?? 0, config.thermal_offset_x_px ?? 0,
+        config.photo_fit_mode || 'fit', kioskId]
     );
     return this.findByKioskId(kioskId);
   },

@@ -189,3 +189,35 @@ test('saturasi 0 tetap boleh padahal batas bawahnya 0', () => {
   assert.strictEqual(limit.min, 0);
   assert.strictEqual(validatePrintingConfig({ ...base, photo_saturation: 0 }, {}).photo_saturation, 0);
 });
+
+test('geser mendatar ikut divalidasi, disimpan, dan dikirim ke kiosk', () => {
+  // Tanpa ini, Admin tidak punya cara memperbaiki gambar yang tidak sejajar
+  // MENDATAR dengan desain di kertas — satu-satunya jalan menyentuh kode.
+  const { PHOTO_ADJUST_LIMITS } = require('../utils/printingConfigValidation');
+  assert.ok(PHOTO_ADJUST_LIMITS.thermal_offset_x_px, 'batas geser mendatar harus ada');
+  assert.strictEqual(PHOTO_ADJUST_LIMITS.thermal_offset_x_px.fallback, 0, 'bawaan netral');
+  assert.strictEqual(PHOTO_ADJUST_LIMITS.thermal_offset_x_px.min, -200);
+  assert.strictEqual(PHOTO_ADJUST_LIMITS.thermal_offset_x_px.max, 200);
+
+  // Ikut di daftar field yang dibandingkan (kalau tidak, perubahan tidak
+  // dianggap perubahan dan tidak menaikkan config_version).
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const model = fs.readFileSync(path.join(__dirname, '..', 'models', 'kioskPrintingConfigModel.js'), 'utf8');
+  assert.match(model, /'thermal_offset_x_px'/, 'harus ada di daftar field perubahan');
+  assert.match(model, /thermal_offset_x_px = \?/, 'harus ikut di UPDATE');
+
+  // Dan diteruskan ke kiosk lewat socket.
+  const validation = fs.readFileSync(path.join(__dirname, '..', 'utils', 'printingConfigValidation.js'), 'utf8');
+  assert.match(validation, /thermal_offset_x_px: Number\(row\.thermal_offset_x_px/,
+    'toSocketPrintingConfig harus meneruskannya');
+});
+
+test('geser mendatar diteruskan kiosk-agent ke photobooth', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const agent = fs.readFileSync(path.join(__dirname, '..', '..', 'kiosk-agent', 'src', 'wsClient.js'), 'utf8');
+  const n = (agent.match(/thermalOffsetXPx/g) || []).length;
+  assert.ok(n >= 2,
+    'harus ada di reportedState DAN applyPrintingConfig (ditemukan ' + n + ')');
+});

@@ -69,8 +69,10 @@ test('perhitungan gambar ada di drawRect, bukan di dalam prepareCanvas', () => {
   // dieksekusi di test nyata (labelGeometry.test.ts), bukan hanya dicocokkan
   // teksnya. Di sini yang diperiksa hanya bahwa prepareCanvas benar-benar
   // memakai hasilnya — bukan menghitung sendiri.
-  assert.match(SERVICE, /drawRect\(adj\.fitMode, canvas\.width, canvas\.height, img\.naturalWidth, img\.naturalHeight, adj\.offsetYPx\)/,
-    'prepareCanvas harus memakai drawRect');
+  // Kedua offset (vertikal DAN mendatar) harus diteruskan; kalau salah satu
+  // hilang, kalibrasi posisi diam-diam tidak bekerja untuk sumbu itu.
+  assert.match(SERVICE, /drawRect\(adj\.fitMode, canvas\.width, canvas\.height, img\.naturalWidth, img\.naturalHeight,\s*\n\s*adj\.offsetYPx, adj\.offsetXPx\)/,
+    'prepareCanvas harus memakai drawRect dengan kedua offset');
   assert.match(SERVICE, /ctx\.drawImage\(img, r\.dx, r\.dy, r\.dw, r\.dh\)/,
     'menggambar memakai hasil drawRect');
   // Offset vertikal tidak boleh dihitung ulang di sini; itu tugas drawRect.

@@ -284,3 +284,39 @@ test('ukuran slot dibulatkan ke piksel utuh', () => {
   assert.ok(Number.isInteger(slot!.width) && Number.isInteger(slot!.height),
     'canvas.width/height harus bilangan bulat');
 });
+
+// --- Geser mendatar (kalibrasi registrasi kertas) ---
+test('geser mendatar memindahkan gambar tanpa mengubah ukurannya', () => {
+  const W = 576, H = 720, IW = 1600, IH = 1200;
+  const nol = drawRect('cover', W, H, IW, IH, 0, 0);
+  const kanan = drawRect('cover', W, H, IW, IH, 0, 24);
+  const kiri = drawRect('cover', W, H, IW, IH, 0, -24);
+  // Ukuran tidak boleh berubah: kalibrasi posisi bukan penyekalaan.
+  assert.strictEqual(kanan.dw, nol.dw, 'lebar gambar tidak berubah');
+  assert.strictEqual(kanan.dh, nol.dh, 'tinggi gambar tidak berubah');
+  // Pindah persis sebesar offset, relatif ke posisi terpusat.
+  assert.strictEqual(kanan.dx - nol.dx, 24, 'positif menggeser ke kanan');
+  assert.strictEqual(kiri.dx - nol.dx, -24, 'negatif menggeser ke kiri');
+  // Dan sumbu lain tidak ikut bergerak.
+  assert.strictEqual(kanan.dy, nol.dy, 'geser mendatar tidak mengubah posisi vertikal');
+});
+
+test('geser mendatar dan vertikal berdiri sendiri-sendiri', () => {
+  const W = 576, H = 720, IW = 1600, IH = 1200;
+  // a: geser kanan 20, turun 10.  b: geser kiri 40, naik 30.
+  const a = drawRect('cover', W, H, IW, IH, 10, 20);
+  const b = drawRect('cover', W, H, IW, IH, -30, -40);
+  assert.strictEqual(a.dx - b.dx, 60, 'selisih mendatar = 20 - (-40)');
+  assert.strictEqual(a.dy - b.dy, 40, 'selisih vertikal = 10 - (-30)');
+});
+
+test('geser mendatar juga berlaku pada mode stretch', () => {
+  // Mode stretch punya jalur lebih awal (base), jadi offset harus dihitung di
+  // sana juga — kalau tidak, kalibrasi diam-diam tidak bekerja untuk mode itu.
+  const nol = drawRect('stretch', 576, 720, 1600, 1200, 0, 0);
+  const geser = drawRect('stretch', 576, 720, 1600, 1200, 7, -13);
+  assert.strictEqual(geser.dx - nol.dx, -13, 'stretch: mendatar ikut bergeser');
+  assert.strictEqual(geser.dy - nol.dy, 7, 'stretch: vertikal ikut bergeser');
+  // Ukuran tetap penuh kanvas pada stretch.
+  assert.strictEqual(geser.dw, 576, 'stretch memenuhi lebar kanvas');
+});

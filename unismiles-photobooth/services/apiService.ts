@@ -419,6 +419,7 @@ export const fetchPrintingConfig = async (): Promise<{
   photo_fit_mode?: string;
   thermal_density?: number;
   thermal_offset_y_px?: number;
+  thermal_offset_x_px?: number;
 } | null> => {
   try {
     const response = await request<ApiResponse<any>>({

@@ -77,6 +77,7 @@ type PrinterConfig = {
   photo_saturation: number;
   thermal_density: number;
   thermal_offset_y_px: number;
+  thermal_offset_x_px: number;
   photo_fit_mode: string;
 };
 
@@ -97,6 +98,7 @@ const DEFAULT_CONFIG: PrinterConfig = {
   photo_saturation: 100,
   thermal_density: 3,
   thermal_offset_y_px: 0,
+  thermal_offset_x_px: 0,
   photo_fit_mode: 'fit',
 };
 
@@ -534,6 +536,18 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
               onChange={e => setField('thermal_offset_y_px', Number(e.target.value))}
             />
             <span className="text-[10px] text-muted font-bold block">Positif = turun, negatif = naik. Untuk kalibrasi posisi di kertas.</span>
+          </label>
+
+          <label className="space-y-2">
+            <span className="label">Geser mendatar (−200…200 px)</span>
+            <input
+              className={fieldClass} type="number" min={-200} max={200}
+              value={config.thermal_offset_x_px} disabled={!canEdit}
+              onChange={e => setField('thermal_offset_x_px', Number(e.target.value))}
+            />
+            <span className="text-[10px] text-muted font-bold block">
+              Positif = ke kanan, negatif = ke kiri. Dipakai kalau gambar tidak sejajar dengan desain yang sudah tercetak di label.
+            </span>
           </label>
 
           <label className="space-y-2">
