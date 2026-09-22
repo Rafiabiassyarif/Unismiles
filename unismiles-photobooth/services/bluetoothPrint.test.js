@@ -319,12 +319,18 @@ test('printer tersimpan diulang beberapa kali sebelum menyerah', () => {
 
 test('galat getDevices TIDAK ditelan diam-diam', () => {
   const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
-  const start = PRINTER.indexOf('private async findPairedDevice');
-  const fn = PRINTER.slice(start, PRINTER.indexOf('private async waitForGattReady', start));
+  // Panggilan getDevices() dipusatkan di storedDevices() supaya keadaan izin
+  // dan pemilihan perangkat membaca sumber yang sama.
+  const start = PRINTER.indexOf('private async storedDevices');
+  const fn = PRINTER.slice(start, PRINTER.indexOf('public async pairingState', start));
   // Dulu catch kosong: pemilih muncul tanpa alasan apa pun yang terlihat.
   assert.match(fn, /catch \(error\) \{[\s\S]{0,300}console\.(warn|info|error)/,
     'galat getDevices harus dilaporkan, bukan ditelan');
   assert.match(fn, /getDevices\(\) gagal/, 'sebutkan operasi mana yang gagal');
+  // Dan hanya satu tempat yang boleh memanggilnya, supaya tidak ada dua
+  // gambaran berbeda soal izin.
+  const jumlah = (PRINTER.match(/await bt\.getDevices\(\)/g) || []).length;
+  assert.strictEqual(jumlah, 1, 'getDevices() hanya boleh dipanggil di satu tempat');
 });
 
 test('perangkat tersimpan yang tidak menjawab TIDAK diarahkan ke pemilih', () => {
@@ -387,4 +393,65 @@ test('berkas sekali-pakai tidak ikut ter-commit', () => {
     || /^(tes|test|ukur|cek|mv|v|f|p)\.(ts|mts|js)$/.test(path.basename(f)));
   assert.deepStrictEqual(terlarang, [],
     'berkas sekali-pakai/cadangan harus dihapus dari repo: ' + terlarang.join(', '));
+});
+
+// --- Alur pairing: sekali di setup, lalu tanpa dialog ---
+
+test('pencetakan TIDAK PERNAH membuka pemilih perangkat', () => {
+  // Inilah permintaannya: setelah dipasangkan sekali, cetak berikutnya tidak
+  // boleh memunculkan "wants to pair". Kalau jalur cetak memanggil connect()
+  // tanpa memeriksa izin, pemilih akan terbuka lagi saat izin hilang — dan itu
+  // terjadi di tengah proses cetak, tempat yang paling buruk.
+  const inti = bodyOf('printViaBluetoothCore');
+  assert.match(inti, /pairingState\(\)/,
+    'jalur cetak harus memeriksa izin lebih dulu');
+  assert.match(inti, /izin !== 'ready'/,
+    'izin yang belum ada harus jadi galat, bukan dialog');
+  assert.ok(!/pairNow/.test(inti),
+    'jalur cetak tidak boleh memanggil pemilih perangkat');
+});
+
+test('pemilih perangkat hanya dibuka dari aksi pengguna', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  // pairNow() -> connect({forceChooser:true}) -> client.connect() tanpa argumen.
+  assert.match(PRINTER, /public async pairNow\(/,
+    'harus ada satu pintu masuk untuk pemilihan perangkat');
+  const pairNow = PRINTER.slice(PRINTER.indexOf('public async pairNow('));
+  assert.match(pairNow.slice(0, 400), /forceChooser: true/,
+    'pairNow harus memaksa pemilih, bukan memakai perangkat tersimpan');
+  const connect = PRINTER.slice(PRINTER.indexOf('async connect('), PRINTER.indexOf('private clearStalePacketBuffer'));
+  assert.match(connect, /options\.forceChooser \? null : await this\.findPairedDevice\(\)/,
+    'forceChooser harus melewati perangkat tersimpan');
+});
+
+test('sambung awal saat halaman siap tanpa dialog', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /preconnectSilently/,
+    'harus ada sambung awal yang aman dipanggil otomatis');
+  const fn = PRINTER.slice(PRINTER.indexOf('public async preconnectSilently'));
+  assert.match(fn.slice(0, 500), /pairingState\(\) !== 'ready'\s*\)\s*return null/,
+    'sambung awal harus berhenti dulu kalau izin belum ada (tidak boleh buka dialog)');
+  // Dan PhotoBooth memanggilnya sekali saat siap.
+  assert.match(BOOTH, /preconnectSilently\(\)/, 'photobooth harus memanggilnya saat siap');
+});
+
+test('izin yang dicabut dibedakan dari belum pernah dipasangkan', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  // Catatan nama ada tetapi browser tidak mengenali perangkatnya = izin dicabut
+  // atau dipasangkan dari alamat lain. Dua sebab berbeda, penanganannya sama
+  // (pasangkan sekali lagi), tetapi pesannya harus menjelaskan yang mana.
+  assert.match(PRINTER, /catatan printer|Catatan printer/i,
+    'harus menyebut catatan yang ada supaya sebabnya jelas');
+  assert.match(PRINTER, /tersimpan per alamat|PER-ALAMAT|per alamat/,
+    'harus menjelaskan bahwa izin tersimpan per alamat');
+});
+
+test('keadaan izin diekspos untuk panel pengaturan', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /export type PrinterPairingState/,
+    'keadaan izin harus bertipe eksplisit, bukan string bebas');
+  for (const st of ['unsupported', 'no-stored-device', 'ready']) {
+    assert.ok(PRINTER.includes(`'${st}'`), `keadaan '${st}' harus ada`);
+  }
+  assert.match(PRINTER, /storedDeviceNames\(\)/, 'nama printer terizin harus bisa dibaca');
 });

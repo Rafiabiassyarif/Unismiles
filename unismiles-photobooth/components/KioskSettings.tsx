@@ -4,8 +4,9 @@ import { checkBackendHealth } from '../services/apiService';
 import { AppConfig } from '../types';
 import { 
   Settings, Save, Key, Wifi, WifiOff, RefreshCw, CheckCircle2, 
-  AlertCircle, ShieldAlert, MousePointer2, Hand, Monitor, Type 
+  AlertCircle, ShieldAlert, MousePointer2, Hand, Monitor, Type, Printer 
 } from 'lucide-react';
+import { NiimbotPrinter, type PrinterPairingState } from '../services/niimbotPrinter';
 
 export const KioskSettings: React.FC = () => {
   // Config state
@@ -27,6 +28,57 @@ export const KioskSettings: React.FC = () => {
 
   // API Connection test state
   const [connectionTest, setConnectionTest] = useState<'idle' | 'testing' | 'connected' | 'disconnected'>('idle');
+
+  // --- Printer label (NIIMBOT) ---
+  //
+  // Pemasangan perangkat dilakukan di sini, SATU KALI, dan bukan saat mencetak.
+  // Alasannya bukan selera: Web Bluetooth hanya mengizinkan pemilih perangkat
+  // dibuka dari interaksi pengguna. Kalau pemasangan dilakukan di tengah proses
+  // cetak, dialognya muncul di saat yang paling buruk — dan kalau tidak dipicu
+  // gestur pengguna, ia gagal. Setelah dipasangkan dari alamat ini, izin
+  // tersimpan di browser dan cetak berjalan tanpa dialog.
+  const [pairing, setPairing] = useState<PrinterPairingState | 'checking' | 'pairing'>('checking');
+  const [printerNames, setPrinterNames] = useState<string[]>([]);
+  const [printerMsg, setPrinterMsg] = useState('');
+  const [printerErr, setPrinterErr] = useState('');
+
+  const refreshPrinterState = async () => {
+    const p = new NiimbotPrinter();
+    const state = await p.pairingState();
+    setPairing(state);
+    setPrinterNames(state === 'ready' ? await p.storedDeviceNames() : []);
+  };
+
+  useEffect(() => { void refreshPrinterState(); }, []);
+
+  /**
+   * Pasangkan printer — HARUS dari klik tombol.
+   *
+   * Fungsi ini sengaja hanya dipanggil dari onClick: itulah satu-satunya cara
+   * sah membuka pemilih perangkat, dan karena itu pula pemasangan tidak bisa
+   * dijadikan otomatis.
+   */
+  const handlePairPrinter = async () => {
+    setPrinterErr('');
+    setPrinterMsg('');
+    if (!NiimbotPrinter.isSupported()) {
+      setPrinterErr('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge, dan buka lewat HTTPS.');
+      return;
+    }
+    setPairing('pairing');
+    const printer = new NiimbotPrinter();
+    try {
+      const info = await printer.pairNow();
+      setPrinterMsg(`Printer siap: ${info.deviceName} (${info.model}). Cetak berikutnya tidak akan menampilkan dialog.`);
+      await refreshPrinterState();
+    } catch (error: any) {
+      const msg = String(error?.message || error);
+      setPrinterErr(/cancel|user|chooser|No device/i.test(msg)
+        ? 'Pemilihan perangkat ditutup. Tekan lagi kalau mau memasangkan printer.'
+        : msg);
+      await refreshPrinterState();
+    }
+  };
 
   useEffect(() => {
     const config = getAppConfig();
@@ -346,6 +398,80 @@ export const KioskSettings: React.FC = () => {
                 placeholder="••••"
               />
             </div>
+          </div>
+        </div>
+
+        {/* Printer label (NIIMBOT) — dipasangkan DI SINI, sekali, bukan saat mencetak */}
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 sm:p-8 space-y-5">
+          <div className="flex items-start gap-4">
+            <div className="p-3 bg-indigo-50 rounded-xl border border-indigo-100">
+              <Printer className="text-indigo-600" size={22} />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-bold text-slate-800">Printer Label (NIIMBOT)</h2>
+              <p className="text-xs font-semibold text-slate-500 mt-1">
+                Dipasangkan sekali di sini. Setelah itu setiap cetak tersambung otomatis tanpa dialog.
+              </p>
+            </div>
+          </div>
+
+          <div id="printer-pairing-state" className={`flex items-center gap-3 p-4 rounded-xl text-sm font-semibold ${
+            pairing === 'ready'
+              ? 'bg-green-50 text-green-700 border border-green-200'
+              : pairing === 'checking'
+                ? 'bg-slate-50 text-slate-600 border border-slate-200'
+                : 'bg-amber-50 text-amber-700 border border-amber-200'
+          }`}>
+            {pairing === 'ready' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+            <span>
+              {pairing === 'checking' && 'Memeriksa izin Bluetooth untuk alamat ini...'}
+              {pairing === 'pairing' && 'Menunggu pilihan printer...'}
+              {pairing === 'unsupported' && 'Browser ini tidak mendukung Web Bluetooth.'}
+              {pairing === 'no-stored-device' && 'Belum ada printer diizinkan untuk alamat ini.'}
+              {pairing === 'ready' && `Siap: ${printerNames.join(', ')}`}
+            </span>
+          </div>
+
+          {pairing === 'no-stored-device' && (
+            <p className="text-xs font-semibold text-slate-500 leading-relaxed">
+              Izin Bluetooth tersimpan <strong>per alamat</strong>. Kalau printer dulu dipasangkan
+              dari alamat lain (misalnya dari <code>localhost</code>) atau izinnya dicabut, printer itu
+              tidak dikenal di alamat ini. Tekan tombol di bawah satu kali.
+            </p>
+          )}
+
+          {printerMsg && (
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-green-50 text-green-700 border border-green-200 text-sm font-semibold">
+              <CheckCircle2 size={18} className="shrink-0" />
+              <span>{printerMsg}</span>
+            </div>
+          )}
+          {printerErr && (
+            <div className="flex items-center gap-3 p-4 rounded-xl bg-red-50 text-red-700 border border-red-200 text-sm font-semibold">
+              <AlertCircle size={18} className="shrink-0" />
+              <span>{printerErr}</span>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              id="btn-pair-printer"
+              onClick={() => void handlePairPrinter()}
+              disabled={pairing === 'pairing' || pairing === 'unsupported'}
+              className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer"
+            >
+              <Printer size={18} />
+              {pairing === 'pairing' ? 'Memilih printer...' : 'Siapkan printer'}
+            </button>
+            <button
+              type="button"
+              onClick={() => void refreshPrinterState()}
+              className="flex items-center gap-2 px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-all cursor-pointer"
+            >
+              <RefreshCw size={18} />
+              Periksa ulang
+            </button>
           </div>
         </div>
 

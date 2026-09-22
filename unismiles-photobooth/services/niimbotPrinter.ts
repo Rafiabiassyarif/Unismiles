@@ -54,6 +54,21 @@ import {
  */
 export type PaperEndMode = 'advance-and-separate' | 'stop-at-printhead';
 
+/**
+ * Keadaan izin Bluetooth untuk ALAMAT INI.
+ *
+ * Izin Web Bluetooth disimpan per origin, bukan per situs atau per pengguna.
+ * Karena itu pertanyaan "sudah diizinkan?" selalu berarti "di alamat ini?" —
+ * printer yang dipasangkan dari localhost tidak dikenal di domain produksi, dan
+ * itu penyebab pemilih perangkat muncul terus.
+ *
+ *  'unsupported'      Browser tidak punya Web Bluetooth.
+ *  'no-stored-device' Belum pernah dipasangkan dari alamat ini, atau izinnya
+ *                     dicabut. Pemilih memang perlu dibuka SEKALI.
+ *  'ready'            Ada printer tersimpan. Sambungan berikutnya tanpa dialog.
+ */
+export type PrinterPairingState = 'unsupported' | 'no-stored-device' | 'ready';
+
 export interface PrintAdjustments {
   /** Kecerahan foto, persen (100 = tidak diubah). */
   brightness: number;
@@ -140,7 +155,9 @@ export class NiimbotPrinter {
    * sambungan tidak bisa dipulihkan otomatis setelah printer idle dan memutus
    * Bluetooth — pengguna perlu klik lagi.
    */
-  async connect(): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
+  async connect(
+    options: { forceChooser?: boolean } = {},
+  ): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
     if (!NiimbotPrinter.isSupported()) {
       throw new Error('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge.');
     }
@@ -164,7 +181,7 @@ export class NiimbotPrinter {
     // dialog; itu yang membuat cetak otomatis mungkin. Kalau ternyata tidak ada
     // perangkat tersimpan (pasangan pertama, atau izin dicabut), jalur pemilih
     // tetap dipakai — jadi perilakunya tidak pernah lebih buruk dari sebelumnya.
-    const found = await this.findPairedDevice();
+    const found = options.forceChooser ? null : await this.findPairedDevice();
     if (found) {
       // Tipe dasar library hanya punya connect() tanpa argumen, sedangkan
       // implementasi Bluetooth menerima { authorizedDevice }. Jadi yang
@@ -262,35 +279,90 @@ export class NiimbotPrinter {
    * biasanya hanya ada satu, tetapi kalau ada beberapa, printer yang benar harus
    * dipilih dengan pasti, bukan yang pertama kebetulan ditemukan.
    */
-  private async findPairedDevice(): Promise<{ device: any; alasan: string } | null> {
+  /**
+   * Perangkat yang SUDAH diizinkan untuk alamat ini.
+   *
+   * `getDevices()` adalah satu-satunya cara sah membacanya, dan ia hanya
+   * mengembalikan perangkat yang pernah dipasangkan dari origin ini. Boleh
+   * dipanggil tanpa gestur pengguna karena tidak membuka dialog — itulah yang
+   * membuat cetak otomatis dan sambung-ulang tanpa popup mungkin.
+   */
+  private async storedDevices(): Promise<any[]> {
     const bt = (navigator as any).bluetooth;
-    if (!bt) {
-      console.warn('[Printer] navigator.bluetooth tidak ada di browser ini.');
-      return null;
-    }
-    if (typeof bt.getDevices !== 'function') {
-      console.warn('[Printer] getDevices() tidak didukung browser ini, jadi pemilih perangkat '
-        + 'tidak bisa dilewati. Pakai Chrome atau Edge terbaru.');
-      return null;
-    }
-
-    let devices: any[];
+    if (!bt || typeof bt.getDevices !== 'function') return [];
     try {
-      devices = await bt.getDevices();
+      const devices = await bt.getDevices();
+      return Array.isArray(devices) ? devices : [];
     } catch (error) {
-      // DULU galat di sini ditelan, dan gejalanya adalah pemilih perangkat
-      // muncul tanpa penjelasan apa pun. Sekarang alasannya terlihat.
       console.warn('[Printer] getDevices() gagal:', error);
+      return [];
+    }
+  }
+
+  /** Keadaan izin untuk alamat ini. Dipakai panel pengaturan dan sebelum cetak. */
+  public async pairingState(): Promise<PrinterPairingState> {
+    if (!NiimbotPrinter.isSupported()) return 'unsupported';
+    const devices = await this.storedDevices();
+    return devices.length > 0 ? 'ready' : 'no-stored-device';
+  }
+
+  /** Nama printer yang sudah diizinkan untuk alamat ini. */
+  public async storedDeviceNames(): Promise<string[]> {
+    const devices = await this.storedDevices();
+    return devices.map((d: any) => String(d?.name || '(tanpa nama)'));
+  }
+
+  /**
+   * Sambung TANPA dialog, kalau izin untuk alamat ini memang sudah ada.
+   *
+   * Dipanggil sekali saat halaman siap supaya cetak pertama tidak perlu
+   * menunggu sambungan. Aman dipanggil otomatis: kalau izin belum ada, fungsi
+   * ini berhenti lebih dulu — pemilih perangkat TIDAK PERNAH dibuka dari sini,
+   * karena dialog di luar gestur pengguna bukan hanya mengganggu, ia gagal.
+   *
+   * @returns nama perangkat, atau null kalau izin belum ada / gagal.
+   */
+  public async preconnectSilently(): Promise<string | null> {
+    if (await this.pairingState() !== 'ready') return null;
+    try {
+      const info = await this.connect();
+      return info.deviceName;
+    } catch (error) {
+      // Gagal bersambung bukan keadaan darurat di sini: pencetakan nanti akan
+      // mencoba lagi, dan itulah saat yang tepat untuk melaporkan galatnya.
+      console.info('[Printer] Sambung awal belum berhasil, akan dicoba saat cetak:', error);
       return null;
     }
+  }
 
-    if (!Array.isArray(devices) || devices.length === 0) {
-      // Penyebab paling sering, dan bukan kesalahan kode: izin Bluetooth
-      // tersimpan PER-ORIGIN. Kalau printer dipasangkan dari alamat lain
-      // (mis. saat panel masih di localhost atau subdomain lama), browser di
-      // origin ini tidak tahu apa-apa soal printer itu.
-      console.info('[Printer] Tidak ada printer tersimpan untuk alamat ini. '
-        + 'Pasangkan sekali lewat pemilih; berikutnya akan otomatis tanpa pemilih.');
+  /**
+   * Buka pemilih perangkat SEKARANG — hanya dari gestur pengguna.
+   *
+   * Dipakai SATU KALI saat menyiapkan kiosk, sehingga pencetakan tidak pernah
+   * perlu membuka dialog. Ini bukan jalan pintas: Web Bluetooth memang
+   * mengharuskan pemilihan perangkat berada di dalam gestur pengguna, dan
+   * fungsi ini hanya bisa dipanggil dari klik tombol.
+   */
+  public async pairNow(): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
+    return this.connect({ forceChooser: true });
+  }
+
+  private async findPairedDevice(): Promise<{ device: any; alasan: string } | null> {
+    const devices = await this.storedDevices();
+
+    if (devices.length === 0) {
+      // Penyebab paling sering, dan bukan kesalahan kode: izin tersimpan
+      // PER-ALAMAT. Kalau printer pernah dipasangkan dari alamat lain (mis. saat
+      // panel masih di localhost), browser di alamat ini tidak tahu apa-apa
+      // soal printer itu.
+      const pernah = this.rememberedDeviceName();
+      console.info(pernah
+        ? `[Printer] Catatan printer "${pernah}" ada, tetapi browser tidak mengenalinya `
+          + 'di alamat ini. Izin Bluetooth tersimpan per alamat — kemungkinan printer '
+          + 'dipasangkan dari alamat lain, atau izinnya dicabut. Pasangkan sekali di '
+          + 'alamat ini; berikutnya otomatis.'
+        : '[Printer] Belum ada printer tersimpan untuk alamat ini. Pasangkan sekali '
+          + 'lewat pemilih; berikutnya akan otomatis tanpa pemilih.');
       return null;
     }
 

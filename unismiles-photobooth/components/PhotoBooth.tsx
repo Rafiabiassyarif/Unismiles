@@ -904,6 +904,21 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
       bluetoothPrinterRef.current = printer;
 
       if (!printer.isConnected()) {
+        // PENCETAKAN TIDAK PERNAH MEMBUKA PEMILIH PERANGKAT.
+        //
+        // Izin Bluetooth sudah diminta sekali saat kiosk disiapkan; kalau printer
+        // belum diizinkan, itu justru harus terlihat sebagai galat di sini —
+        // bukan sebagai dialog tengah proses cetak yang gagal karena tidak
+        // dipicu gestur pengguna. Jadi pemilih hanya dibuka kalau memang belum
+        // ada izin, dan itu lewat pairingState(), bukan dengan menebak.
+        const izin = await printer.pairingState();
+        if (izin !== 'ready') {
+          throw new Error(izin === 'unsupported'
+            ? 'Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge.'
+            : 'Printer belum diizinkan untuk alamat ini. Buka Pengaturan Kiosk dan '
+              + 'tekan "Siapkan printer" sekali; setelah itu cetak otomatis tanpa dialog.');
+        }
+        // Sambung-ulang: cukup di sini, tanpa dialog, lalu langsung cetak.
         const info = await printer.connect();
         setBtPrinterName(info.deviceName);
         void printer.reportStatus('READY', { printerName: info.deviceName });
@@ -2884,6 +2899,27 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
           finishPrintAsFailed(error);
       }
   };
+
+  /**
+   * Sambung ke printer sekali saat layar siap, TANPA dialog.
+   *
+   * Tujuannya supaya cetak pertama tidak perlu menunggu sambungan, dan supaya
+   * sambungan yang terputus (printer tidur, kiosk baru dinyalakan) sudah
+   * pulih sebelum pelanggan menekan cetak. Aman dipanggil otomatis:
+   * `preconnectSilently()` berhenti lebih dulu kalau izin untuk alamat ini
+   * belum ada, jadi pemilih perangkat tidak pernah terbuka dari sini.
+   *
+   * Sengaja TIDAK mengganggu apa pun kalau gagal: printer yang mati saat kiosk
+   * hidup bukan alasan menghalangi pengambilan foto.
+   */
+  useEffect(() => {
+      void (async () => {
+          const printer = bluetoothPrinterRef.current || new NiimbotPrinter();
+          bluetoothPrinterRef.current = printer;
+          const nama = await printer.preconnectSilently();
+          if (nama) setBtPrinterName(nama);
+      })();
+  }, []);
 
   /**
    * Catat pekerjaan cetak ke server sebagai RIWAYAT saja.
