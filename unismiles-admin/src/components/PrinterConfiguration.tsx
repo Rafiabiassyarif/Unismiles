@@ -451,13 +451,29 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
               per alamat DI BROWSER yang membukanya. Tombol di sini tidak akan
               pernah berguna — printer akan terpasang untuk origin admin, bukan
               untuk origin photobooth. Karena itu yang diberikan adalah ARAHNYA,
-              bukan tombol yang menyesatkan. */}
-          <p className="text-[10px] text-muted font-bold mt-2">
-            Untuk memasangkan printer, buka photobooth di browser kiosk:{' '}
-            <span className="text-primary">ikon ⚙ di pojok bawah → login → bagian
-            “Printer Label (NIIMBOT)” → tombol “Siapkan Printer”</span>.
-            Cukup sekali; setelah itu cetak otomatis tanpa dialog.
-          </p>
+              bukan tombol yang menyesatkan.
+
+              Posisi ikon ditulis apa adanya karena inilah yang membuat orang
+              tidak menemukannya: ikonnya di KANAN ATAS, dan sebelumnya petunjuk
+              di sini menyebut "pojok bawah" — salah tempat, jadi dicari di
+              tempat yang tidak ada. */}
+          <div className="mt-3 p-3 rounded-xl bg-primary/10 border border-primary/20 space-y-1">
+            <p className="text-[11px] font-black text-primary">
+              Cara memasangkan printer (sekali saja)
+            </p>
+            <ol className="text-[10px] text-muted font-bold space-y-0.5 list-decimal list-inside">
+              <li>Buka <span className="text-white">photobooth.uniinside.net</span> di browser KIOSK (Chrome/Edge)</li>
+              <li>Klik ikon <span className="text-white">⚙ di KANAN ATAS</span> layar</li>
+              <li>Masuk dengan password kiosk</li>
+              <li>Bagian <span className="text-white">“Printer Label (NIIMBOT)”</span> → tombol <span className="text-white">“Siapkan Printer”</span></li>
+              <li>Pilih <span className="text-white">B1pro-i616</span>. Status berubah jadi <span className="text-white">“Siap: B1pro-i616”</span></li>
+            </ol>
+            <p className="text-[10px] text-muted font-bold pt-1">
+              Tidak bisa dari halaman ini: izin Bluetooth terikat pada SATU alamat
+              dan SATU browser. Hanya Chrome/Edge yang punya Web Bluetooth —
+              Safari dan Firefox tidak bisa, dan tombolnya akan menolak.
+            </p>
+          </div>
         </div>
 
         {reported?.printer_name || reported?.status ? (
