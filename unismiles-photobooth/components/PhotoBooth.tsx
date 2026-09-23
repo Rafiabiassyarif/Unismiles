@@ -915,8 +915,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         if (izin !== 'ready') {
           throw new Error(izin === 'unsupported'
             ? 'Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge.'
-            : 'Printer belum diizinkan untuk alamat ini. Buka Pengaturan Kiosk dan '
-              + 'tekan "Siapkan printer" sekali; setelah itu cetak otomatis tanpa dialog.');
+            : 'Printer belum diizinkan untuk alamat ini. Buka Admin → Pengaturan Kiosk → Printer, lalu tekan “Siapkan Printer” sekali; setelah itu cetak otomatis tanpa dialog.');
         }
         // Sambung-ulang: cukup di sini, tanpa dialog, lalu langsung cetak.
         const info = await printer.connect();

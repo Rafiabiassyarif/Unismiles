@@ -462,7 +462,7 @@ export const KioskSettings: React.FC = () => {
               className="flex items-center gap-2 px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg shadow-indigo-100 transition-all cursor-pointer"
             >
               <Printer size={18} />
-              {pairing === 'pairing' ? 'Memilih printer...' : 'Siapkan printer'}
+              {pairing === 'pairing' ? 'Memilih printer...' : 'Siapkan Printer'}
             </button>
             <button
               type="button"
