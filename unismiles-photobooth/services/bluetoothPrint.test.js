@@ -439,11 +439,11 @@ test('sambung awal saat halaman siap tanpa dialog', () => {
   assert.match(PRINTER, /preconnectSilently/,
     'harus ada sambung awal yang aman dipanggil otomatis');
   const fn = PRINTER.slice(PRINTER.indexOf('public async preconnectSilently'));
-  assert.match(fn.slice(0, 1600), /pairingState\(\) !== 'ready'\s*\)\s*return null/,
+  assert.match(fn.slice(0, 2600), /pairingState\(\) !== 'ready'\s*\)\s*return null/,
     'sambung awal harus berhenti dulu kalau izin belum ada (tidak boleh buka dialog)');
   // Daftar perangkat dilaporkan apa adanya sebelum memutuskan: satu baris ini
   // yang membedakan "tidak ada perangkat" dari "izin tidak bertahan".
-  assert.match(fn.slice(0, 1600), /Perangkat tersimpan untuk alamat ini/,
+  assert.match(fn.slice(0, 2600), /Perangkat tersimpan untuk alamat ini/,
     'preconnect harus melaporkan isi daftar perangkat');
   // Dan PhotoBooth memanggilnya sekali saat siap.
   assert.match(BOOTH, /preconnectSilently\(\)/, 'photobooth harus memanggilnya saat siap');

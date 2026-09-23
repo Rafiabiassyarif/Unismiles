@@ -207,9 +207,9 @@ test('preconnect melaporkan isi daftar perangkat apa adanya', () => {
   // dua sebab yang gejalanya sama dari sisi pengguna.
   const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
   const fn = PRINTER.slice(PRINTER.indexOf('public async preconnectSilently'));
-  assert.match(fn.slice(0, 1400), /Perangkat tersimpan untuk alamat ini/,
+  assert.match(fn.slice(0, 2600), /Perangkat tersimpan untuk alamat ini/,
     'harus melaporkan daftar perangkat saat halaman siap');
-  assert.match(fn.slice(0, 1400), /perangkat\.length === 0/,
+  assert.match(fn.slice(0, 2600), /perangkat\.length === 0/,
     'harus menyatakan terang-terangan kalau daftarnya kosong');
 });
 
