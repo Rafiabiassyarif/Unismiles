@@ -382,6 +382,23 @@ export class NiimbotPrinter {
     // daftar perangkat KOSONG versus daftar berisi tetapi izin tidak bertahan —
     // hanya bisa dibedakan dengan membaca daftarnya. Satu baris ini memisahkan
     // keduanya tanpa perlu menebak atau memasang ulang.
+    // BUNDEL YANG SEDANG JALAN, disebut di konsol.
+    //
+    // Berkas lama tetap bisa diakses setelah deploy, jadi browser yang masih
+    // memegang bundle sebelumnya akan menjalankan kode lama dan laporannya
+    // membingungkan: seolah perbaikan terbaru tidak berpengaruh, padahal kode
+    // yang diuji bukan kode yang baru dikirim. Satu baris ini menyatakan
+    // berkas mana yang benar-benar dijalankan, sehingga "sudah di-reload atau
+    // belum" bisa dipastikan, bukan ditebak.
+    try {
+      const sumber = (document.querySelector('script[type="module"]') as HTMLScriptElement | null)?.src;
+      if (sumber) {
+        console.info('[Printer] Bundel yang dijalankan: ' + sumber.split('/').pop());
+      }
+    } catch {
+      // Bukan alasan menggagalkan apa pun; ini hanya keterangan.
+    }
+
     const perangkat = await this.storedDevices();
     console.info('[Printer] Perangkat tersimpan untuk alamat ini: '
       + (perangkat.length === 0

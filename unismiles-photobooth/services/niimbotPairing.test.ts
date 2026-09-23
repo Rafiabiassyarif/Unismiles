@@ -221,3 +221,13 @@ test('sisa buffer dibuang setelah sambung juga', () => {
   assert.match(finish.slice(0, 900), /this\.clearStalePacketBuffer\(\)/,
     'sisa buffer harus dibuang setelah sambungan terbentuk');
 });
+
+test('bundel yang dijalankan disebut di konsol', () => {
+  // Berkas lama tetap bisa diakses setelah deploy, jadi laporan dari browser yang
+  // masih memegang bundle sebelumnya terlihat seperti "perbaikan tidak bekerja".
+  // Satu baris ini membuat "sudah di-reload atau belum" bisa dipastikan.
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /Bundel yang dijalankan/,
+    'harus menyebut berkas yang sedang dijalankan');
+  assert.match(PRINTER, /script\[type="module"\]/, 'diambil dari elemen script yang dimuat');
+});
