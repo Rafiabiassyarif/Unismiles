@@ -446,6 +446,18 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
             Printer NIIMBOT tidak muncul sebagai printer sistem. Sambungannya dilakukan
             di browser kiosk, lalu statusnya dilaporkan ke sini.
           </p>
+          {/* Pemilihan perangkat HARUS terjadi di photobooth: Web Bluetooth
+              mewajibkan pemilih dibuka dari gestur pengguna, dan izin tersimpan
+              per alamat DI BROWSER yang membukanya. Tombol di sini tidak akan
+              pernah berguna — printer akan terpasang untuk origin admin, bukan
+              untuk origin photobooth. Karena itu yang diberikan adalah ARAHNYA,
+              bukan tombol yang menyesatkan. */}
+          <p className="text-[10px] text-muted font-bold mt-2">
+            Untuk memasangkan printer, buka photobooth di browser kiosk:{' '}
+            <span className="text-primary">ikon ⚙ di pojok bawah → login → bagian
+            “Printer Label (NIIMBOT)” → tombol “Siapkan Printer”</span>.
+            Cukup sekali; setelah itu cetak otomatis tanpa dialog.
+          </p>
         </div>
 
         {reported?.printer_name || reported?.status ? (
