@@ -269,9 +269,39 @@ export class NiimbotPrinter {
 
     console.info('[Printer] Membuka pemilih perangkat atas permintaan pengguna. '
       + 'Ini sekali per alamat; berikutnya tersambung otomatis tanpa dialog.');
-    await this.client.connect();
-    return this.finishConnect();
+
+    // TANGKAP PERANGKAT YANG BARU DIPILIH.
+    //
+    // Kenapa perlu: nama perangkat yang dikembalikan CUMA-CUMA protokol printer
+    // sering kosong (printer hanya mengirim nomor seri), sedangkan
+    // `getDevices()` mengembalikan perangkat dengan nama yang DIBERIKAN BROWSER.
+    // Keduanya sumber berbeda, jadi mengingat nama dari protokol lalu
+    // mencocokkannya dengan nama dari browser TIDAK PERNAH cocok — dan
+    // printer yang benar-benar tersimpan akan terus dianggap "belum dipasangkan".
+    //
+    // Event "connect" membawa perangkat yang sebenarnya dipakai, jadi itulah
+    // rujukan yang benar.
+    let dipilih: any = null;
+    const tangkap = (event: any) => {
+      if (!dipilih && event?.info) dipilih = event.info;
+    };
+    this.client.on('connect', tangkap);
+    try {
+      await this.client.connect();
+    } finally {
+      this.client.off('connect', tangkap);
+    }
+    return this.finishConnect(dipilih);
   }
+
+  /**
+   * Nama perangkat menurut BROWSER, untuk sambungan yang sedang berjalan.
+   *
+   * Dipisahkan dari nama protokol karena keduanya sumber berbeda dan hanya yang
+   * ini yang cocok dengan `getDevices()`. Dipakai untuk menyimpan nama yang
+   * benar setelah pemilihan dari pemilih.
+   */
+  private printDeviceName: string | null = null;
 
   /** Nama perangkat yang diingat, supaya tidak perlu memilih lagi. */
   private readonly REMEMBERED_DEVICE_KEY = 'unismiles.printer.deviceName';
@@ -345,6 +375,19 @@ export class NiimbotPrinter {
    * @returns nama perangkat, atau null kalau izin belum ada / gagal.
    */
   public async preconnectSilently(): Promise<string | null> {
+    // DILAPORKAN APA ADANYA, sekali per halaman.
+    //
+    // Izin Web Bluetooth tidak bisa diperiksa dari luar, dan gejalanya selalu
+    // sama dari sisi pengguna ("kok masih minta izin"). Dua sebab yang berbeda —
+    // daftar perangkat KOSONG versus daftar berisi tetapi izin tidak bertahan —
+    // hanya bisa dibedakan dengan membaca daftarnya. Satu baris ini memisahkan
+    // keduanya tanpa perlu menebak atau memasang ulang.
+    const perangkat = await this.storedDevices();
+    console.info('[Printer] Perangkat tersimpan untuk alamat ini: '
+      + (perangkat.length === 0
+        ? '(tidak ada)'
+        : perangkat.map((d: any, i: number) => `${i}: "${d?.name || '(tanpa nama)'}"`).join(', ')));
+
     if (await this.pairingState() !== 'ready') return null;
     try {
       const info = await this.connect();
@@ -383,15 +426,24 @@ export class NiimbotPrinter {
     // cetak berikutnya gagal lagi dengan "belum dipasangkan". Tanpa pemeriksaan
     // ini, gejalanya hanya terlihat sebagai "kok masih minta izin terus", dan
     // penyebabnya tidak pernah muncul di mana pun.
-    const tersimpan = (await this.storedDeviceNames()).includes(info.deviceName);
+    // Diverifikasi dari NAMA BROWSER, bukan nama protokol: hanya nama browser
+    // yang muncul di getDevices(). Memeriksa nama protokol pernah membuat
+    // pemeriksaan ini melaporkan "izin tidak bertahan" padahal perangkatnya
+    // tersimpan baik-baik saja.
+    const perangkat = await this.storedDevices();
+    const namaBrowser = this.printDeviceName;
+    const tersimpan = perangkat.some((d: any) => d?.name === namaBrowser);
+
     if (!tersimpan) {
-      console.warn('[Printer] Perangkat "' + info.deviceName + '" tersambung tetapi TIDAK '
-        + 'tersimpan di getDevices() setelah dipilih. Artinya izin tidak bertahan untuk '
-        + 'alamat ini: cetak berikutnya akan meminta izin lagi. Biasanya karena mode '
-        + 'penyamaran/incognito, izin situs diblokir, atau pembersihan data situs saat keluar.');
+      const daftar = perangkat.map((d: any) => String(d?.name || '(tanpa nama)')).join(', ') || '(kosong)';
+      console.warn('[Printer] Setelah dipilih, izin TIDAK terbaca untuk alamat ini. '
+        + `Nama perangkat menurut browser: "${namaBrowser || 'tidak terbaca'}". `
+        + `Perangkat tersimpan: ${daftar}. Artinya cetak berikutnya akan meminta izin lagi — `
+        + 'biasanya karena mode penyamaran/incognito, izin situs diblokir, atau '
+        + '"hapus data situs saat keluar".');
     } else {
-      console.info('[Printer] Izin tersimpan untuk alamat ini: ' + info.deviceName
-        + '. Cetak berikutnya tidak akan menampilkan dialog.');
+      console.info(`[Printer] Izin tersimpan untuk alamat ini: "${namaBrowser}". `
+        + 'Cetak berikutnya tidak akan menampilkan dialog.');
     }
     return { ...info, pairingPersisted: tersimpan };
   }
@@ -461,8 +513,22 @@ export class NiimbotPrinter {
     c.packetBuf = new Uint8Array();
   }
 
-  /** Bagian connect() setelah sambungan terbentuk. */
-  private async finishConnect(): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
+  /**
+   * Bagian connect() setelah sambungan terbentuk.
+   *
+   * @param perangkatDipilih Perangkat browser yang dipakai sambungan ini, kalau
+   *   pemilih baru saja dibuka. Ini sumber nama yang BENAR untuk pencocokan
+   *   berikutnya — lihat catatan di connect().
+   */
+  private async finishConnect(
+    perangkatDipilih?: any,
+  ): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
+    // Sisa byte dari handshake sambungan dibuang di sini juga, bukan hanya
+    // sebelum cetak: sambungan baru sendiri meninggalkan ekor (terlihat sebagai
+    // "Dropping invalid buffer 00 00 00 00" dua kali per sesi). Membiarkannya
+    // membuat paket pertama cetak ikut berisiko terbuang.
+    this.clearStalePacketBuffer();
+
     const info = this.client!.getPrinterInfo();
     const meta = this.client.getModelMetadata();
     const detected = this.client.getPrintTaskType();
@@ -470,7 +536,22 @@ export class NiimbotPrinter {
       this.printTaskName = detected;
     }
 
-    const deviceName = (info as { deviceName?: string } | undefined)?.deviceName || 'tidak diketahui';
+    // Nama dari BROWSER lebih dulu. Nama dari protokol hanya cadangan, dan
+    // sering kosong — printer mengirim nomor seri, bukan nama.
+    const namaBrowser = typeof perangkatDipilih?.name === 'string' && perangkatDipilih.name
+      ? perangkatDipilih.name
+      : null;
+    const namaProtokol = (info as { deviceName?: string } | undefined)?.deviceName || null;
+    const deviceName = namaBrowser || namaProtokol || 'tidak diketahui';
+    if (namaBrowser) {
+      // Sengaja dicatat: kalau dua sumber ini berbeda, itu penting diketahui saat
+      // pencocokan berikutnya gagal.
+      this.printDeviceName = namaBrowser;
+      if (namaProtokol && namaProtokol !== namaBrowser) {
+        console.info(`[Printer] Nama perangkat: browser "${namaBrowser}", protokol `
+          + `"${namaProtokol}". Yang dipakai untuk pencocokan: "${namaBrowser}".`);
+      }
+    }
     this.rememberDeviceName(deviceName);
 
     // Laporkan ke Admin. Tidak di-await: status bukan alasan menunda cetak.

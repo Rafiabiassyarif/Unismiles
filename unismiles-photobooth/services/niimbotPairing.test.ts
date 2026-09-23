@@ -158,11 +158,66 @@ test('pesan "belum dipasangkan" satu sumber untuk pesan dan tombol', () => {
     'PhotoBooth harus mengimpor konstanta itu');
 });
 
-test('gerbang pemilih ada TEPAT sebelum pemanggilan library tanpa argumen', () => {
-  // Urutan ini yang menjamin tidak ada jalan lain ke pemilih.
+test('pemanggilan library tanpa argumen berada SETELAH gerbang', () => {
+  // Yang menjamin tidak ada jalan lain ke pemilih: pemanggilan tanpa argumen
+  // harus berada setelah gerbang, dan sebelum akhir connect(). Jaraknya longgar
+  // karena di antaranya ada penangkap event "connect" — yang penting urutannya.
+  //
+  // Diperiksa juga bahwa pemanggilan tanpa argumen itu hanya SATU di seluruh
+  // berkas: kalau ada yang kedua di luar jangkauan gerbang, semuanya bocor.
   const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
   const i = PRINTER.indexOf('if (!options.forceChooser)');
   const j = PRINTER.indexOf('await this.client.connect();', i);
-  assert.ok(i > 0 && j > i && j - i < 900,
-    'gerbang harus tepat sebelum client.connect() tanpa argumen');
+  const akhirConnect = PRINTER.indexOf('/**\n   * Bagian connect()', i);
+  assert.ok(i > 0 && j > i && (akhirConnect === -1 || j < akhirConnect),
+    'client.connect() tanpa argumen harus berada di dalam cabang forceChooser');
+  const jumlah = (PRINTER.match(/await this\.client\.connect\(\);/g) || []).length;
+  assert.strictEqual(jumlah, 1, 'hanya boleh ada satu jalan ke pemilih');
+});
+
+test('nama perangkat diambil dari BROWSER, bukan dari protokol', () => {
+  // Ini akar masalah yang dilaporkan: nama dari protokol printer sering KOSONG
+  // (printer mengirim nomor seri, bukan nama), sedangkan getDevices()
+  // mengembalikan perangkat dengan nama dari browser. Mengingat nama protokol
+  // lalu mencocokkannya dengan nama browser TIDAK PERNAH cocok, sehingga printer
+  // yang benar-benar tersimpan terus dianggap "belum dipasangkan".
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const finish = PRINTER.slice(PRINTER.indexOf('private async finishConnect'));
+  assert.match(finish.slice(0, 1400), /namaBrowser/,
+    'finishConnect harus menerima/ memakai nama dari browser');
+  assert.match(finish.slice(0, 1400), /namaBrowser \|\| namaProtokol/,
+    'nama browser harus DIUTAMAKAN atas nama protokol');
+  // Dan perangkat yang dipilih ditangkap dari event "connect" library.
+  const connect = PRINTER.slice(PRINTER.indexOf('const found = options.forceChooser'));
+  assert.match(connect, /this\.client\.on\('connect'/, 'perangkat dipilih harus ditangkap dari event');
+  assert.match(connect, /this\.finishConnect\(dipilih\)/, 'lalu diteruskan ke finishConnect');
+});
+
+test('pairNow memverifikasi izin memakai nama BROWSER', () => {
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const fn = PRINTER.slice(PRINTER.indexOf('public async pairNow'));
+  assert.match(fn.slice(0, 2200), /d\?\.name === namaBrowser/,
+    'pencocokan harus memakai nama browser — nama protokol tidak pernah cocok');
+  assert.match(fn.slice(0, 2200), /printDeviceName/,
+    'harus memakai nama browser yang tercatat saat sambung');
+});
+
+test('preconnect melaporkan isi daftar perangkat apa adanya', () => {
+  // Satu baris ini yang membedakan "daftar kosong" dari "izin tidak bertahan",
+  // dua sebab yang gejalanya sama dari sisi pengguna.
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const fn = PRINTER.slice(PRINTER.indexOf('public async preconnectSilently'));
+  assert.match(fn.slice(0, 1400), /Perangkat tersimpan untuk alamat ini/,
+    'harus melaporkan daftar perangkat saat halaman siap');
+  assert.match(fn.slice(0, 1400), /perangkat\.length === 0/,
+    'harus menyatakan terang-terangan kalau daftarnya kosong');
+});
+
+test('sisa buffer dibuang setelah sambung juga', () => {
+  // Handshake sambungan sendiri meninggalkan ekor (terlihat sebagai
+  // "Dropping invalid buffer" dua kali per sesi).
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const finish = PRINTER.slice(PRINTER.indexOf('private async finishConnect'));
+  assert.match(finish.slice(0, 900), /this\.clearStalePacketBuffer\(\)/,
+    'sisa buffer harus dibuang setelah sambungan terbentuk');
 });
