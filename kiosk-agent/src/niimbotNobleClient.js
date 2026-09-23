@@ -134,7 +134,12 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
       const selesai = (fn, nilai) => {
         clearTimeout(timer);
         this.noble.removeListener('discover', onDiscover);
-        this.noble.stopScanning();
+        // Dipakai versi Async: `stopScanning` biasa WAJIB diberi callback
+        // (tanpa itu ia melempar), dan `startScanning` biasa mengembalikan
+        // undefined — sehingga `.catch` di atasnya meledak. Ini persis yang
+        // terjadi saat uji radio pertama: sambungan gagal karena kesalahan API,
+        // bukan karena printernya.
+        this.noble.stopScanningAsync().catch(() => {});
         fn(nilai);
       };
       const timer = setTimeout(() => {
@@ -148,7 +153,7 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
       };
 
       this.noble.on('discover', onDiscover);
-      this.noble.startScanning([], true).catch((error) => {
+      this.noble.startScanningAsync([], true).catch((error) => {
         error.code = 'BLUETOOTH_UNAVAILABLE';
         selesai(reject, error);
       });
@@ -164,7 +169,25 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
    */
   async pilihKarakteristik(peripheral) {
     const { characteristics } = await peripheral.discoverAllServicesAndCharacteristicsAsync();
-    const channel = characteristics.find((c) => c.properties?.notify && c.properties?.writeWithoutResponse);
+
+    // Bentuk `properties` BEDA antara noble dan Web Bluetooth, dan ini sudah
+    // terbukti di printer sungguhan:
+    //
+    //   noble              -> ARRAY  : ["read","writeWithoutResponse","write","notify"]
+    //   Web Bluetooth      -> OBJEK  : { read: true, writeWithoutResponse: true, ... }
+    //
+    // Kode yang memeriksa `properties.notify === true` akan selalu gagal di
+    // noble — dan gejalanya menyesatkan: printer terlihat, GATT tersambung,
+    // layanan terbaca, lalu "karakteristik tidak ditemukan", seolah printernya
+    // yang bermasalah. Dua bentuk diterima supaya jalur ini juga selamat kalau
+    // suatu saat dijalankan dengan shim yang menyerupai Web Bluetooth.
+    const bisa = (c, nama) => {
+      const p = c.properties;
+      if (Array.isArray(p)) return p.includes(nama);
+      return Boolean(p?.[nama]);
+    };
+
+    const channel = characteristics.find((c) => bisa(c, 'notify') && bisa(c, 'writeWithoutResponse'));
     if (!channel) {
       const error = new Error('Karakteristik NIIMBOT tidak ditemukan (perlu notify + writeWithoutResponse)');
       error.code = 'CHARACTERISTIC_NOT_FOUND';

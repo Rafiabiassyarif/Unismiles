@@ -67,11 +67,14 @@ function buatNoblePalsu({ perangkat = [] } = {}) {
     duga,
     on(event, cb) { if (event === 'discover') noble._cb = cb; return noble; },
     removeListener() { noble._cb = undefined; return noble; },
-    async startScanning() {
+    // Menyerupai noble SUNGGUHAN (lihat catatan di test transport).
+    startScanning() { throw new Error('fake: pakai startScanningAsync'); },
+    async startScanningAsync() {
       duga.startScanning += 1;
       for (const p of perangkat) if (noble._cb) noble._cb(p);
     },
-    async stopScanning() { duga.stopScanning += 1; },
+    stopScanning() { throw new Error('fake: pakai stopScanningAsync'); },
+    async stopScanningAsync() { duga.stopScanning += 1; },
   };
   return noble;
 }

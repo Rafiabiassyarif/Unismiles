@@ -145,10 +145,10 @@ async function main() {
     if (kunci) terlihat.set(kunci, { ...klasifikasiPerangkat(p, opsi), rssi: p.rssi, peripheral: p });
   };
   noble.on('discover', onDiscover);
-  await noble.startScanning([], true);
+  await noble.startScanningAsync([], true);
   await new Promise((r) => setTimeout(r, opsi.detik * 1000));
   noble.removeListener('discover', onDiscover);
-  await noble.stopScanning();
+  await noble.stopScanningAsync().catch(() => {});
 
   const daftar = Array.from(terlihat.values());
   console.log(`\n  ${daftar.length} perangkat terlihat:`);
@@ -167,7 +167,10 @@ async function main() {
     process.exit(3);
   }
 
-  console.log(`\n  kandidat terkuat: "${kandidat.nama}" (${kandidat.alamat}) rssi=${kandidat.rssi ?? '?'}`);
+  // macOS tidak mengungkap alamat BLE (alamat acak per sesi), jadi tanda kurung
+  // kosong akan terbaca seperti kesalahan. Diterangkan apa adanya.
+  const alamatTampil = kandidat.alamat || 'tanpa alamat — macOS menyembunyikannya; pakai nama';
+  console.log(`\n  kandidat terkuat: "${kandidat.nama}" (${alamatTampil}) rssi=${kandidat.rssi ?? '?'}`);
   console.log(`    isi ini di Admin → Printer: ${kandidat.nama}`);
   if (kandidat.alamat) console.log(`    atau alamat: ${kandidat.alamat}`);
 
@@ -186,9 +189,18 @@ async function main() {
     const hasil = await klien.connect();
     const channel = klien.channel;
     console.log(`    tersambung  : ${hasil.deviceName}`);
+    // Bentuk `properties` berbeda antar transport: noble memakai ARRAY
+    // (["notify","writeWithoutResponse"]), Web Bluetooth memakai OBJEK
+    // ({ notify: true, ... }). Dibaca keduanya, kalau tidak laporannya justru
+    // menyatakan false untuk dua sifat yang menjadi alasan pemilihannya.
+    const bisa = (nama) => {
+      const p = channel?.properties;
+      if (Array.isArray(p)) return p.includes(nama);
+      return p?.[nama] === true;
+    };
     console.log(`    karakteristik: ${channel?.uuid}`);
-    console.log(`    notify      : ${channel?.properties?.notify === true}`);
-    console.log(`    tanpa respons: ${channel?.properties?.writeWithoutResponse === true}`);
+    console.log(`    notify      : ${bisa('notify')}`);
+    console.log(`    tanpa respons: ${bisa('writeWithoutResponse')}`);
     console.log('\n  KESIMPULAN: sambungan OK dan karakteristik NIIMBOT ditemukan.');
     console.log('  Jalur Bluetooth native SIAP. Selanjutnya uji cetak dari aplikasi.');
     await klien.disconnect();

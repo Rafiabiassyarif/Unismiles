@@ -41,12 +41,19 @@ function buatNoblePalsu({ state = 'poweredOn', peripheral = null } = {}) {
       }
       return noble;
     },
-    async startScanning() {
+    // Menyerupai noble SUNGGUHAN: `startScanning` mengembalikan undefined
+    // (tanpa `.catch`), dan `stopScanning` melempar kalau tidak diberi callback.
+    // Fake yang lebih canggih daripada kenyataan menyembunyikan kesalahan API.
+    startScanning() {
+      throw new Error('fake: pakai startScanningAsync, seperti di kode produksi');
+    },
+    async startScanningAsync() {
       catatan.startScanning += 1;
       // Scan nyata butuh waktu; di sini perangkat langsung "terlihat" kalau ada.
       if (peripheral && noble._onDiscover) setImmediate(() => noble._onDiscover(peripheral));
     },
-    async stopScanning() { catatan.stopScanning += 1; },
+    stopScanning() { throw new Error('fake: pakai stopScanningAsync'); },
+    async stopScanningAsync() { catatan.stopScanning += 1; },
   };
   return noble;
 }
@@ -55,7 +62,7 @@ function buatPeripheralPalsu({ nama = NAMA_PRINTER, punyaChannel = true } = {}) 
   const duga = { connectAsync: 0, disconnectAsync: 0, discover: 0, subscribe: 0, writes: [] };
   const channel = {
     uuid: '4a1b2c3d',
-    properties: { notify: true, writeWithoutResponse: true },
+    properties: ['notify', 'writeWithoutResponse'],
     _onData: null,
     on(event, cb) { if (event === 'data') this._onData = cb; return this; },
     async subscribeAsync() { duga.subscribe += 1; },
@@ -87,6 +94,37 @@ test('transport ini benar-benar memakai basis library (protokol diwarisi)', () =
   assert.strictEqual(typeof klien.mutex, 'object', 'mutex pengiriman harus ada');
   assert.strictEqual(klien.getType(), 'noble');
   assert.strictEqual(klien.isConnected(), false, 'belum tersambung');
+});
+
+test('properties berbentuk ARRAY (noble) tetap dikenali', async () => {
+  // Bentuk `properties` noble adalah ARRAY, bukan OBJEK seperti Web Bluetooth.
+  // Bug nyata pernah muncul dari sini: printer terlihat, GATT tersambung,
+  // layanan terbaca, lalu "karakteristik tidak ditemukan" — seolah printer yang
+  // bermasalah, padahal cara membacanya. Sudah terbukti di printer sungguhan.
+  const klien = new NiimbotNobleClient({ noble: buatNoblePalsu() });
+  const perangkat = {
+    discoverAllServicesAndCharacteristicsAsync: async () => ({
+      characteristics: [
+        { uuid: 'lain', properties: ['read'] },
+        { uuid: 'target', properties: ['read', 'writeWithoutResponse', 'write', 'notify'] },
+      ],
+    }),
+  };
+  const pilih = await klien.pilihKarakteristik(perangkat);
+  assert.strictEqual(pilih.uuid, 'target', 'ARRAY harus dikenali seperti OBJEK');
+});
+
+test('properties berbentuk OBJEK (Web Bluetooth) juga tetap dikenali', async () => {
+  // Diterima keduanya supaya jalur ini selamat kalau dijalankan dengan shim
+  // yang menyerupai Web Bluetooth.
+  const klien = new NiimbotNobleClient({ noble: buatNoblePalsu() });
+  const perangkat = {
+    discoverAllServicesAndCharacteristicsAsync: async () => ({
+      characteristics: [{ uuid: 'target', properties: { notify: true, writeWithoutResponse: true } }],
+    }),
+  };
+  const pilih = await klien.pilihKarakteristik(perangkat);
+  assert.strictEqual(pilih.uuid, 'target');
 });
 
 test('connect() memilih karakteristik notify+writeWithoutResponse dan subscribe', async () => {
@@ -265,7 +303,7 @@ test('kiosk BARU (belum ada nama/alamat) tetap bisa menemukan printer', async ()
   };
   const noble = buatNoblePalsu({ peripheral: null });
   noble._peripherals = {};
-  noble.startScanning = async () => { noble.catatan.startScanning += 1; setImmediate(() => noble._onDiscover(printer)); };
+  noble.startScanningAsync = async () => { noble.catatan.startScanning += 1; setImmediate(() => noble._onDiscover(printer)); };
 
   const klien = new NiimbotNobleClient({ noble });   // TANPA nama, TANPA alamat
   const dapat = await klien.cariPerangkat();

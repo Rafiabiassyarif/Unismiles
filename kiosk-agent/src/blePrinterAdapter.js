@@ -181,13 +181,13 @@ class BlePrinterAdapter extends PrinterAdapter {
     };
     noble.on('discover', onDiscover);
     try {
-      await noble.startScanning([], true);
+      await noble.startScanningAsync([], true);
       await new Promise((resolve) => setTimeout(resolve, this.durasiPindaiMs));
     } catch {
       return [];
     } finally {
       noble.removeListener('discover', onDiscover);
-      noble.stopScanning();
+      await noble.stopScanningAsync().catch(() => {});
     }
     return Array.from(terlihat.values());
   }
