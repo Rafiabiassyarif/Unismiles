@@ -83,6 +83,28 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
   cocok(peripheral) {
     const alamat = String(peripheral?.address || '').toLowerCase();
     const nama = String(peripheral?.advertisement?.localName || '');
+
+    // BELUM ADA KRITERIA = pemasangan pertama di kiosk ini.
+    //
+    // Tanpa cabang ini, kiosk baru tidak akan pernah bisa menyambung: tidak ada
+    // nama maupun alamat tersimpan, jadi tidak ada yang cocok dan pencarian
+    // selalu berakhir PRINTER_NOT_FOUND.
+    //
+    // Dua bukti saja, keduanya kuat:
+    //   1. perangkat yang mengiklankan service NIIMBOT
+    //   2. nama yang berawalan model printer label (sama seperti filter library)
+    //
+    // Sengaja TIDAK ada "perangkat bernama apa pun" sebagai jalan terakhir:
+    // itu akan memilih perangkat acak, dan kegagalannya menyesatkan — radio
+    // terpakai untuk perangkat yang salah, sementara pesannya menyalahkan
+    // printer. Kalau printer tidak mengiklankan keduanya, Admin bisa mengisi
+    // nama atau alamatnya langsung, dan itu memang jalurnya.
+    if (!this.alamat && !this.nama) {
+      const services = (peripheral?.advertisement?.serviceUuids || []).map((u) => tanpaDash(u));
+      if (services.includes(tanpaDash(NIIMBOT_SERVICE_UUID))) return true;
+      return /^(b1|d11|d110|b21|b18|d101)/i.test(nama);
+    }
+
     if (this.alamat && alamat && alamat === String(this.alamat).toLowerCase()) return true;
     if (this.nama && nama && nama === this.nama) return true;
     return false;

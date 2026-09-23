@@ -254,3 +254,38 @@ test('sendRaw tanpa sambungan ditolak terang-terangan', async () => {
   const klien = new NiimbotNobleClient({ noble: buatNoblePalsu(), nama: NAMA_PRINTER });
   await assert.rejects(() => klien.sendRaw(Uint8Array.from([1])), /Channel is closed/);
 });
+
+test('kiosk BARU (belum ada nama/alamat) tetap bisa menemukan printer', async () => {
+  // Tanpa cabang ini, pemasangan pertama di kiosk mustahil: tidak ada nama
+  // maupun alamat tersimpan, jadi tidak ada yang cocok dan pencarian selalu
+  // berakhir PRINTER_NOT_FOUND.
+  const printer = {
+    address: 'aa:bb:cc:dd:ee:ff',
+    advertisement: { localName: 'B1 Pro-I606032055', serviceUuids: [] },
+  };
+  const noble = buatNoblePalsu({ peripheral: null });
+  noble._peripherals = {};
+  noble.startScanning = async () => { noble.catatan.startScanning += 1; setImmediate(() => noble._onDiscover(printer)); };
+
+  const klien = new NiimbotNobleClient({ noble });   // TANPA nama, TANPA alamat
+  const dapat = await klien.cariPerangkat();
+
+  assert.strictEqual(dapat, printer, 'printer label pertama harus bisa ditemukan');
+});
+
+test('tanpa kriteria, perangkat NON-printer tidak ikut dipilih', async () => {
+  // Memilih perangkat sembarangan lebih buruk daripada gagal: radio terpakai
+  // untuk perangkat yang salah, sementara pesannya menyalahkan printer.
+  const noble = buatNoblePalsu({ peripheral: null });
+  noble._peripherals = {};
+  const klien = new NiimbotNobleClient({ noble, cariTimeoutMs: 40 });
+  assert.strictEqual(
+    klien.cocok({ address: '11:11:11:11:11:11', advertisement: { localName: 'Speaker Bluetooth' } }),
+    false, 'perangkat bernama lain bukan printer label');
+  assert.strictEqual(
+    klien.cocok({ address: '22:22:22:22:22:22', advertisement: { localName: '', serviceUuids: ['e7810a71-73ae-499d-8c15-faa9aef0c3f2'] } }),
+    true, 'yang mengiklankan service NIIMBOT tetap dikenali meski tanpa nama');
+  const bukanPrinter = { address: '11:11:11:11:11:11', advertisement: { localName: '' } };
+
+  assert.strictEqual(klien.cocok(bukanPrinter), false, 'perangkat tanpa nama bukan printer label');
+});
