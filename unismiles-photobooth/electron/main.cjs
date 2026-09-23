@@ -6,11 +6,14 @@
  * Di browser, Web Bluetooth menyimpan izin per-ORIGIN dan per-PROFIL, dan izin itu
  * bisa hilang (data situs dibersihkan, profil berbeda, mode kiosk). Gejalanya:
  * pemilih perangkat muncul lagi padahal printer sudah pernah dipasangkan — dan
- * TIDAK ADA kode di halaman web yang bisa memaksanya bertahan.
+ * TIDAK ADA kode di halaman web yang bisa memaksanya bertahan. Itu juga sebabnya
+ * cetak OTOMATIS tidak bisa memasang printer: jalur itu menunggu unggahan, jadi
+ * gestur klik sudah kedaluwarsa saat tiba di titik pemasangan.
  *
  * Di proses utama Electron, Bluetooth diakses lewat adapter OS. Tidak ada origin,
- * tidak ada izin halaman, tidak ada pemilih perangkat. Printer dicari dari nama
- * atau alamatnya. Izin yang tersisa hanya izin OS, sekali, milik aplikasi.
+ * tidak ada izin halaman, tidak ada pemilih perangkat, tidak ada gestur yang
+ * harus dijaga. Printer dicari dari nama atau alamatnya. Izin yang tersisa hanya
+ * izin OS, sekali, milik aplikasi.
  *
  * YANG SENGAJA TIDAK BERUBAH
  *
@@ -18,6 +21,12 @@
  * photobooth tetap sampai dengan sekali deploy — aplikasi ini hanya menambahkan
  * jalur Bluetooth native. Penyusunan gambar (geometri label, margin, kepekatan)
  * tetap di renderer: kalibrasi tidak boleh punya dua sumber.
+ *
+ * BERKAS INI .cjs, BUKAN .js
+ *
+ * package.json paket ini memakai "type": "module", jadi berkas .js diperlakukan
+ * sebagai ES module dan `require` di dalamnya gagal saat dimuat. Electron memuat
+ * proses utama sebagai CommonJS.
  */
 const path = require('node:path');
 const { app, BrowserWindow, ipcMain, session } = require('electron');
@@ -26,25 +35,24 @@ const { app, BrowserWindow, ipcMain, session } = require('electron');
 const URL_UI = process.env.PHOTOBOOTH_URL || 'https://photobooth.uniinside.net';
 
 /**
- * Transport + protokol diambil dari kiosk-agent supaya HANYA ADA SATU
- * implementasi. Menyalinnya ke sini berarti dua tempat yang harus dijaga sama —
- * dan perbaikan di salah satunya akan diam-diam tidak terpakai.
- *
- * ponytail: jalur relatif ini bekerja saat dijalankan dari repo. Sebelum
- * dipaketkan jadi installer, berkas transport harus di-vendor ke dalam app.
+ * Transport dan jalur cetak diambil dari SALINAN di dalam app (electron/ble/),
+ * bukan dari kiosk-agent lewat jalur relatif: jalur itu tidak ada di mesin kiosk
+ * setelah aplikasi dipaketkan. Agar salinan tidak menyimpang, ada test yang
+ * membandingkannya byte-per-byte dengan sumbernya.
  */
-const JALUR_AGENT = path.join(__dirname, '..', 'kiosk-agent', 'src');
-const { NiimbotNobleClient } = require(path.join(JALUR_AGENT, 'niimbotNobleClient.js'));
-
-let jendela = null;
-let klien = null;
-let noble = null;
+const { NiimbotNobleClient } = require('./ble/niimbotNobleClient.cjs');
+const { cetakHalaman } = require('./ble/cetakHalaman.cjs');
 
 /** noble dimuat malas: menyentuh radio saat start memperlambat dan bisa menggantung. */
 function muatNoble() {
-  if (!noble) noble = require(path.join(JALUR_AGENT, '..', 'node_modules', '@stoprocent', 'noble'));
-  return noble;
+  return require('@stoprocent/noble');
 }
+
+let jendela = null;
+let klien = null;
+
+/** Waktu tunggu adapter dilaporkan siap; noble memakai 'unknown' saat masih dingin. */
+const TUNGGU_ADAPTER_MS = 8000;
 
 async function putuskan() {
   if (klien) {
@@ -53,43 +61,47 @@ async function putuskan() {
   klien = null;
 }
 
-/** Sambung ke printer tanpa dialog apa pun. */
-async function sambung({ nama, alamat } = {}) {
-  if (klien && klien.isConnected()) return { deviceName: klien.nama, address: klien.alamat };
-  await putuskan();
-  klien = new NiimbotNobleClient({ noble: muatNoble(), nama: nama || null, alamat: alamat || null });
-  const hasil = await klien.connect();
-  return { deviceName: hasil.deviceName, address: hasil.address };
-}
+/**
+ * Nama printer yang sudah dikenal, dari localStorage renderer.
+ *
+ * Renderer mengirimnya, alih-alih proses utama menyimpan sendiri: nilai yang
+ * dipakai memilih printer harus SATU sumber dengan yang dilihat operator di
+ * pengaturan. Dua tempat menyimpan berarti bisa berbeda, dan gejalanya adalah
+ * printer yang salah dicetak.
+ */
+let namaPrinterDikenal = null;
 
 /**
- * Cetak halaman yang SUDAH ter-encode.
+ * Sambung ke printer tanpa dialog apa pun.
  *
- * Renderer mengirim hasil ImageEncoder — jadi jalur ini tidak perlu tahu apa pun
- * soal gambar, margin, atau kepekatan. Yang diangkut hanya data cetak, dan itu
- * membuatnya identik dengan yang dicetak lewat browser.
+ * Kalau nama belum dikenal, transport mencari sendiri (service NIIMBOT atau
+ * awalan model) — jalur yang sudah terbukti menyambung 1,8 detik pada kiosk
+ * tanpa nama, tanpa alamat, dan tanpa izin.
  */
-async function cetak(halaman, opsi = {}) {
-  if (!klien || !klien.isConnected()) throw new Error('Printer belum tersambung.');
-  const { density, copies = 1, model = 'B1' } = opsi;
-
-  klien.stopHeartbeat();
-  const task = klien.protocol.newPrintTask(model, {
-    totalPages: copies,
-    density,
-    statusPollIntervalMs: 100,
-    statusTimeoutMs: 15000,
-    // Satu halaman 576x714 px = 714 paket (~59 KB). Pada jeda 10 ms itu ~7 detik,
-    // jadi batas bawaan 10 detik hampir pasti habis di tengah dan label keluar
-    // tidak penuh. Kelonggaran besar jauh lebih murah daripada label setengah jadi.
-    pageTimeoutMs: 60000,
+async function sambung({ nama, alamat } = {}) {
+  if (klien && klien.isConnected()) {
+    return { deviceName: klien.nama || namaPrinterDikenal, address: klien.alamat };
+  }
+  await putuskan();
+  const target = nama || namaPrinterDikenal || null;
+  klien = new NiimbotNobleClient({
+    noble: muatNoble(),
+    nama: target,
+    alamat: alamat || null,
   });
-  await task.printInit();
-  await task.printPage(halaman, copies);
-  if (typeof task.waitForPageFinished === 'function') await task.waitForPageFinished();
-  await task.waitForFinished();
-  await task.printEnd();
-  return { ok: true };
+  const hasil = await klien.connect();
+  if (hasil?.deviceName) namaPrinterDikenal = hasil.deviceName;
+  return { deviceName: hasil?.deviceName || target, address: hasil?.address || null };
+}
+
+/** Cetak halaman yang SUDAH di-encode renderer. Tanpa menyentuh gambar. */
+async function cetak(halaman, opsi = {}) {
+  if (!klien || !klien.isConnected()) {
+    // Kiosk bisa kehilangan sambungan saat printer tidur. Menyambung ulang di
+    // sini sah: tidak ada gestur yang perlu dijaga di aplikasi desktop.
+    await sambung({});
+  }
+  return cetakHalaman({ klien, halaman, ...opsi });
 }
 
 function daftarkanIpc() {
@@ -98,10 +110,27 @@ function daftarkanIpc() {
   ipcMain.handle('printer:terputus', async () => { await putuskan(); return { ok: true }; });
   ipcMain.handle('printer:status', () => ({
     tersambung: Boolean(klien && klien.isConnected()),
-    deviceName: klien ? klien.nama : null,
+    deviceName: (klien && klien.nama) || namaPrinterDikenal,
     address: klien ? klien.alamat : null,
   }));
   ipcMain.handle('printer:cetak', (_e, { halaman, opsi }) => cetak(halaman, opsi || {}));
+
+  /**
+   * Keadaan adapter, untuk ditampilkan di pengaturan kiosk.
+   *
+   * Dilaporkan apa adanya — termasuk 'unknown' — supaya mode kegagalan yang
+   * berbeda (radio mati vs izin belum diberikan) bisa dibedakan operator.
+   */
+  ipcMain.handle('printer:keadaan-adapter', async () => {
+    const noble = muatNoble();
+    const state = await new Promise((resolve) => {
+      if (noble.state && noble.state !== 'unknown') return resolve(noble.state);
+      const selesai = (s) => { clearTimeout(t); noble.removeListener('stateChange', selesai); resolve(s); };
+      const t = setTimeout(() => resolve(noble.state || 'unknown'), TUNGGU_ADAPTER_MS);
+      noble.on('stateChange', selesai);
+    });
+    return { state };
+  });
 }
 
 function buatJendela() {
