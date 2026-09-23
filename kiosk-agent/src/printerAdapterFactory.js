@@ -10,8 +10,12 @@ const MockPrinterAdapter = require('./mockPrinterAdapter');
  * printer itu tetap muncul sebagai printer biasa, jadi adapter thermal memakai
  * driver printer yang sama dengan adapter OS — yang berbeda hanya penanganan
  * ukuran kertas: lebarnya dibatasi lebar cetak efektif (48 mm), bukan ukuran foto.
+ *
+ * `ble` untuk printer label yang dijangkau lewat Bluetooth native (bukan Web
+ * Bluetooth). Ini satu-satunya jalur tanpa izin per-origin, jadi printer
+ * dikenali dari ALAMAT atau nama iklannya — bukan dari izin halaman web.
  */
-const SUPPORTED_ADAPTER_NAMES = ['disabled', 'cups', 'windows', 'mock', 'thermal'];
+const SUPPORTED_ADAPTER_NAMES = ['disabled', 'cups', 'windows', 'mock', 'thermal', 'ble'];
 
 function supportedAdapters() {
   const values = ['disabled', 'mock'];
@@ -19,11 +23,21 @@ function supportedAdapters() {
   if (process.platform === 'darwin' || process.platform === 'linux') values.push('cups');
   // Thermal memakai jalur printer OS, jadi ketersediaannya mengikuti OS.
   values.push('thermal');
+  // BLE native dipakai lewat noble, yang punya binding untuk macOS dan Windows.
+  values.push('ble');
   return values;
 }
 
 function createPrinterAdapter(config = {}) {
   const adapter = String(config.adapter || 'disabled').toLowerCase();
+
+  // BLE native: printer label lewat noble, tanpa izin browser sama sekali.
+  // Dimuat malas supaya proses agent yang tidak memakai BLE tidak menyentuh
+  // adapter Bluetooth saat start.
+  if (adapter === 'ble') {
+    const BlePrinterAdapter = require('./blePrinterAdapter');
+    return new BlePrinterAdapter(config);
+  }
 
   // Thermal = printer OS, dengan ukuran kertas termal.
   if (adapter === 'thermal') {

@@ -442,11 +442,16 @@ test('sambung awal saat halaman siap tanpa dialog', () => {
   assert.match(PRINTER, /preconnectSilently/,
     'harus ada sambung awal yang aman dipanggil otomatis');
   const fn = PRINTER.slice(PRINTER.indexOf('public async preconnectSilently'));
-  assert.match(fn.slice(0, 2600), /pairingState\(\) !== 'ready'\s*\)\s*return null/,
-    'sambung awal harus berhenti dulu kalau izin belum ada (tidak boleh buka dialog)');
+  // Dua jalur, dan keduanya harus aman dipanggil otomatis:
+  //   desktop : tidak ada izin untuk diperiksa — printernya dicari langsung
+  //   browser : berhenti dulu kalau izin belum ada, supaya dialog tidak dibuka
+  assert.match(fn.slice(0, 1200), /const native = NiimbotPrinter\.nativeBridge\(\)/,
+    'jalur desktop harus dikenali lebih dulu di sambung awal');
+  assert.match(fn, /pairingState\(\) !== 'ready'\s*\)\s*return null/,
+    'jalur browser harus berhenti dulu kalau izin belum ada (tidak boleh buka dialog)');
   // Daftar perangkat dilaporkan apa adanya sebelum memutuskan: satu baris ini
   // yang membedakan "tidak ada perangkat" dari "izin tidak bertahan".
-  assert.match(fn.slice(0, 2600), /Perangkat tersimpan untuk alamat ini/,
+  assert.match(fn, /Perangkat tersimpan untuk alamat ini/,
     'preconnect harus melaporkan isi daftar perangkat');
   // Dan PhotoBooth memanggilnya sekali saat siap.
   assert.match(BOOTH, /preconnectSilently\(\)/, 'photobooth harus memanggilnya saat siap');

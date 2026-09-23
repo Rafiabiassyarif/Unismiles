@@ -145,8 +145,24 @@ export class NiimbotPrinter {
   private client: NiimbotAbstractClient | null = null;
   private printTaskName: PrintTaskName = 'B1';
 
-  /** Apakah browser ini bisa memakai Web Bluetooth. */
+  /**
+   * Keadaan sambungan untuk jalur aplikasi desktop.
+   *
+   * Jalur itu tidak memakai `client` (klien Web Bluetooth), jadi keadaannya
+   * dicatat di sini. Perlu karena `isConnected()` dipakai untuk memutuskan
+   * apakah perlu menyambung lagi.
+   */
+  private nativeTersambung = false;
+
+  /**
+   * Apakah printer bisa dijangkau.
+   *
+   * Di aplikasi desktop, transport Bluetooth native dipasang oleh proses utama
+   * dan TIDAK butuh dukungan Web Bluetooth — jadi pemeriksaan ini harus lolos
+   * di sana. Tanpa cabang itu, aplikasi desktop sendiri akan menolak mencetak.
+   */
   static isSupported(): boolean {
+    if (NiimbotPrinter.nativeBridge()) return true;
     // Diperiksa dari objek global, bukan lewat tipe: tipe DOM bawaan Proyek ini
     // tidak memuat Web Bluetooth, dan menambah dependensi tipe hanya untuk satu
     // pemeriksaan tidak sepadan.
@@ -154,7 +170,26 @@ export class NiimbotPrinter {
       && Boolean((navigator as unknown as { bluetooth?: unknown }).bluetooth);
   }
 
+  /** Transport Bluetooth native, kalau aplikasi ini berjalan sebagai desktop app. */
+  private static nativeBridge(): {
+    sambung: (o?: { nama?: string; alamat?: string }) => Promise<{ deviceName: string; address: string }>;
+    status: () => Promise<{ tersambung: boolean; deviceName: string | null; address: string | null }>;
+    terputus: () => Promise<unknown>;
+    cetak: (halaman: unknown, opsi?: unknown) => Promise<unknown>;
+  } | null {
+    // Dibaca dari globalThis, BUKAN navigator: contextBridge hanya bisa menaruh
+    // di window. Membacanya dari navigator akan selalu kosong — dan gejalanya
+    // aplikasi desktop yang menolak mencetak tanpa alasan yang jelas.
+    if (typeof globalThis === 'undefined') return null;
+    return (globalThis as unknown as { kioskPrinter?: never }).kioskPrinter ?? null;
+  }
+
   isConnected(): boolean {
+    // Jalur aplikasi desktop tidak memakai `client` (itu klien Web Bluetooth),
+    // jadi keadaannya dicatat sendiri saat sambung/putus. Tanpa ini, setiap
+    // cetak akan menyambung ulang — dan di Windows menyambung ulang saat sudah
+    // tersambung justru memutus koneksi yang sedang dipakai.
+    if (NiimbotPrinter.nativeBridge()) return this.nativeTersambung;
     return Boolean(this.client?.isConnected());
   }
 
@@ -169,6 +204,27 @@ export class NiimbotPrinter {
   async connect(
     options: { forceChooser?: boolean } = {},
   ): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
+    // JALUR APLIKASI DESKTOP: Bluetooth native, tanpa izin halaman sama sekali.
+    // Dicoba lebih dulu karena di sana Web Bluetooth memang tidak ada.
+    const native = NiimbotPrinter.nativeBridge();
+    if (native) {
+      const hasil = await native.sambung({
+        nama: options.forceChooser ? undefined : this.rememberedDeviceName() || undefined,
+        alamat: this.rememberedAddress() || undefined,
+      });
+      // Alamat disimpan supaya sambungan berikutnya tidak perlu menebak: alamat
+      // lebih pasti daripada nama iklan (yang bisa berubah atau tidak terbaca).
+      this.rememberAddress(hasil?.address);
+      this.rememberDeviceName(hasil?.deviceName);
+      this.nativeTersambung = true;
+      return {
+        deviceName: hasil?.deviceName || 'Printer label',
+        model: this.printTaskName,
+        printTask: this.printTaskName,
+        printheadPx: 576,
+      };
+    }
+
     if (!NiimbotPrinter.isSupported()) {
       throw new Error('Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge.');
     }
@@ -315,6 +371,32 @@ export class NiimbotPrinter {
     }
   }
 
+  /**
+   * Alamat perangkat yang diingat (khusus jalur Bluetooth native).
+   *
+   * Alamat lebih pasti daripada nama: di Windows ia stabil, dan mencocokkannya
+   * tidak bergantung pada bagaimana printer mengiklankan namanya. Di macOS
+   * alamat bisa berubah antar sesi, jadi nama tetap disimpan sebagai cadangan.
+   */
+  private readonly REMEMBERED_ADDRESS_KEY = 'unismiles.printer.address';
+
+  public rememberedAddress(): string | null {
+    try {
+      return window.localStorage.getItem(this.REMEMBERED_ADDRESS_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  private rememberAddress(address: string | undefined): void {
+    if (!address) return;
+    try {
+      window.localStorage.setItem(this.REMEMBERED_ADDRESS_KEY, address);
+    } catch {
+      // localStorage bisa dilarang. Bukan alasan menggagalkan cetak.
+    }
+  }
+
   private rememberDeviceName(name: string | undefined): void {
     if (!name) return;
     try {
@@ -352,12 +434,33 @@ export class NiimbotPrinter {
   }
 
   /** Keadaan izin untuk alamat ini. Dipakai panel pengaturan dan sebelum cetak. */
+  /**
+   * Apakah printer siap dicetak.
+   *
+   * Di aplikasi desktop jawabannya tidak bergantung pada izin: transportnya
+   * Bluetooth native, dan printer dicari dari nama/alamat yang sudah dikenal.
+   * Jadi statusnya 'ready' begitu ada printer yang dikenal — tanpa dialog, dan
+   * tanpa cara apa pun bagi izin untuk "hilang".
+   */
   public async pairingState(): Promise<PrinterPairingState> {
-    if (!NiimbotPrinter.isSupported()) return 'unsupported';
-    const devices = await this.storedDevices();
-    return devices.length > 0 ? 'ready' : 'no-stored-device';
+    const native = NiimbotPrinter.nativeBridge();
+    if (native) {
+      const status = await native.status();
+      if (status?.tersambung) return 'ready';
+      // Belum tersambung tapi pernah dikenali: masih 'ready', karena sambungan
+      // dibuat ulang saat mencetak — itu justru perilaku yang diminta.
+      return (this.rememberedAddress() || this.rememberedDeviceName()) ? 'ready' : 'no-stored-device';
+    }
+
+    return this.pairingStateWeb();
   }
 
+  private async pairingStateWeb(): Promise<PrinterPairingState> {
+    if (!NiimbotPrinter.isSupported()) return 'unsupported';
+    const devices = await this.storedDevices();
+    if (devices.length === 0) return 'no-stored-device';
+    return 'ready';
+  }
   /** Nama printer yang sudah diizinkan untuk alamat ini. */
   public async storedDeviceNames(): Promise<string[]> {
     const devices = await this.storedDevices();
@@ -375,6 +478,30 @@ export class NiimbotPrinter {
    * @returns nama perangkat, atau null kalau izin belum ada / gagal.
    */
   public async preconnectSilently(): Promise<string | null> {
+    // JALUR APLIKASI DESKTOP: sambung lebih awal, tanpa izin apa pun.
+    //
+    // Di sini tidak ada izin per-origin untuk diperiksa, jadi "apakah printer
+    // siap" bukan pertanyaan soal izin — melainkan apakah printernya ada. Karena
+    // itu kegagalan TIDAK dilaporkan sebagai galat: printer yang mati saat kiosk
+    // hidup bukan alasan menghalangi pengambilan foto.
+    const native = NiimbotPrinter.nativeBridge();
+    if (native) {
+      try {
+        const nama = this.rememberedDeviceName();
+        const alamat = this.rememberedAddress();
+        if (!nama && !alamat) return null;
+        const hasil = await native.sambung({ nama: nama || undefined, alamat: alamat || undefined });
+        this.nativeTersambung = true;
+        console.info(`[Printer] Tersambung otomatis (Bluetooth native): "${hasil?.deviceName}". `
+          + 'Tidak ada dialog izin di jalur ini.');
+        return hasil?.deviceName || null;
+      } catch (error: any) {
+        console.info('[Printer] Sambung otomatis belum berhasil; akan dicoba lagi saat mencetak. '
+          + String(error?.message || error));
+        return null;
+      }
+    }
+
     // DILAPORKAN APA ADANYA, sekali per halaman.
     //
     // Izin Web Bluetooth tidak bisa diperiksa dari luar, dan gejalanya selalu
@@ -618,6 +745,12 @@ export class NiimbotPrinter {
   }
 
   async disconnect(): Promise<void> {
+    const native = NiimbotPrinter.nativeBridge();
+    if (native) {
+      try { await native.terputus(); } catch { /* sudah terputus */ }
+      this.nativeTersambung = false;
+      return;
+    }
     if (!this.client) return;
     try { await this.client.disconnect(); } catch { /* sudah terputus */ }
     this.client = null;
@@ -746,6 +879,17 @@ export class NiimbotPrinter {
     // SingleColor = satu warna (hitam) pada label 1-bit. Itu yang dipakai
     // printer label termal biasa; DoubleColor hanya untuk model pita dua warna.
     const encoded = ImageEncoder.encodeCanvas(canvas, PageColorType.SingleColor, direction);
+
+    // JALUR APLIKASI DESKTOP: halaman yang sudah ter-encode dikirim ke proses
+    // utama, yang mengangkutnya lewat Bluetooth native. Penyusunan gambar tetap
+    // di sini — jadi kalibrasi (geometri, margin, kepekatan) tetap SATU sumber,
+    // dan hasilnya identik dengan cetak lewat browser.
+    const native = NiimbotPrinter.nativeBridge();
+    if (native) {
+      await native.cetak(encoded, { density: adj.density, copies, model: this.printTaskName });
+      onProgress?.(copies, copies);
+      return;
+    }
 
     // Heartbeat dimatikan selama mencetak: paketnya bisa mengganggu aliran data
     // gambar. Contoh resmi NiimBlueLib melakukan hal yang sama.
