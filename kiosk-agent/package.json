@@ -7,7 +7,7 @@
     "start": "node src/agent.js",
     "dev": "node --watch src/agent.js",
     "test": "node --test test/*.test.js",
-    "lint": "node --check src/agent.js && node --check src/wsClient.js && node --check src/hardware.js && node --check src/imageDownloader.js && node --check src/macosPrinterAdapter.js && node --check src/windowsPrinterAdapter.js && node --check src/printerAdapterFactory.js",
+    "lint": "node --check src/agent.js && node --check src/wsClient.js && node --check src/hardware.js && node --check src/imageDownloader.js && node --check src/macosPrinterAdapter.js && node --check src/windowsPrinterAdapter.js && node --check src/printerAdapterFactory.js && node --check src/niimbotNobleClient.js && node --check src/blePrinterAdapter.js && node --check scripts/ble-check.js",
     "daemon:start": "pm2 start ecosystem.config.js",
     "daemon:stop": "pm2 stop uni-smiles-kiosk-agent",
     "daemon:restart": "pm2 restart uni-smiles-kiosk-agent",
