@@ -878,6 +878,15 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const bluetoothPrinterRef = useRef<NiimbotPrinter | null>(null);
   const [btPrintState, setBtPrintState] = useState<'idle' | 'connecting' | 'printing' | 'done' | 'failed'>('idle');
   const [btPrintError, setBtPrintError] = useState<string | null>(null);
+  /**
+   * Apakah galat cetak terakhir karena printer belum dipasangkan DI BROWSER INI.
+   *
+   * Disimpan sebagai keadaan, bukan disimpulkan dari mencocokkan teks pesan:
+   * pesan berubah, dan UI yang bergantung pada string galat akan diam-diam
+   * berhenti menampilkan tombolnya.
+   */
+  const [btPerluPasangkan, setBtPerluPasangkan] = useState(false);
+  const [btPairing, setBtPairing] = useState(false);
   const [btPrinterName, setBtPrinterName] = useState<string | null>(null);
 
   const isBluetoothPrintAvailable = useCallback(() => NiimbotPrinter.isSupported(), []);
@@ -913,9 +922,12 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         // ada izin, dan itu lewat pairingState(), bukan dengan menebak.
         const izin = await printer.pairingState();
         if (izin !== 'ready') {
+          // Pesan ini TIDAK menyuruh mencari menu: tombolnya langsung muncul di
+          // sebelahnya (lihat bluetooth-print-status). Menyuruh orang berkeliling
+          // mencari pengaturan adalah bentuk galat yang sudah terbukti gagal.
           throw new Error(izin === 'unsupported'
-            ? 'Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge.'
-            : 'Printer belum diizinkan untuk alamat ini. Buka Admin → Pengaturan Kiosk → Printer, lalu tekan “Siapkan Printer” sekali; setelah itu cetak otomatis tanpa dialog.');
+            ? 'Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge, dan buka lewat HTTPS.'
+            : 'Printer belum dipasangkan di browser ini (sekali saja). Tekan “Siapkan Printer” di bawah.');
         }
         // Sambung-ulang: cukup di sini, tanpa dialog, lalu langsung cetak.
         const info = await printer.connect();
@@ -949,6 +961,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     }
 
     setBtPrintError(null);
+    setBtPerluPasangkan(false);
     setBtPrintState('connecting');
 
     try {
@@ -957,12 +970,49 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     } catch (error: any) {
       const msg = String(error?.message || error);
       setBtPrintState('failed');
+      // "Belum dipasangkan" bukan kegagalan printer; yang dibutuhkan tombol
+      // pemasangan, bukan pesan galat.
+      const perluPasang = /belum dipasangkan|belum diizinkan untuk alamat ini/i.test(msg);
+      setBtPerluPasangkan(perluPasang);
       // Pemilih yang dibatalkan bukan kegagalan printer; menyebutnya error
       // membuat orang mencari masalah di tempat yang salah.
       setBtPrintError(/cancel|user|No device|chooser/i.test(msg)
         ? 'Pemilih perangkat ditutup. Klik lagi untuk menyambungkan printer.'
         : msg);
       void bluetoothPrinterRef.current?.reportStatus('ERROR', { lastError: msg });
+    }
+  };
+
+  /**
+   * Pasangkan printer DARI LAYAR CETAK.
+   *
+   * Dipanggil dari klik tombol, jadi sah menurut Web Bluetooth (pemilih wajib
+   * berada di dalam gestur pengguna). Ini menutup celah terakhir alur ini:
+   * galatnya muncul di layar cetak, dan sampai sekarang jalan keluarnya ada di
+   * layar lain — sehingga operator mencari menu alih-alih menyelesaikan cetak.
+   */
+  const handlePairPrinterDiSini = async () => {
+    if (btPairing) return;
+    setBtPairing(true);
+    setBtPrintError(null);
+    try {
+      const printer = bluetoothPrinterRef.current || new NiimbotPrinter();
+      bluetoothPrinterRef.current = printer;
+      const info = await printer.pairNow();
+      setBtPrinterName(info.deviceName);
+      setBtPerluPasangkan(false);
+      setBtPrintError(`Printer siap: ${info.deviceName}. Tekan “Cetak Bluetooth” lagi.`);
+      setBtPrintState('idle');
+      void printer.reportStatus('READY', { printerName: info.deviceName });
+    } catch (error: any) {
+      const msg = String(error?.message || error);
+      // Menutup pemilih bukan kegagalan: jangan biarkan pesannya menakutkan.
+      setBtPrintError(/cancel|user|chooser|No device/i.test(msg)
+        ? 'Pemilihan perangkat ditutup. Tekan “Siapkan Printer” kalau mau mencoba lagi.'
+        : msg);
+      setBtPrintState('failed');
+    } finally {
+      setBtPairing(false);
     }
   };
 
@@ -3946,10 +3996,28 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                         role="status"
                         className={`absolute z-20 rounded-xl px-4 py-2 text-center text-sm font-bold ${isVertical ? 'bottom-24 left-1/2 -translate-x-1/2 max-w-[92%]' : 'bottom-40 right-6 max-w-[430px]'} ${btPrintState === 'done' ? 'bg-green-500/20 text-green-300 border border-green-400/40' : btPrintState === 'failed' ? 'bg-red-500/20 text-red-300 border border-red-400/40' : 'bg-white/10 text-white border border-white/20'}`}
                       >
-                        {btPrintState === 'connecting' && (btPrinterName ? `Menyambungkan ke ${btPrinterName}…` : 'Membuka pemilih perangkat Bluetooth…')}
+                        {btPrintState === 'connecting' && (btPrinterName ? `Menyambungkan ke ${btPrinterName}…` : 'Menyambungkan ke printer…')}
                         {btPrintState === 'printing' && 'Mengirim foto ke printer label…'}
                         {btPrintState === 'done' && 'Foto tercetak lewat Bluetooth'}
                         {btPrintState === 'failed' && (btPrintError || 'Cetak Bluetooth gagal.')}
+
+                        {/* Tombol pemasangan DI SINI, tempat galatnya muncul.
+                            Sebelumnya jalan keluarnya hanya ada di Pengaturan
+                            Kiosk, dan operator mencari menunya alih-alih
+                            menyelesaikan cetak — galat yang menyuruh berkeliling
+                            adalah galat yang tidak selesai. */}
+                        {btPrintState === 'failed' && btPerluPasangkan && (
+                          <button
+                            id="btn-pair-printer-here"
+                            type="button"
+                            onClick={() => void handlePairPrinterDiSini()}
+                            disabled={btPairing}
+                            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white rounded-lg font-bold transition-colors cursor-pointer"
+                          >
+                            <Printer size={16} />
+                            {btPairing ? 'Menunggu pilihan printer…' : 'Siapkan Printer'}
+                          </button>
+                        )}
                       </div>
                     )}
 

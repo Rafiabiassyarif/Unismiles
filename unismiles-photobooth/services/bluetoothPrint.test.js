@@ -455,3 +455,57 @@ test('keadaan izin diekspos untuk panel pengaturan', () => {
   }
   assert.match(PRINTER, /storedDeviceNames\(\)/, 'nama printer terizin harus bisa dibaca');
 });
+
+// --- Tombol pemasangan DI TEMPAT galatnya muncul ---
+
+test('galat "belum dipasangkan" menampilkan tombolnya sendiri', () => {
+  // Inti perbaikannya: pesan galat sebelumnya menyuruh membuka Pengaturan Kiosk,
+  // dan operator mencari menunya alih-alih menyelesaikan cetak. Sekarang
+  // tombolnya ada di sebelah pesannya.
+  const inti = bodyOf('printViaBluetoothCore');
+  assert.match(inti, /belum dipasangkan di browser ini/,
+    'pesan harus menyebut pemasangan sekali, bukan menyuruh mencari menu');
+  assert.ok(!/Buka Admin/.test(inti),
+    'pesan TIDAK boleh menyuruh berkeliling mencari pengaturan');
+  const banner = BOOTH.slice(BOOTH.indexOf('id="bluetooth-print-status"'));
+  // Kondisinya diperiksa, bukan sekadar keberadaan tombolnya: tombol yang ada
+  // tetapi tidak pernah tampil sama saja tidak ada.
+  assert.match(banner.slice(0, 2200),
+    /\{btPrintState === 'failed' && btPerluPasangkan && \(\s*\n\s*<button\s*\n\s*id="btn-pair-printer-here"/,
+    'tombol harus tampil saat state failed DAN izin kurang — keduanya, tepat sebelum tombolnya');
+});
+
+test('keadaan izin disimpan sebagai state, bukan disimpulkan dari teks pesan', () => {
+  // Kalau UI mencocokkan string galat, mengubah kata-katanya akan mematikan
+  // tombolnya tanpa ada yang sadar.
+  assert.match(BOOTH, /const \[btPerluPasangkan, setBtPerluPasangkan\] = useState\(false\)/,
+    'btPerluPasangkan harus state terpisah');
+  assert.match(BOOTH, /const perluPasang = \/belum dipasangkan/,
+    'penyebabnya ditentukan sekali di jalur cetak');
+  assert.match(BOOTH, /setBtPerluPasangkan\(perluPasang\)/, 'lalu disimpan');
+  assert.match(BOOTH, /setBtPerluPasangkan\(false\);\s*\n\s*setBtPrintState\('connecting'\)/,
+    'dibersihkan setiap kali cetak dimulai');
+});
+
+test('pemasangan dari layar cetak dipanggil dari klik tombol', () => {
+  // Bukan detail gaya: Web Bluetooth menolak pemilih di luar gestur pengguna,
+  // jadi pemanggilan otomatis akan gagal — dan gagalnya menyesatkan.
+  const fn = BOOTH.slice(BOOTH.indexOf('const handlePairPrinterDiSini'));
+  assert.match(fn.slice(0, 700), /printer\.pairNow\(\)/, 'harus memakai jalur pemilih');
+  const banner = BOOTH.slice(BOOTH.indexOf('btn-pair-printer-here'));
+  assert.match(banner.slice(0, 600), /onClick=\{\(\) => void handlePairPrinterDiSini\(\)\}/,
+    'pemasangan harus dari onClick, bukan efek otomatis');
+});
+
+test('pemilih yang ditutup tidak dilaporkan sebagai kegagalan printer', () => {
+  const fn = BOOTH.slice(BOOTH.indexOf('const handlePairPrinterDiSini'));
+  assert.match(fn.slice(0, 1400), /Pemilihan perangkat ditutup/,
+    'menutup pemilih bukan kegagalan; pesannya harus menyatakan itu');
+});
+
+test('status cetak tidak lagi menjanjikan pemilih yang tidak akan muncul', () => {
+  const banner = BOOTH.slice(BOOTH.indexOf('id="bluetooth-print-status"'));
+  assert.ok(!/Membuka pemilih perangkat Bluetooth/.test(banner.slice(0, 900)),
+    'jalur cetak tidak pernah membuka pemilih, jadi jangan menuliskannya');
+  assert.match(banner.slice(0, 900), /Menyambungkan ke printer…/, 'ganti dengan yang benar');
+});
