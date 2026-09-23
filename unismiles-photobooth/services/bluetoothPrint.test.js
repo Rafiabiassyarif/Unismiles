@@ -345,8 +345,13 @@ test('perangkat tersimpan yang tidak menjawab TIDAK diarahkan ke pemilih', () =>
 
 test('pemilih perangkat disebut sebagai sekali per alamat', () => {
   const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
-  assert.match(PRINTER, /hanya sekali per alamat/,
+  // Pesannya bergeser saat gerbang forceChooser ditambahkan, jadi diperiksa
+  // sebagai dua fakta terpisah: pemilih itu sekali per alamat, DAN hanya atas
+  // permintaan pengguna.
+  assert.match(PRINTER, /sekali per alamat/,
     'pengguna harus tahu pemilih tidak akan muncul terus');
+  assert.match(PRINTER, /atas permintaan pengguna/,
+    'pemilih harus disebut sebagai tindakan yang diminta, bukan otomatis');
 });
 
 test('izin Bluetooth dijelaskan per-alamat saat tidak ada perangkat', () => {
@@ -417,8 +422,13 @@ test('pemilih perangkat hanya dibuka dari aksi pengguna', () => {
   assert.match(PRINTER, /public async pairNow\(/,
     'harus ada satu pintu masuk untuk pemilihan perangkat');
   const pairNow = PRINTER.slice(PRINTER.indexOf('public async pairNow('));
-  assert.match(pairNow.slice(0, 400), /forceChooser: true/,
+  assert.match(pairNow.slice(0, 500), /forceChooser: true/,
     'pairNow harus memaksa pemilih, bukan memakai perangkat tersimpan');
+  // Dan sesudah tersambung, izinnya diperiksa ULANG: tersambung sekarang tidak
+  // sama dengan izin yang bertahan sampai cetak berikutnya.
+  assert.match(pairNow, /pairingPersisted/,
+    'pairNow harus melaporkan apakah izin benar-benar tersimpan');
+  assert.match(pairNow, /storedDeviceNames\(\)/, 'pemeriksaan itu memakai daftar perangkat tersimpan');
   const connect = PRINTER.slice(PRINTER.indexOf('async connect('), PRINTER.indexOf('private clearStalePacketBuffer'));
   assert.match(connect, /options\.forceChooser \? null : await this\.findPairedDevice\(\)/,
     'forceChooser harus melewati perangkat tersimpan');
@@ -463,10 +473,15 @@ test('galat "belum dipasangkan" menampilkan tombolnya sendiri', () => {
   // dan operator mencari menunya alih-alih menyelesaikan cetak. Sekarang
   // tombolnya ada di sebelah pesannya.
   const inti = bodyOf('printViaBluetoothCore');
-  assert.match(inti, /belum dipasangkan di browser ini/,
-    'pesan harus menyebut pemasangan sekali, bukan menyuruh mencari menu');
+  // Pesannya sekarang konstanta bersama, jadi yang diperiksa: (a) jalur cetak
+  // memakainya, dan (b) konstantanya berbunyi benar.
+  assert.match(inti, /PRINTER_BELUM_DIPASANGKAN/,
+    'jalur cetak harus memakai konstanta pesan bersama');
   assert.ok(!/Buka Admin/.test(inti),
     'pesan TIDAK boleh menyuruh berkeliling mencari pengaturan');
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /belum dipasangkan di browser ini \(sekali saja\)/,
+    'pesan harus menyebut pemasangan sekali, bukan menyuruh mencari menu');
   const banner = BOOTH.slice(BOOTH.indexOf('id="bluetooth-print-status"'));
   // Kondisinya diperiksa, bukan sekadar keberadaan tombolnya: tombol yang ada
   // tetapi tidak pernah tampil sama saja tidak ada.

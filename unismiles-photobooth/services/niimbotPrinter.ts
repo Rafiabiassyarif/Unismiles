@@ -69,6 +69,17 @@ export type PaperEndMode = 'advance-and-separate' | 'stop-at-printhead';
  */
 export type PrinterPairingState = 'unsupported' | 'no-stored-device' | 'ready';
 
+/**
+ * Pesan standar saat printer belum dipasangkan di browser ini.
+ *
+ * Konstanta, bukan literal yang ditulis ulang di tiap tempat. Sudah pernah
+ * terjadi: pesan galat menulis "Siapkan printer" sementara tombolnya
+ * "Siapkan Printer", dan satu perbedaan huruf membuat orang ragu apakah dia ada
+ * di layar yang benar. Satu sumber menghilangkan kemungkinan itu.
+ */
+export const PRINTER_BELUM_DIPASANGKAN =
+  'Printer belum dipasangkan di browser ini (sekali saja). Tekan “Siapkan Printer”.';
+
 export interface PrintAdjustments {
   /** Kecerahan foto, persen (100 = tidak diubah). */
   brightness: number;
@@ -241,12 +252,23 @@ export class NiimbotPrinter {
     // tidak penuh. Jeda ini bagian dari protokol, bukan angka yang bisa
     // dihilangkan untuk mempercepat cetak.
 
-    // Jalur terakhir: membuka pemilih perangkat. Hanya sampai di sini kalau
-    // tidak ada printer tersimpan untuk ALAMAT INI (pasangan pertama, atau izin
-    // dicabut). Setelah sekali dipasangkan dari alamat ini, jalur ini tidak
-    // akan terpakai lagi.
-    console.info('[Printer] Membuka pemilih perangkat. Ini hanya sekali per alamat; '
-      + 'berikutnya tersambung otomatis.');
+    // TIDAK ADA perangkat tersimpan untuk alamat ini.
+    //
+    // Pemilih HANYA dibuka kalau pemanggilnya memintanya secara eksplisit
+    // (`forceChooser`, yaitu `pairNow()` dari klik tombol pemasangan). Semua
+    // jalur lain berhenti di sini dengan galat: pencetakan, sambung-ulang, dan
+    // pra-sambung saat halaman siap.
+    //
+    // Sebelumnya jalur ini terbuka untuk siapa pun yang memanggil connect(),
+    // jadi satu pemanggil yang lupa memeriksa izin sudah cukup untuk memunculkan
+    // dialog di tengah proses cetak. Sekarang tidak mungkin lagi — bukan karena
+    // setiap pemanggil disiplin, tetapi karena tidak ada jalan lain ke pemilih.
+    if (!options.forceChooser) {
+      throw new Error(PRINTER_BELUM_DIPASANGKAN);
+    }
+
+    console.info('[Printer] Membuka pemilih perangkat atas permintaan pengguna. '
+      + 'Ini sekali per alamat; berikutnya tersambung otomatis tanpa dialog.');
     await this.client.connect();
     return this.finishConnect();
   }
@@ -343,8 +365,35 @@ export class NiimbotPrinter {
    * mengharuskan pemilihan perangkat berada di dalam gestur pengguna, dan
    * fungsi ini hanya bisa dipanggil dari klik tombol.
    */
-  public async pairNow(): Promise<{ deviceName: string; model: string; printTask: string; printheadPx: number }> {
-    return this.connect({ forceChooser: true });
+  public async pairNow(): Promise<{
+    deviceName: string;
+    model: string;
+    printTask: string;
+    printheadPx: number;
+    /** Apakah browser benar-benar MENYIMPAN izin untuk alamat ini setelah dipilih. */
+    pairingPersisted: boolean;
+  }> {
+    const info = await this.connect({ forceChooser: true });
+
+    // DIPERIKSA ULANG, karena "printer tersambung" dan "izin tersimpan" adalah
+    // dua hal berbeda — dan yang menentukan cetak berikutnya adalah yang kedua.
+    //
+    // Kalau perangkat yang baru dipilih TIDAK muncul di getDevices(), izinnya
+    // tidak bertahan: sambungan ini hidup sampai halaman dimuat ulang, lalu
+    // cetak berikutnya gagal lagi dengan "belum dipasangkan". Tanpa pemeriksaan
+    // ini, gejalanya hanya terlihat sebagai "kok masih minta izin terus", dan
+    // penyebabnya tidak pernah muncul di mana pun.
+    const tersimpan = (await this.storedDeviceNames()).includes(info.deviceName);
+    if (!tersimpan) {
+      console.warn('[Printer] Perangkat "' + info.deviceName + '" tersambung tetapi TIDAK '
+        + 'tersimpan di getDevices() setelah dipilih. Artinya izin tidak bertahan untuk '
+        + 'alamat ini: cetak berikutnya akan meminta izin lagi. Biasanya karena mode '
+        + 'penyamaran/incognito, izin situs diblokir, atau pembersihan data situs saat keluar.');
+    } else {
+      console.info('[Printer] Izin tersimpan untuk alamat ini: ' + info.deviceName
+        + '. Cetak berikutnya tidak akan menampilkan dialog.');
+    }
+    return { ...info, pairingPersisted: tersimpan };
   }
 
   private async findPairedDevice(): Promise<{ device: any; alasan: string } | null> {

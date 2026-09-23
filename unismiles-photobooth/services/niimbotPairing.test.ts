@@ -13,6 +13,12 @@
 
 import assert from 'node:assert/strict';
 import { test, beforeEach } from 'node:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const BOOTH = readFileSync(path.join(ROOT, 'components', 'PhotoBooth.tsx'), 'utf8');
 import { NiimbotPrinter } from './niimbotPrinter.ts';
 
 /** Perangkat palsu; hanya bentuk yang dibaca kode kita. */
@@ -109,4 +115,54 @@ test('printer tercatat tetapi browser tidak mengenalinya -> minta dipasangkan', 
     configurable: true, writable: true,
   });
   assert.equal(await new NiimbotPrinter().pairingState(), 'no-stored-device');
+});
+
+test('connect() TANPA forceChooser tidak pernah membuka pemilih', async () => {
+  // Inti perbaikan terakhir: pemilih jadi satu pintu. Sebelumnya siapa pun yang
+  // memanggil connect() ikut membuka dialog kalau perangkat tersimpan tidak ada,
+  // jadi satu pemanggil yang lupa memeriksa izin sudah cukup memunculkan popup
+  // di tengah proses cetak.
+  const catatan = pasangBluetooth({ devices: [] });
+  await assert.rejects(
+    () => new NiimbotPrinter().connect(),
+    /belum dipasangkan/i,
+    'connect() biasa harus MENOLAK, bukan membuka dialog',
+  );
+  assert.equal(catatan.requestDevice, 0, 'connect() biasa tidak boleh menyentuh pemilih');
+});
+
+test('sambung-ulang memakai perangkat tersimpan, bukan pemilih', () => {
+  // Diperiksa dari sumber, bukan dijalankan: connect() ke perangkat tersimpan
+  // mengulang sampai 6 kali dengan jeda, jadi menjalankannya di uji ini memakan
+  // ~10 detik untuk membuktikan hal yang sama.
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const connect = PRINTER.slice(PRINTER.indexOf('const found = options.forceChooser'),
+    PRINTER.indexOf('if (!options.forceChooser)'));
+  assert.match(connect, /connect\(\{ authorizedDevice: found\.device \}\)/,
+    'jalur tersimpan harus memakai authorizedDevice');
+  assert.ok(!/client\.connect\(\)/.test(connect),
+    'jalur tersimpan tidak boleh memanggil connect() tanpa argumen');
+});
+
+test('pesan "belum dipasangkan" satu sumber untuk pesan dan tombol', () => {
+  // Sudah pernah salah: pesan menulis "Siapkan printer" sementara tombolnya
+  // "Siapkan Printer". Konstanta menghilangkan kemungkinan itu.
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  assert.match(PRINTER, /export const PRINTER_BELUM_DIPASANGKAN/,
+    'pesan harus konstanta, bukan literal yang ditulis ulang');
+  assert.match(PRINTER, /throw new Error\(PRINTER_BELUM_DIPASANGKAN\)/,
+    'gerbang pemilih harus memakai konstanta yang sama');
+  assert.ok(!/belum dipasangkan di browser ini/.test(BOOTH),
+    'PhotoBooth tidak boleh menulis ulang pesannya sendiri');
+  assert.match(BOOTH, /PRINTER_BELUM_DIPASANGKAN/,
+    'PhotoBooth harus mengimpor konstanta itu');
+});
+
+test('gerbang pemilih ada TEPAT sebelum pemanggilan library tanpa argumen', () => {
+  // Urutan ini yang menjamin tidak ada jalan lain ke pemilih.
+  const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
+  const i = PRINTER.indexOf('if (!options.forceChooser)');
+  const j = PRINTER.indexOf('await this.client.connect();', i);
+  assert.ok(i > 0 && j > i && j - i < 900,
+    'gerbang harus tepat sebelum client.connect() tanpa argumen');
 });

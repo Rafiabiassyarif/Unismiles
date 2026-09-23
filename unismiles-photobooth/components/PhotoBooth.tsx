@@ -8,7 +8,7 @@ import { FrameLayout, FrameStyle, PhotoFilter, GridLayoutId, VirtualBackground, 
 import { getStoredFilters, getLayoutConfig, getStoredBackgrounds, getAppConfig } from '../services/storageService';
 import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
-import { NiimbotPrinter, labelSize as computeLabelSize, labelMmFromPaperSize, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
+import { NiimbotPrinter, PRINTER_BELUM_DIPASANGKAN, labelSize as computeLabelSize, labelMmFromPaperSize, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
 import { paintCover as paintCoverInto, paintPrintImage } from '../services/printImage';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
@@ -927,7 +927,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
           // mencari pengaturan adalah bentuk galat yang sudah terbukti gagal.
           throw new Error(izin === 'unsupported'
             ? 'Browser ini tidak mendukung Web Bluetooth. Pakai Chrome atau Edge, dan buka lewat HTTPS.'
-            : 'Printer belum dipasangkan di browser ini (sekali saja). Tekan “Siapkan Printer” di bawah.');
+            : PRINTER_BELUM_DIPASANGKAN);
         }
         // Sambung-ulang: cukup di sini, tanpa dialog, lalu langsung cetak.
         const info = await printer.connect();

@@ -69,7 +69,13 @@ export const KioskSettings: React.FC = () => {
     const printer = new NiimbotPrinter();
     try {
       const info = await printer.pairNow();
-      setPrinterMsg(`Printer siap: ${info.deviceName} (${info.model}). Cetak berikutnya tidak akan menampilkan dialog.`);
+      // Dua hasil berbeda, dan bedanya penting bagi operator: tersambung sekarang,
+      // versus izinnya bertahan untuk seterusnya.
+      setPrinterMsg(info.pairingPersisted
+        ? `Printer siap: ${info.deviceName} (${info.model}). Cetak berikutnya tidak akan menampilkan dialog.`
+        : `Printer ${info.deviceName} tersambung, TETAPI browser tidak menyimpan izinnya untuk alamat ini. `
+          + 'Cetak berikutnya akan meminta izin lagi. Periksa: mode penyamaran/incognito, izin '
+          + 'Bluetooth situs ini, atau pengaturan "hapus data situs saat keluar".');
       await refreshPrinterState();
     } catch (error: any) {
       const msg = String(error?.message || error);
