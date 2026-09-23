@@ -144,9 +144,14 @@ test('sambung-ulang memakai perangkat tersimpan, bukan pemilih', () => {
     'jalur tersimpan tidak boleh memanggil connect() tanpa argumen');
 });
 
-test('pesan "belum dipasangkan" satu sumber untuk pesan dan tombol', () => {
+test('pesan "belum dipasangkan" tetap satu sumber', () => {
   // Sudah pernah salah: pesan menulis "Siapkan printer" sementara tombolnya
-  // "Siapkan Printer". Konstanta menghilangkan kemungkinan itu.
+  // "Siapkan Printer", dan satu perbedaan huruf membuat orang ragu apakah dia
+  // ada di layar yang benar. Konstanta menghilangkan kemungkinan itu.
+  //
+  // Sejak pemasangan dipindah ke dalam klik "Cetak", pesan ini muncul di satu
+  // tempat saja (jalur cetak tanpa gestur), jadi pemeriksaannya bukan lagi soal
+  // tombol melainkan soal tidak ada penulisan ulang.
   const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
   assert.match(PRINTER, /export const PRINTER_BELUM_DIPASANGKAN/,
     'pesan harus konstanta, bukan literal yang ditulis ulang');
