@@ -33,14 +33,24 @@ function buatNoblePalsu({ state = 'poweredOn', peripheral = null } = {}) {
     state,
     _peripherals: peripheral ? { [ALAMAT_PRINTER]: peripheral } : {},
     catatan,
-    on(event, cb) { if (event === 'discover') { noble._onDiscover = cb; catatan.listeners += 1; } return noble; },
+    _pendengar: { discover: [], stateChange: [] },
+    on(event, cb) {
+      (noble._pendengar[event] ||= []).push(cb);
+      if (event === 'discover') { noble._onDiscover = cb; catatan.listeners += 1; }
+      return noble;
+    },
     removeListener(event, cb) {
+      const daftar = noble._pendengar[event] || [];
+      const i = daftar.indexOf(cb);
+      if (i >= 0) daftar.splice(i, 1);
       if (event === 'discover' && noble._onDiscover === cb) {
         noble._onDiscover = undefined;
         catatan.listeners -= 1;
       }
       return noble;
     },
+    /** Meniru noble memancarkan perubahan keadaan adapter. */
+    emitStateChange(s) { noble.state = s; for (const cb of [...(noble._pendengar.stateChange || [])]) cb(s); },
     // Menyerupai noble SUNGGUHAN: `startScanning` mengembalikan undefined
     // (tanpa `.catch`), dan `stopScanning` melempar kalau tidak diberi callback.
     // Fake yang lebih canggih daripada kenyataan menyembunyikan kesalahan API.
@@ -144,6 +154,60 @@ test('connect() memilih karakteristik notify+writeWithoutResponse dan subscribe'
   assert.strictEqual(klien.isConnected(), true);
   assert.strictEqual(hasil.deviceName, NAMA_PRINTER, 'nama printer ikut dilaporkan');
   assert.strictEqual(hasil.address, ALAMAT_PRINTER);
+});
+
+test('adapter yang masih "unknown" DITUNGGU, bukan langsung dinyatakan mati', async () => {
+  // Inilah bug yang muncul saat cetak nyata pertama: noble melaporkan 'unknown'
+  // sampai adapter selesai diinisialisasi, jadi memeriksanya seketika membuat
+  // cetak pertama gagal bilang "Bluetooth tidak siap" padahal siap.
+  const noble = buatNoblePalsu({ state: 'unknown', peripheral: buatPeripheralPalsu() });
+  const klien = new NiimbotNobleClient({ noble });
+
+  // Keadaan sebenarnya baru datang setelah beberapa saat.
+  setTimeout(() => noble.emitStateChange('poweredOn'), 20);
+
+  const state = await klien.tungguAdapter({ timeoutMs: 1000 });
+  assert.strictEqual(state, 'poweredOn', 'keadaan nyata harus ditunggu, bukan ditebak');
+});
+
+test('adapter yang tetap unknown berhenti di batas waktu (tidak menggantung)', async () => {
+  // Kalau menunggu tanpa batas, cetak akan menggantung selamanya tanpa pesan.
+  const noble = buatNoblePalsu({ state: 'unknown' });
+  const klien = new NiimbotNobleClient({ noble });
+  const t0 = Date.now();
+  const state = await klien.tungguAdapter({ timeoutMs: 60 });
+  assert.strictEqual(state, 'unknown');
+  assert.ok(Date.now() - t0 < 2000, 'harus menyerah, bukan menunggu tanpa batas');
+});
+
+test('keadaan siap dipakai LANGSUNG tanpa menunggu', async () => {
+  const noble = buatNoblePalsu({ state: 'poweredOn' });
+  const klien = new NiimbotNobleClient({ noble });
+  const t0 = Date.now();
+  assert.strictEqual(await klien.tungguAdapter(), 'poweredOn');
+  assert.ok(Date.now() - t0 < 50, 'jangan menunggu kalau keadaannya sudah diketahui');
+});
+
+test('cariPerangkat() tetap bekerja saat state masih "unknown"', async () => {
+  // Ini yang sebenarnya terjadi pada cetak nyata pertama: adapter melaporkan
+  // 'unknown', pencarian menyerah, dan pesannya menyalahkan Bluetooth padahal
+  // Bluetooth hidup. Test ini menahan kesalahan itu di JALUR PEMAKAIAN, bukan
+  // hanya di fungsi tunggunya — kalau pemanggilan tunggu itu dicabut, test ini
+  // gagal.
+  const noble = buatNoblePalsu({ state: 'unknown', peripheral: buatPeripheralPalsu() });
+  const klien = new NiimbotNobleClient({ noble, nama: NAMA_PRINTER });
+
+  setTimeout(() => noble.emitStateChange('poweredOn'), 20);
+
+  const dapat = await klien.cariPerangkat();
+  assert.ok(dapat, 'printer harus ditemukan setelah keadaan nyata datang');
+});
+
+test('keadaan yang benar-benar mati tetap ditolak terang-terangan', async () => {
+  // Menunggu bukan berarti mengabaikan: kalau adapter mati, pesannya harus jelas.
+  const noble = buatNoblePalsu({ state: 'poweredOff' });
+  const klien = new NiimbotNobleClient({ noble, nama: NAMA_PRINTER });
+  await assert.rejects(() => klien.cariPerangkat(), (e) => e.code === 'BLUETOOTH_UNAVAILABLE');
 });
 
 test('printer yang sudah dikenal TIDAK dipindai ulang', async () => {

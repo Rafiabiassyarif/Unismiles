@@ -55,12 +55,14 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
    * @param {string} [opsi.nama]   nama iklan (cadangan; macOS memberi alamat acak)
    * @param {number} [opsi.cariTimeoutMs]
    */
-  constructor({ noble, alamat = null, nama = null, cariTimeoutMs = 15000 } = {}) {
+  constructor({ noble, alamat = null, nama = null, cariTimeoutMs = 15000, tungguAdapterMs = 8000 } = {}) {
     super();
     this.noble = noble;
     this.alamat = alamat;
     this.nama = nama;
     this.cariTimeoutMs = cariTimeoutMs;
+    /** Lama menunggu adapter melaporkan keadaan; bisa diperpendek di test. */
+    this.tungguAdapterMs = tungguAdapterMs;
     this.peripheral = null;
     this.channel = null;
     /** Hanya untuk log — noble tidak selalu memberi alamat yang stabil. */
@@ -119,7 +121,8 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
    * dan itu terjadi tepat pada saat yang paling terlihat (klik cetak pertama
    * setelah kiosk dinyalakan).
    */
-  async tungguAdapter({ timeoutMs = 8000 } = {}) {
+  async tungguAdapter({ timeoutMs } = {}) {
+    const batasMs = Number(timeoutMs ?? this.tungguAdapterMs) || 8000;
     if (!this.noble) return 'no-module';
     if (this.noble.state && this.noble.state !== 'unknown') return this.noble.state;
     return new Promise((resolve) => {
@@ -129,7 +132,7 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
         resolve(state);
       };
       const onPerubahan = (state) => selesai(state);
-      const timer = setTimeout(() => selesai(this.noble.state || 'unknown'), timeoutMs);
+      const timer = setTimeout(() => selesai(this.noble.state || 'unknown'), batasMs);
       this.noble.on('stateChange', onPerubahan);
     });
   }
