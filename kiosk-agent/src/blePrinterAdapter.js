@@ -92,6 +92,11 @@ class BlePrinterAdapter extends PrinterAdapter {
      * melihat apa saja yang ada, bukan menunggu satu perangkat tertentu.
      */
     this.durasiPindaiMs = Number(config.durasiPindaiMs) || 8000;
+    /**
+     * Cara menunggu adapter siap. Bisa ditimpa supaya perilakunya bisa diuji
+     * tanpa radio, dan implementasi bawaan menunggu seperti transport.
+     */
+    this.tungguState = config.tungguState || null;
   }
 
   get configured() {
@@ -172,7 +177,13 @@ class BlePrinterAdapter extends PrinterAdapter {
   /** Daftar printer label yang terlihat, untuk dipilih dari Admin. */
   async listPrinters() {
     const noble = this.muatNoble();
-    if (noble.state !== 'poweredOn') return [];
+    // Keadaan bisa 'unknown' sesaat setelah proses dimuat; menunggu sebentar
+    // lebih benar daripada melaporkan "tidak ada printer" pada kiosk yang baru
+    // dinyalakan — tepat saat Admin membuka halaman untuk memasang printer.
+    const state = typeof this.tungguState === 'function'
+      ? await this.tungguState(noble)
+      : noble.state;
+    if (state !== 'poweredOn') return [];
     const terlihat = new Map();
     const onDiscover = (p) => {
       const nama = p.advertisement?.localName || '';

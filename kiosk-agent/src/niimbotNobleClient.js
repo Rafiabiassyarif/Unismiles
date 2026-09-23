@@ -111,13 +111,38 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
   }
 
   /**
+   * Tunggu sampai adapter benar-benar melaporkan keadaannya.
+   *
+   * Saat proses baru dimuat, noble melaporkan 'unknown': keadaannya baru
+   * diketahui setelah adapter diinisialisasi. Memeriksanya seketika membuat
+   * cetak PERTAMA gagal dengan "Bluetooth tidak siap" padahal Bluetooth siap —
+   * dan itu terjadi tepat pada saat yang paling terlihat (klik cetak pertama
+   * setelah kiosk dinyalakan).
+   */
+  async tungguAdapter({ timeoutMs = 8000 } = {}) {
+    if (!this.noble) return 'no-module';
+    if (this.noble.state && this.noble.state !== 'unknown') return this.noble.state;
+    return new Promise((resolve) => {
+      const selesai = (state) => {
+        clearTimeout(timer);
+        this.noble.removeListener('stateChange', onPerubahan);
+        resolve(state);
+      };
+      const onPerubahan = (state) => selesai(state);
+      const timer = setTimeout(() => selesai(this.noble.state || 'unknown'), timeoutMs);
+      this.noble.on('stateChange', onPerubahan);
+    });
+  }
+
+  /**
    * Cari printer yang dituju. TIDAK membuka dialog apa pun — inilah inti
    * perbedaannya dengan Web Bluetooth, dan satu-satunya alasan jalur ini ada.
    */
   async cariPerangkat() {
     if (!this.noble) throw new Error('Modul noble tidak diberikan ke transport');
-    if (this.noble.state !== 'poweredOn') {
-      const error = new Error(`Adapter Bluetooth tidak siap (state: ${this.noble.state}). `
+    const state = await this.tungguAdapter();
+    if (state !== 'poweredOn') {
+      const error = new Error(`Adapter Bluetooth tidak siap (state: ${state}). `
         + 'Di macOS: izinkan akses Bluetooth untuk proses ini di System Settings → Privacy & Security → Bluetooth.');
       error.code = 'BLUETOOTH_UNAVAILABLE';
       throw error;
