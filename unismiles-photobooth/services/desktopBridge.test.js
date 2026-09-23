@@ -92,17 +92,50 @@ test('halaman ter-encode dikirim ke transport native, bukan lewat Web Bluetooth'
 });
 
 test('pairingState() menyatakan siap tanpa bergantung pada izin', () => {
-  // Di desktop tidak ada izin per-origin; printer yang pernah dikenali sudah
-  // cukup untuk dinyatakan siap, karena sambungan dibuat ulang saat mencetak.
+  // Di desktop tidak ada izin per-origin dan tidak ada yang perlu dipasangkan:
+  // transport native mencari sendiri printer label dari service/nama iklannya.
+  // Karena itu jawabannya SELALU 'ready'.
+  //
+  // Mengembalikan 'no-stored-device' saat nama belum tersimpan ditolak: keadaan
+  // itu berarti "perlu dipasangkan dulu", dan kiosk baru akan gagal mencetak
+  // dengan pesan "belum dipasangkan" padahal printernya ada — persis keluhan
+  // "device sudah tersambung tapi tidak bisa print".
   const fn = SUMBER.slice(SUMBER.indexOf('public async pairingState()'));
-  assert.match(fn.slice(0, 700), /NiimbotPrinter\.nativeBridge\(\)/,
-    'pairingState harus mengenali jalur desktop');
-  assert.match(fn.slice(0, 900), /rememberedAddress\(\) \|\| this\.rememberedDeviceName\(\)/,
-    'printer yang pernah dikenali = siap, tanpa menunggu sambungan');
+  // Dipotong sampai fungsi BERIKUTNYA: cabang web memang boleh menyebut
+  // 'no-stored-device' (di sana pemasangan memang perlu). Yang diperiksa hanya
+  // jalur desktop.
+  const badan = fn.slice(0, fn.indexOf('private async pairingStateWeb'));
+  assert.match(badan, /if \(native\) return 'ready';/,
+    'jalur desktop harus menyatakan siap tanpa syarat');
+  assert.ok(!/no-stored-device/.test(badan),
+    'jalur desktop tidak boleh melaporkan "belum dipasangkan" — tidak ada yang perlu dipasangkan');
 });
 
 test('disconnect() meneruskan ke transport native', () => {
   const fn = SUMBER.slice(SUMBER.indexOf('async disconnect(): Promise<void>'));
   assert.match(fn.slice(0, 400), /await native\.terputus\(\)/,
     'putus sambungan harus sampai ke proses utama');
+});
+
+test('print() di aplikasi desktop TIDAK diperiksa lewat this.client', () => {
+  // INI BUG YANG MEMBUAT PRINTER TERSAMBUNG TAPI TETAP GAGAL MENCETAK.
+  //
+  // Di aplikasi desktop `this.client` selalu null: transportnya Bluetooth native
+  // di proses utama. Kalau print() memeriksa `this.client` lebih dulu, SETIAP
+  // cetak gagal dengan "Printer belum tersambung." padahal connect() berhasil dan
+  // printer benar-benar tersambung di level OS — persis keluhan "device sudah
+  // tersambung tapi tidak bisa print".
+  const print = SUMBER.slice(SUMBER.indexOf('async print('));
+  const cabangNative = print.indexOf('NiimbotPrinter.nativeBridge()');
+  const cekClient = print.indexOf('if (!this.client) throw');
+
+  assert.ok(cabangNative > 0, 'print() harus mengenali jalur aplikasi desktop');
+  assert.ok(cekClient > 0, 'jalur Web Bluetooth harus tetap ada');
+  assert.ok(cabangNative < cekClient,
+    'cabang desktop harus diperiksa SEBELUM this.client — urutannya penyebab bug-nya');
+  // Dan cabang native tidak boleh bergantung pada isConnected(), karena proses
+  // utama menyambung ulang sendiri.
+  const sebelumCek = print.slice(0, cekClient);
+  assert.ok(!/this\.client\.isConnected\(\)/.test(sebelumCek),
+    'cabang desktop tidak boleh memeriksa this.client');
 });

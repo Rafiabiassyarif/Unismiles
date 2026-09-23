@@ -375,8 +375,14 @@ test('sisa buffer dibuang SEBELUM cetak, bukan hanya sebelum sambung', () => {
   assert.match(PRINTER, /clearStalePacketBuffer/,
     'harus ada pembersih sisa buffer');
   const print = PRINTER.slice(PRINTER.indexOf('async print('));
-  assert.match(print.slice(0, 900), /this\.clearStalePacketBuffer\(\)/,
-    'pembersihan harus di AWAL print(), sebelum paket apa pun dikirim');
+  // Diukur dari cabang WEB BLUETOOTH-nya, bukan dari awal fungsi: jalur aplikasi
+  // desktop keluar lebih dulu (transport-nya di proses utama, bukan klien Web
+  // Bluetooth), jadi yang harus bersih di sini adalah jalur yang memakai buffer
+  // library. Memeriksa dari awal fungsi akan lulus hanya karena kebetulan urutan,
+  // dan gagal begitu urutannya benar.
+  const jalurWeb = print.slice(print.indexOf('if (!this.client) throw'));
+  assert.match(jalurWeb.slice(0, 900), /this\.clearStalePacketBuffer\(\)/,
+    'pembersihan harus di AWAL jalur web, sebelum paket apa pun dikirim');
 });
 
 test('pembersih buffer benar-benar mengosongkan packetBuf', () => {

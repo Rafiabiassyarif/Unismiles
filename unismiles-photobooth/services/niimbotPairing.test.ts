@@ -212,9 +212,13 @@ test('preconnect melaporkan isi daftar perangkat apa adanya', () => {
   // dua sebab yang gejalanya sama dari sisi pengguna.
   const PRINTER = readFileSync(path.join(ROOT, 'services', 'niimbotPrinter.ts'), 'utf8');
   const fn = PRINTER.slice(PRINTER.indexOf('public async preconnectSilently'));
-  assert.match(fn.slice(0, 2600), /Perangkat tersimpan untuk alamat ini/,
+  // Dipotong sampai akhir fungsi (sambung di jalur web), bukan 2600 huruf:
+  // jalur desktop di depan fungsi memakan jatah itu, sehingga pemeriksaan ini
+  // gagal hanya karena teksnya bergeser — bukan karena perilakunya berubah.
+  const badan = fn.slice(0, fn.indexOf('private async findPairedDevice'));
+  assert.match(badan, /Perangkat tersimpan untuk alamat ini/,
     'harus melaporkan daftar perangkat saat halaman siap');
-  assert.match(fn.slice(0, 2600), /perangkat\.length === 0/,
+  assert.match(badan, /perangkat\.length === 0/,
     'harus menyatakan terang-terangan kalau daftarnya kosong');
 });
 

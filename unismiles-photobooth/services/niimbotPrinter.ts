@@ -437,20 +437,21 @@ export class NiimbotPrinter {
   /**
    * Apakah printer siap dicetak.
    *
-   * Di aplikasi desktop jawabannya tidak bergantung pada izin: transportnya
-   * Bluetooth native, dan printer dicari dari nama/alamat yang sudah dikenal.
-   * Jadi statusnya 'ready' begitu ada printer yang dikenal — tanpa dialog, dan
-   * tanpa cara apa pun bagi izin untuk "hilang".
+   * Di aplikasi desktop jawabannya SELALU 'ready', dan itu memang benar: tidak
+   * ada izin halaman yang perlu dimiliki, dan transport native mencari sendiri
+   * printer label dari service/nama iklannya.
+   *
+   * Kenapa bukan 'no-stored-device' saat belum ada nama tersimpan: keadaan itu
+   * berarti "perlu dipasangkan dulu", dan di aplikasi desktop TIDAK ADA yang
+   * perlu dipasangkan. Kiosk yang baru dipasang (nama belum pernah tersimpan)
+   * akan ditolak mencetak dengan pesan "belum dipasangkan" padahal printernya
+   * ada dan bisa ditemukan — persis keluhan "device sudah tersambung tapi tidak
+   * bisa print". Kalau printer memang tidak ada, kegagalannya muncul sebagai
+   * "Printer tidak ditemukan" dari transport, yang menyebut sebab sebenarnya.
    */
   public async pairingState(): Promise<PrinterPairingState> {
     const native = NiimbotPrinter.nativeBridge();
-    if (native) {
-      const status = await native.status();
-      if (status?.tersambung) return 'ready';
-      // Belum tersambung tapi pernah dikenali: masih 'ready', karena sambungan
-      // dibuat ulang saat mencetak — itu justru perilaku yang diminta.
-      return (this.rememberedAddress() || this.rememberedDeviceName()) ? 'ready' : 'no-stored-device';
-    }
+    if (native) return 'ready';
 
     return this.pairingStateWeb();
   }
@@ -489,7 +490,11 @@ export class NiimbotPrinter {
       try {
         const nama = this.rememberedDeviceName();
         const alamat = this.rememberedAddress();
-        if (!nama && !alamat) return null;
+        // TANPA kriteria pun dicoba, bukan berhenti: transport native mencari
+        // printer label dari service/nama iklannya sendiri (itu jalur yang sudah
+        // terbukti di kiosk tanpa nama, tanpa alamat, dan tanpa izin). Berhenti
+        // lebih dulu membuat kiosk yang baru dipasang tidak pernah tersambung
+        // awal — dan cetak pertama jadi lambat padahal printernya ada.
         const hasil = await native.sambung({ nama: nama || undefined, alamat: alamat || undefined });
         this.nativeTersambung = true;
         console.info(`[Printer] Tersambung otomatis (Bluetooth native): "${hasil?.deviceName}". `
@@ -865,6 +870,31 @@ export class NiimbotPrinter {
     adj: PrintAdjustments = DEFAULT_ADJUSTMENTS,
     onProgress?: (page: number, total: number) => void,
   ): Promise<void> {
+    // JALUR APLIKASI DESKTOP DIPERIKSA LEBIH DULU — ini urutannya, bukan selera.
+    //
+    // Di aplikasi desktop `this.client` memang TIDAK PERNAH ada: transportnya
+    // Bluetooth native di proses utama, bukan klien Web Bluetooth. Memeriksa
+    // `this.client` lebih dulu membuat SETIAP cetak gagal dengan "Printer belum
+    // tersambung." padahal `connect()` sudah berhasil dan printer benar-benar
+    // tersambung — persis keluhannya.
+    //
+    // Penyusunan gambar tetap di sini (geometri, margin, kepekatan), lalu hasil
+    // ter-encode dikirim ke proses utama. Jadi kalibrasi tetap satu sumber dan
+    // hasilnya identik dengan jalur browser.
+    //
+    // `this.isConnected()` sengaja TIDAK diperiksa di sini: proses utama sudah
+    // menyambung ulang sendiri kalau sambungannya lepas (lihat cetak() di
+    // main.cjs), dan menyambung ulang dari sisi ini justru bisa memutus
+    // sambungan yang sedang dipakai.
+    const native = NiimbotPrinter.nativeBridge();
+    if (native) {
+      const canvas = await this.prepareCanvas(image, size, adj);
+      const encoded = ImageEncoder.encodeCanvas(canvas, PageColorType.SingleColor, 'top');
+      await native.cetak(encoded, { density: adj.density, copies, model: this.printTaskName });
+      onProgress?.(copies, copies);
+      return;
+    }
+
     if (!this.client) throw new Error('Printer belum tersambung.');
     if (!this.client.isConnected()) throw new Error('Sambungan printer terputus. Sambungkan ulang.');
 
@@ -879,17 +909,6 @@ export class NiimbotPrinter {
     // SingleColor = satu warna (hitam) pada label 1-bit. Itu yang dipakai
     // printer label termal biasa; DoubleColor hanya untuk model pita dua warna.
     const encoded = ImageEncoder.encodeCanvas(canvas, PageColorType.SingleColor, direction);
-
-    // JALUR APLIKASI DESKTOP: halaman yang sudah ter-encode dikirim ke proses
-    // utama, yang mengangkutnya lewat Bluetooth native. Penyusunan gambar tetap
-    // di sini — jadi kalibrasi (geometri, margin, kepekatan) tetap SATU sumber,
-    // dan hasilnya identik dengan cetak lewat browser.
-    const native = NiimbotPrinter.nativeBridge();
-    if (native) {
-      await native.cetak(encoded, { density: adj.density, copies, model: this.printTaskName });
-      onProgress?.(copies, copies);
-      return;
-    }
 
     // Heartbeat dimatikan selama mencetak: paketnya bisa mengganggu aliran data
     // gambar. Contoh resmi NiimBlueLib melakukan hal yang sama.
