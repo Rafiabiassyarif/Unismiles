@@ -20,7 +20,8 @@ const BOOTH = '/Users/nadine/Unismiles/unismiles-photobooth/components/PhotoBoot
 const booth = readFileSync(BOOTH, 'utf8');
 
 test('kode ketiga tombol MASIH ADA — tidak ada yang dihapus', () => {
-  // Handler-nya.
+  // Handler-nya. handlePrint tetap ada karena tombolnya dipakai sebagai jaring
+  // pengaman di perangkat tanpa Bluetooth — bukan dihapus.
   assert.ok(booth.includes('onClick={handlePrint}'), 'handler handlePrint harus masih ada');
   assert.ok(booth.includes('handleBluetoothPrint'), 'jalur cetak Bluetooth harus masih ada');
   assert.ok(booth.includes('handleManualPrint'), 'jalur cetak manual harus masih ada');

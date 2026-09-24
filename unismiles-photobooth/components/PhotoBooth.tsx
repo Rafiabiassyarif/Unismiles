@@ -4035,13 +4035,30 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
                     {/* Action Buttons */}
                     <div className={`flex flex-wrap items-center justify-center gap-3 z-20 relative shrink-0 ${isVertical ? 'mt-2 pb-1' : 'absolute bottom-6 right-6'}`}>
-                        {/* Tombol cetak: kode utuh, hanya dirender kalau
-                            show_print_button aktif di Admin. Satuan tombol cetak
-                            lain di bawah (fallback manual & Bluetooth) ikut
-                            disembunyikan bersamanya — kalau tidak, tombol cetak
-                            masih bisa ditekan lewat jalur lain dan setelannya
-                            jadi tidak berarti. */}
-                        {selectedPackage === 'print' && tombol.print && (
+                    {/* ------------------------------------------------------
+                        TOMBOL CETAK — HANYA SATU YANG TAMPIL.
+
+                        Dulu ada tiga tombol cetak berdampingan ("Print" putih,
+                        "Print manual", "Cetak Bluetooth") dan pembeli harus
+                        menebak mana yang benar. Sekarang yang tampil hanya
+                        "Cetak Bluetooth".
+
+                        Tombol "Print" putih TIDAK dihapus dari kode: ia dipakai
+                        sebagai JARING PENGAMAN, dan hanya muncul kalau cetak
+                        Bluetooth memang tidak bisa dipakai di perangkat ini
+                        (`isBluetoothPrintAvailable()`). Kalau ia dihapus
+                        seluruhnya, kiosk di perangkat tanpa Bluetooth tidak
+                        punya tombol cetak sama sekali — dan itu kegagalan yang
+                        baru ditemukan saat pembeli sudah berdiri di depan mesin.
+
+                        Urutannya penting: yang diperiksa lebih dulu adalah
+                        apakah Bluetooth bisa dipakai, bukan sebaliknya.
+                        ------------------------------------------------------ */}
+                    {selectedPackage === 'print' && tombol.print && (
+                        <>
+                          {/* Jaring pengaman: hanya saat cetak Bluetooth tidak
+                              tersedia di perangkat ini. */}
+                          {!isBluetoothPrintAvailable() && (
                             <>
                               <button 
                                   id="btn-print"
@@ -4064,30 +4081,32 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                                   <Printer size={isVertical ? 18 : 20} /> Print manual
                                 </button>
                               )}
-
-                              {/*
-                                Cetak lewat Bluetooth langsung: photobooth menyambung
-                                printer label sendiri, tanpa kiosk-agent dan tanpa
-                                server. Tombol ini harus DIKLIK — Web Bluetooth
-                                menolak membuka pemilih perangkat di luar gestur
-                                pengguna.
-                              */}
-                              {isBluetoothPrintAvailable() && (
-                                <button
-                                  id="btn-bluetooth-print"
-                                  onClick={() => void handleBluetoothPrint()}
-                                  disabled={!areAssetsReady || btPrintState === 'connecting' || btPrintState === 'printing'}
-                                  className={`flex items-center gap-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-full shadow-[0_10px_20px_rgba(37,99,235,0.35)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${isVertical ? 'px-6 py-2.5 text-sm' : 'px-8 py-3 text-base'}`}
-                                >
-                                  <Printer size={isVertical ? 18 : 20} className={btPrintState === 'connecting' || btPrintState === 'printing' ? 'animate-pulse' : ''} />
-                                  {btPrintState === 'connecting' && 'Menyambungkan…'}
-                                  {btPrintState === 'printing' && 'Mencetak…'}
-                                  {btPrintState === 'done' && 'Cetak Bluetooth ✓'}
-                                  {(btPrintState === 'idle' || btPrintState === 'failed') && 'Cetak Bluetooth'}
-                                </button>
-                              )}
                             </>
-                        )}
+                          )}
+
+                          {/*
+                            Cetak lewat Bluetooth langsung: photobooth menyambung
+                            printer label sendiri, tanpa kiosk-agent dan tanpa
+                            server. Tombol ini harus DIKLIK — Web Bluetooth
+                            menolak membuka pemilih perangkat di luar gestur
+                            pengguna.
+                          */}
+                          {isBluetoothPrintAvailable() && (
+                            <button
+                              id="btn-bluetooth-print"
+                              onClick={() => void handleBluetoothPrint()}
+                              disabled={!areAssetsReady || btPrintState === 'connecting' || btPrintState === 'printing'}
+                              className={`flex items-center gap-2 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded-full shadow-[0_10px_20px_rgba(37,99,235,0.35)] transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${isVertical ? 'px-6 py-2.5 text-sm' : 'px-8 py-3 text-base'}`}
+                            >
+                              <Printer size={isVertical ? 18 : 20} className={btPrintState === 'connecting' || btPrintState === 'printing' ? 'animate-pulse' : ''} />
+                              {btPrintState === 'connecting' && 'Menyambungkan…'}
+                              {btPrintState === 'printing' && 'Mencetak…'}
+                              {btPrintState === 'done' && 'Cetak Bluetooth ✓'}
+                              {(btPrintState === 'idle' || btPrintState === 'failed') && 'Cetak Bluetooth'}
+                            </button>
+                          )}
+                        </>
+                    )}
                          {tombol.email && (
                          <button 
                             id="btn-email"
