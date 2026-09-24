@@ -372,6 +372,87 @@ export function ditherToBlackAndWhite(
   }
 }
 
+/**
+ * Pesan galat kamera, dipetakan dari nama galat browser.
+ *
+ * Dipisah dan MURNI supaya bisa diuji: kegagalan kamera yang dilaporkan sebagai
+ * "sesuatu gagal" membuat operator menebak-nebak, dan di kiosk itu berakhir
+ * dengan kamera yang tidak pernah dipakai. Ada di modul ini (bukan di komponen)
+ * karena .ts bisa dieksekusi di test, .tsx tidak.
+ */
+export function cameraErrorMessage(err: unknown): string {
+  const name = String((err as { name?: string })?.name || '');
+  const pesan = String((err as { message?: string })?.message || '');
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return 'Izin kamera ditolak. Izinkan akses kamera untuk halaman ini di browser, lalu coba lagi.';
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    return 'Tidak ada kamera yang terdeteksi di perangkat ini.';
+  }
+  if (name === 'NotReadableError' || name === 'AbortError') {
+    return 'Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu, lalu coba lagi.';
+  }
+  // Hanya saat TIDAK ada galat bernama (mis. dipanggil sebelum mencoba): kalau
+  // browser memang tidak punya getWGU, itu penyebabnya. Galat bernama tetap
+  // dilaporkan apa adanya — menyebut "browser tidak mendukung" untuk galat lain
+  // akan menyesatkan orang yang mencari masalah di browser.
+  if (!name && typeof navigator !== 'undefined' && !navigator?.mediaDevices?.getUserMedia) {
+    return 'Browser ini tidak mendukung kamera (butuh https dan Chrome/Edge/Safari terbaru).';
+  }
+  return `Kamera gagal dibuka${pesan ? `: ${pesan}` : '.'}`;
+}
+
+/**
+ * Ambil gambar dari elemen video ke sebuah Image, siap dipakai jalur cetak.
+ *
+ * Menolak video yang belum punya ukuran: kamera belum memberi frame, dan
+ * mengembalikan gambar kosong akan membuat operator menyetel brightness pada
+ * layar hitam. Butuh `document`, jadi hanya dijalankan di browser.
+ */
+export function frameToImage(video: { videoWidth: number; videoHeight: number }): Promise<HTMLImageElement> {
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (!w || !h) return Promise.reject(new Error('Kamera belum siap — belum ada gambar yang bisa diambil.'));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d')!.drawImage(video as unknown as CanvasImageSource, 0, 0, w, h);
+  const url = c.toDataURL('image/jpeg', 0.95);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Hasil capture tidak bisa dibaca sebagai gambar.'));
+    img.src = url;
+  });
+}
+
+/**
+ * Sesuaikan warna seperti `ctx.filter` di jalur cetak, dengan urutan yang sama:
+ * brightness mengalikan, contrast bergerak di sekitar 128, lalu saturation.
+ *
+ * Dipakai pada PIKEL SUMBER sebelum dither — bukan pada hasil hitam-putih.
+ * Kalau diterapkan setelah dither, hasilnya hanya hitam/putih dan penyesuaian
+ * tidak berpengaruh apa pun.
+ */
+export function applyAdjust(
+  [r, g, b]: [number, number, number],
+  brightness: number, contrast: number, saturation: number,
+): [number, number, number] {
+  const kb = brightness / 100;
+  const kc = contrast / 100;
+  const ks = saturation / 100;
+  // Terang Rec.601: sama dengan yang dipakai dithering, jadi penyesuaian dan
+  // penghitungan hitam-putih tidak memakai ukuran terang yang berbeda.
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+  const out: number[] = [];
+  for (const c of [r, g, b]) {
+    let v = c * kb;
+    v = (v - 128) * kc + 128;
+    v = lum + (v - lum) * ks;
+    out.push(Math.max(0, Math.min(255, Math.round(v))));
+  }
+  return [out[0], out[1], out[2]];
+}
+
 /** Ringkas: apa yang perlu ditampilkan di panel tentang hasil cetak. */
 export function inkSummary(plan: PreviewPlan) {
   const kanan = plan.box.x + plan.box.w;

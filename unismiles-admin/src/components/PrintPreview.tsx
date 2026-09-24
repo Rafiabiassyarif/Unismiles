@@ -1,24 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Image as ImageIcon, Info, RotateCcw } from 'lucide-react';
+import { Camera as CameraIcon, Image as ImageIcon, Info, RotateCcw, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import {
   previewPlan, renderPrintBitmap, inkSummary, findPaper, PAPER_CATALOG,
-  PRINTHEAD_PX, type Margin,
+  PRINTHEAD_PX, applyAdjust, cameraErrorMessage, frameToImage, type Margin,
 } from '../lib/printPapers';
 
 /**
- * PRINT PREVIEW WYSIWYG.
+ * PRINT PREVIEW WYSIWYG + CAPTURE FOTO.
  *
  * Yang digambar di sini BUKAN tafsiran: jalur yang sama dengan produksi
  * dijalankan sungguhan (clip ke kotak cetak → gambar foto → dither
- * Floyd–Steinberg 1-bit), lalu hasilnya ditampilkan, bukan dijelaskan. Karena
- * itu preview ini bisa menunjukkan hal yang tidak terlihat dari angka:
- * foto yang terpotong, bingkai yang ketimpa tinta, dan tepi yang jatuh di luar
- * jangkauan kepala cetak.
+ * Floyd–Steinberg 1-bit), lalu hasilnya ditampilkan. Karena itu preview ini
+ * bisa menunjukkan hal yang tidak terlihat dari angka: foto yang terpotong,
+ * bingkai yang ketimpa tinta, tepi yang jatuh di luar jangkauan kepala cetak,
+ * dan — inti fitur capture — bagaimana brightness/contrast mengubah FOTO
+ * SUNGGUHAN, bukan pola uji.
  *
- * Kenapa hitam-putih dan berbintik: printer termal hanya punya dua keadaan
- * per titik. Preview berwarna akan menampilkan sesuatu yang tidak pernah keluar
- * di kertas.
+ * Kenapa hitam-putih dan berbintik: printer termal hanya punya dua keadaan per
+ * titik. Preview berwarna akan menampilkan sesuatu yang tidak pernah keluar di
+ * kertas.
  */
 
 /** Skala tampilan: label 67 mm terlalu kecil untuk dinilai di layar. */
@@ -35,29 +36,13 @@ export interface PrintPreviewProps {
   saturation: number;
 }
 
-/** Sesuaikan warna seperti `ctx.filter` di jalur cetak, urutannya sama. */
-function applyAdjust([r, g, b]: [number, number, number], brightness: number, contrast: number, saturation: number): [number, number, number] {
-  const kb = brightness / 100;
-  const kc = contrast / 100;
-  const ks = saturation / 100;
-  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-  const out: number[] = [];
-  for (const c of [r, g, b]) {
-    let v = c * kb;
-    v = (v - 128) * kc + 128;
-    v = lum + (v - lum) * ks;
-    out.push(Math.max(0, Math.min(255, Math.round(v))));
-  }
-  return [out[0], out[1], out[2]];
-}
-
 /**
- * Pola uji bawaan — dipakai kalau operator belum memilih foto.
+ * Pola uji bawaan — dipakai kalau belum ada foto.
  *
- * Isinya sengaja informatif: penggaris 5 mm di tepi, kotak penanda di keempat
- * sudut, lingkaran di tengah, dan gradien. Dari pola ini terlihat apakah foto
- * terpotong (penanda sudut hilang) dan seberapa miring posisinya terhadap
- * bingkai — yang tidak bisa dinilai dari kotak kosong.
+ * Isinya sengaja informatif: penggaris 5 mm, kotak penanda di keempat sudut,
+ * lingkaran di tengah, dan gradien. Dari pola ini terlihat apakah foto
+ * terpotong (penanda sudut hilang). Untuk menilai brightness/contrast, pola ini
+ * TIDAK cukup — nilainya seragam, dan itu sebabnya ada capture foto.
  */
 function samplePattern(sx: number, sy: number, w: number, h: number): [number, number, number] {
   const mmPerPx = 54 / w;
@@ -79,8 +64,12 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
   paperSize, margin, offsetXPx, offsetYPx, fitMode, brightness, contrast, saturation,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [foto, setFoto] = useState<HTMLImageElement | null>(null);
   const [namaFoto, setNamaFoto] = useState<string>('');
+  const [kameraAktif, setKameraAktif] = useState(false);
+  const [kameraGalat, setKameraGalat] = useState<string | null>(null);
 
   const plan = useMemo(
     () => previewPlan(paperSize, margin, offsetXPx, offsetYPx),
@@ -88,6 +77,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
   );
   const ringkas = useMemo(() => inkSummary(plan), [plan]);
   const kertas = useMemo(() => findPaper(paperSize), [paperSize]);
+  const adaPenyesuaian = brightness !== 100 || contrast !== 100 || saturation !== 100;
 
   const pilihFoto = useCallback((file: File | null) => {
     if (!file) { setFoto(null); setNamaFoto(''); return; }
@@ -96,6 +86,60 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     img.onload = () => { setFoto(img); setNamaFoto(file.name); };
     img.src = url;
   }, []);
+
+  /**
+   * Tutup kamera. WAJIB dipanggil saat panel ditutup dan saat unmount: kamera
+   * yang dibiarkan hidup membuat lampu indikator menyala terus, dan di kiosk itu
+   * terlihat seperti mesin yang sedang dipakai.
+   */
+  const tutupKamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    setKameraAktif(false);
+  }, []);
+
+  const bukaKamera = useCallback(async () => {
+    setKameraGalat(null);
+    if (!navigator?.mediaDevices?.getUserMedia) {
+      setKameraGalat(cameraErrorMessage(null));
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setKameraAktif(true);
+      // Video dipasang setelah render berikutnya, saat elemennya sudah ada.
+      requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          void videoRef.current.play().catch(() => { /* autoplay ditolak: gambar tetap tampil */ });
+        }
+      });
+    } catch (err) {
+      setKameraGalat(cameraErrorMessage(err));
+    }
+  }, []);
+
+  useEffect(() => () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+  }, []);
+
+  const ambilGambar = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    try {
+      const img = await frameToImage(video);
+      setFoto(img);
+      setNamaFoto('hasil capture kamera');
+      tutupKamera();
+    } catch (err) {
+      setKameraGalat(cameraErrorMessage(err));
+    }
+  }, [tutupKamera]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -106,8 +150,8 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     const imgW = foto ? foto.naturalWidth : plan.canvasW;
     const imgH = foto ? foto.naturalHeight : plan.canvasH;
 
-    // Foto diambil dari kanvas sumber, sekali, supaya pembacaan piksel di dalam
-    // loop tidak menyentuh DOM berulang kali.
+    // Foto dibaca sekali ke buffer, supaya pembacaan piksel di dalam loop tidak
+    // menyentuh DOM berulang kali.
     let sumber: { data: Uint8ClampedArray; width: number; height: number } | null = null;
     if (foto) {
       const s = document.createElement('canvas');
@@ -116,7 +160,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
       sc.drawImage(foto, 0, 0, imgW, imgH);
       sumber = sc.getImageData(0, 0, imgW, imgH);
     }
-    const sample = (sx: number, sy: number): [number, number, number] => {
+    const mentah = (sx: number, sy: number): [number, number, number] => {
       if (sumber) {
         const i = (sy * sumber.width + sx) * 4;
         return [sumber.data[i], sumber.data[i + 1], sumber.data[i + 2]];
@@ -124,20 +168,20 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
       return samplePattern(sx, sy, imgW, imgH);
     };
 
+    // Penyesuaian diterapkan pada PIKEL SUMBER, lalu dither dijalankan SEKALI —
+    // persis urutan jalur cetak (`ctx.filter` dipasang sebelum gambar, dan
+    // dither dihitung dari hasil yang sudah disaring).
+    //
+    // SEBELUMNYA salah: dither dijalankan pada piksel mentah, lalu hasil 0/255
+    // itu disesuaikan, lalu digambar ULANG dari piksel mentah — sehingga
+    // brightness/contrast tidak berpengaruh sama sekali di preview.
+    const sample = adaPenyesuaian
+      ? (sx: number, sy: number) => applyAdjust(mentah(sx, sy), brightness, contrast, saturation)
+      : mentah;
+
     renderPrintBitmap({ data, width: plan.canvasW, height: plan.canvasH }, { plan, fitMode, imgW, imgH, sample });
-    // Filter dari Admin diterapkan setelahnya, sama seperti jalur cetak (filter
-    // dulu baru dither akan merusak hasilnya).
-    if (brightness !== 100 || contrast !== 100 || saturation !== 100) {
-      for (let i = 0; i < data.length; i += 4) {
-        const [r, g, b] = applyAdjust([data[i], data[i + 1], data[i + 2]], brightness, contrast, saturation);
-        data[i] = r; data[i + 1] = g; data[i + 2] = b;
-      }
-      // Ulangi dithering setelah filter: ambang harus dihitung dari nilai akhir.
-      renderPrintBitmap({ data, width: plan.canvasW, height: plan.canvasH }, { plan, fitMode, imgW, imgH, sample });
-    }
 
     // 2. Tampilkan diperbesar, tanpa smoothing supaya tiap titik tinta terlihat.
-    const ctx = canvas.getContext('2d')!;
     const sumberKanvas = document.createElement('canvas');
     sumberKanvas.width = plan.canvasW;
     sumberKanvas.height = plan.canvasH;
@@ -150,7 +194,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     g.clearRect(0, 0, canvas.width, canvas.height);
     g.drawImage(sumberKanvas, 0, 0, canvas.width, canvas.height);
 
-    // 3. Panduan. Ini yang membuat preview bisa DIBACA: tanpa garis kotak,
+    // 3. Panduan. Inilah yang membuat preview bisa DIBACA: tanpa garis kotak,
     // tinta dan bingkai tercetak terlihat sama saja.
     g.lineWidth = 1;
     g.setLineDash([]);
@@ -158,7 +202,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     g.strokeRect(plan.box.x * ZOOM + 0.5, plan.box.y * ZOOM + 0.5, plan.box.w * ZOOM, plan.box.h * ZOOM);
 
     // Batas kepala cetak: di sebelah kanan garis ini piksel TIDAK keluar, tanpa
-    // pesan error apa pun. Karena itu digambar terang.
+    // pesan error apa pun.
     if (PRINTHEAD_PX < plan.canvasW) {
       g.setLineDash([6, 4]);
       g.strokeStyle = 'rgba(248,113,113,0.95)';
@@ -168,10 +212,9 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
       g.stroke();
       g.setLineDash([]);
     }
-    // Tepi kertas.
     g.strokeStyle = 'rgba(255,255,255,0.55)';
     g.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
-  }, [plan, fitMode, brightness, contrast, saturation, foto]);
+  }, [plan, fitMode, brightness, contrast, saturation, adaPenyesuaian, foto]);
 
   return (
     <div className="p-5 rounded-2xl bg-black/20 border border-white/5 space-y-4">
@@ -185,7 +228,14 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
             hitam-putih 1-bit. Yang terlihat di sini yang keluar di printer.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button" onClick={kameraAktif ? tutupKamera : bukaKamera}
+            className={cn('text-[10px] font-black px-3 py-2 rounded-xl border flex items-center gap-1',
+              kameraAktif ? 'bg-red-500/20 border-red-400/40 text-red-200' : 'bg-white/5 border-white/10')}
+          >
+            {kameraAktif ? <><X className="w-3 h-3" /> Tutup kamera</> : <><CameraIcon className="w-3 h-3" /> Capture foto</>}
+          </button>
           <label className="btn-primary text-[10px] px-3 py-2 cursor-pointer">
             Pilih foto
             <input type="file" accept="image/*" className="hidden" onChange={e => pilihFoto(e.target.files?.[0] || null)} />
@@ -195,6 +245,35 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Capture kamera. Dipakai untuk MENYETEL brightness/contrast: pola uji
+          nilainya seragam, jadi tidak menunjukkan apakah kulit jadi abu-abu atau
+          wajah hilang jadi blok hitam. Foto sungguhan menunjukkan itu. */}
+      {kameraAktif && (
+        <div className="rounded-xl bg-black/50 border border-white/10 p-3 space-y-3">
+          <div className="flex flex-col md:flex-row gap-3 items-start">
+            <video
+              ref={videoRef} playsInline muted
+              className="rounded-lg bg-black w-full md:w-[320px] max-h-[240px] object-contain"
+            />
+            <div className="space-y-2">
+              <button type="button" onClick={ambilGambar} className="btn-primary text-[11px] px-4 py-2 flex items-center gap-2">
+                <CameraIcon className="w-3.5 h-3.5" /> Ambil gambar ini
+              </button>
+              <p className="text-[10px] text-muted font-bold max-w-[280px]">
+                Arahkan ke objek dengan cahaya yang sama seperti di kiosk, lalu ambil.
+                Hasilnya langsung tampil di preview, sudah termasuk brightness/contrast
+                yang sedang dipakai.
+              </p>
+            </div>
+          </div>
+          {kameraGalat && <p className="text-[10px] font-black text-red-300">{kameraGalat}</p>}
+        </div>
+      )}
+
+      {!kameraAktif && kameraGalat && (
+        <p className="text-[10px] font-black text-red-300">{kameraGalat}</p>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-5 items-start">
         <div className="rounded-xl bg-black/40 border border-white/10 p-2 max-w-full overflow-auto">
@@ -212,6 +291,14 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
                 {ringkas.headroomPx} px {ringkas.headroomPx < 0 ? '— TERPOTONG' : ''}
               </p>
             </div>
+            <div>
+              <p className="label">Brightness / Contrast</p>
+              <p className="font-black mt-0.5">{brightness}% / {contrast}%</p>
+            </div>
+            <div>
+              <p className="label">Sumber gambar</p>
+              <p className="font-black mt-0.5">{namaFoto || 'pola uji'}</p>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3 text-[10px] font-bold">
@@ -220,8 +307,18 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
             <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm border border-white/60 inline-block" /> tepi kertas</span>
           </div>
 
+          {adaPenyesuaian && (
+            <p className="text-[10px] text-muted font-bold">
+              Foto diproses dengan brightness {brightness}% · contrast {contrast}% · saturation {saturation}%,
+              lalu di-dither. Di printer termal hanya ada hitam dan putih, jadi yang berubah adalah
+              seberapa banyak detail yang tersisa — bukan tingkat keabuannya.
+            </p>
+          )}
+
           <p className="text-[10px] text-muted font-bold">
-            Foto: {namaFoto || 'pola uji (bukan foto asli) — ganti dengan foto sungguhan untuk menilai hasil akhirnya'}
+            {namaFoto
+              ? 'Untuk menyetel brightness/contrast: ubah slider di atas dan lihat foto ini berubah. Yang penting bukan wajahnya terang, melainkan masih ada detail setelah di-dither.'
+              : 'Belum ada foto: yang tampil pola uji, bukan foto asli. Pakai “Capture foto” atau “Pilih foto” untuk menilai brightness/contrast pada gambar sungguhan.'}
           </p>
 
           {kertas && <p className="text-[10px] text-muted font-bold">{kertas.label}: {kertas.note}</p>}
