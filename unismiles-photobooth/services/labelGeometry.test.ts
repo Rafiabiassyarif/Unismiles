@@ -225,18 +225,17 @@ test('ukuran slot dibulatkan ke piksel utuh', () => {
 // melewatinya). Tidak persegi (47:48) — permintaan eksplisit.
 const POLAROID = POL;
 
-test('preset label mengisi kotak 47 x 48 mm di X 0 / Y 6 mm', () => {
+test('preset label mengisi kotak 555 x 567 px (46,99 x 48,01 mm) di X 0 / Y 35 px', () => {
   // B1_PRO_PRINTHEAD_PX WAJIB ikut: jalur produksi (prepareCanvas) selalu
   // meneruskan batas kepala cetak, dan tanpa argumen itu printBox memakai lebar
   // kanvas sebagai batas — test jadi menguji konfigurasi yang tidak pernah dipakai.
   const b = printBox(POLAROID.W, POLAROID.H, POLAROID.top, POLAROID.right, POLAROID.left, POLAROID.bottom, B1_PRO_PRINTHEAD_PX);
   assert.strictEqual(b.x, 0, 'kiri 0 px: foto menempel tepi kiri kanvas');
-  assert.strictEqual(b.y, 71, 'atas 71 px (6 mm)');
-  assert.strictEqual(b.w, 555, 'lebar kotak 47 mm');
-  assert.strictEqual(b.h, 567, 'tinggi kotak 48 mm (bawah ditambah 1 mm)');
+  assert.strictEqual(b.y, 35, 'atas 35 px (2,96 mm)');
+  assert.strictEqual(b.w, 555, 'lebar kotak 46,99 mm');
+  assert.strictEqual(b.h, 567, 'tinggi kotak 48,01 mm');
   assert.strictEqual(mmToPx(47), 555, '47 mm = 555 px pada 300 dpi');
   assert.strictEqual(mmToPx(48), 567, '48 mm = 567 px pada 300 dpi');
-  assert.strictEqual(mmToPx(6), 71, '6 mm = 71 px pada 300 dpi');
   // Batas kepala cetak: kolom 576 ke atas TIDAK keluar, dan itu tidak berpesan
   // error apa pun — hanya terlihat sebagai tepi gambar yang hilang.
   assert.ok(b.x + b.w <= B1_PRO_PRINTHEAD_PX,
@@ -256,10 +255,10 @@ test('printBox menempatkan area cetak sesuai margin empat sisi', () => {
   // kanvas sebagai batas — test jadi menguji konfigurasi yang tidak pernah dipakai.
   const b = printBox(POLAROID.W, POLAROID.H, POLAROID.top, POLAROID.right, POLAROID.left, POLAROID.bottom, B1_PRO_PRINTHEAD_PX);
   assert.strictEqual(b.x, 0, 'kiri 0 px (menempel tepi kanvas)');
-  assert.strictEqual(b.y, 71, 'atas 71 px (6 mm)');
-  // Area = 638 - 0 - 83 = 555 px (47 mm), dan 791 - 71 - 153 = 567 px (48 mm).
-  assert.strictEqual(b.w, 555, 'lebar area 47 mm');
-  assert.strictEqual(b.h, 567, 'tinggi area 48 mm');
+  assert.strictEqual(b.y, 35, 'atas 35 px (2,96 mm)');
+  // Area = 638 - 0 - 83 = 555 px (46,99 mm), dan 791 - 35 - 189 = 567 px (48,01 mm).
+  assert.strictEqual(b.w, 555, 'lebar area 46,99 mm');
+  assert.strictEqual(b.h, 567, 'tinggi area 48,01 mm');
 });
 
 test('kotak cetak tidak pernah negatif walau margin melebihi kanvas', () => {

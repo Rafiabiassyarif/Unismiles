@@ -73,14 +73,14 @@ const THERMAL_PRESETS = [
  * Preset label dengan AREA CETAK yang sudah ditentukan pabrik.
  *
  * Label Polaroid NIIMBOT 54 x 67 mm bukan kertas kosong: ia sudah punya bingkai
- * tercetak, dan hanya kotak 46 x 46 mm di tengahnya yang boleh diisi. Karena itu
+ * tercetak, dan hanya kotak putih di tengahnya yang boleh diisi. Karena itu
  * ukuran kertas saja tidak cukup — margin empat sisinya ikut disimpan, kalau
  * tidak fotonya akan melimpah ke bingkai yang sudah tercetak.
  *
  * Angka-angka ini datang dari pengukuran label yang dipakai UniSmiles:
- *   atas 6 mm, kanan 3 mm, kiri 3 mm, bawah 14 mm  ->  46 x 46 mm di tengah.
- *   6 + 46 + 14 = 66, bukan 67. Selisih 1 mm dibiarkan di bawah (margin 15 mm),
- *   supaya kotak tetap persis 46 x 46 mm seperti yang diminta.
+ *   atas 2,96 mm, kiri 0 mm, kanan 7,03 mm, bawah 16,00 mm  ->  46,99 x 48,01 mm
+ *   2,96 + 48,04 + 16,00 = 67 mm, dan 0 + 46,97 + 7,03 = 54 mm. Keduanya pas,
+ *   jadi tidak ada sisi yang perlu menyerap selisih.
  */
 const LABEL_PRESETS = [
   {
@@ -88,36 +88,30 @@ const LABEL_PRESETS = [
     paperWidthMm: 54,
     paperHeightMm: 67,
     /**
-     * Area 45,3 mm, bukan 46 mm. Hasil cetak fisik menunjukkan area 46 mm masih
-     * sedikit terlalu besar, jadi dikecilkan 0,7 mm. Angka ini dihitung dari
-     * piksel (535 px pada 300 dpi), bukan dibulatkan ke milimeter, supaya
-     * perubahan yang didapat benar-benar sekecil yang terlihat di kertas.
+     * Kotak putih label 555 x 567 px, di X 0 / Y 35 px. Angka ini ditulis
+     * dalam PERSEN MILIMETER dibagi (300/25.4) supaya yang tersimpan tetap
+     * piksel utuh pada 300 dpi, bukan hasil pembulatan milimeter.
      *
-     * Posisi TIDAK digeser: titik tengah kotak tetap di (288,5, 342,5), sama
-     * dengan area 46 mm sebelumnya. Yang berubah hanya seberapa jauh tepinya
-     * dari titik itu.
+     * Riwayat: 46x46 -> 47x47 -> 47x48 mm, lalu blok kotaknya dipindah NAIK
+     * (atas 71 -> 35 px) supaya tepi atas foto berhenti tepat di garis putih
+     * bingkai. Bawah ikut menyesuaikan (153 -> 189 px) agar tinggi kotak tetap
+     * 567 px — yang bergeser adalah POSISI, bukan ukuran.
      *
-     * Kiri/kanan bukan 3 mm. Kepala cetak B1 Pro hanya 48,77 mm, sedangkan
-     * 3 + 46 + 3 = 52 mm — tidak mungkin. Sisa lebar printable setelah area:
-     * 48,77 - 45,3 = 3,47 mm, dibagi dua, ditambah 5,2 mm sisi kanan label yang
-     * memang di luar jangkauan printer.
+     * Lebar tidak bisa 3 + 47 + 3 = 53 mm: kepala cetak B1 Pro hanya 48,77 mm.
+     * Sisa lebar setelah kotak dipakai di sisi kanan, dan 5,03 mm sisi kanan
+     * label memang di luar jangkauan printer.
      */
-    marginTopMm: 28 / (300 / 25.4),
+    marginTopMm: 35 / (300 / 25.4),
     /**
-     * Kiri 0 px, bukan 24 px. Permintaannya "lebarkan kiri 24 px", tetapi margin
-     * kiri hanya punya 21 px — kurang 3 px (0,25 mm) dan tidak ada lagi ruang,
-     * karena di sebelah kiri sudah tepi kertas. Jadi yang diterapkan adalah
-     * maksimum yang mungkin. Bukan pembulatan: 3 px itu memang di luar kertas.
+     * Kiri 0 px: di sebelah kiri sudah tepi kertas, tidak ada ruang lagi.
      */
     marginLeftMm: 0 / (300 / 25.4),
-    marginRightMm: 82 / (300 / 25.4),
+    marginRightMm: 83 / (300 / 25.4),
     /**
-     * Bawah 14 mm seperti diminta, TETAPI kotak tingginya harus tepat 46 mm.
-     * 6 + 46 + 14 = 66 mm, sedangkan kertasnya 67 mm. Selisih 1 mm itu harus
-     * jatuh ke salah satu sisi supaya persis 46 — dan lebih aman di BAWAH,
-     * menjauhi area foto, daripada di atas yang mendekati bingkai.
+     * Bawah 189 px (16,00 mm): mengikuti tinggi kotak yang tetap 567 px setelah
+     * atas dipindah ke 35 px. 35 + 567 + 189 = 791 px = tepat 67 mm.
      */
-    marginBottomMm: 181 / (300 / 25.4),
+    marginBottomMm: 189 / (300 / 25.4),
     /**
      * Kalibrasi posisi fisik, dalam PERSEN MILIMETER (10 = 0,1 mm).
      *

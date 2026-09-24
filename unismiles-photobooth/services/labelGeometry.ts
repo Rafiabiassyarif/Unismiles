@@ -130,24 +130,25 @@ export function labelMmFromPaperSize(paperSize: string | null | undefined): { wi
  * boleh diisi tinta. Kalau foto diisi ke seluruh kertas, gambar menimpa bingkai
  * dan nomor frame — hasilnya terlihat "tidak sesuai" walau printernya benar.
  *
- * Angka di bawah = ukuran kotak putih label yang dipakai (47 x 48 mm pada
- * X 0 / Y 6 mm), dalam piksel pada 300 dpi:
+ * Angka di bawah = kotak putih label yang dipakai, dalam piksel pada 300 dpi:
  *
- *   kiri 0 px (0,0 mm) | kanan 83 px (7,0 mm)      -> 54 - 0 - 7 = 47 mm
- *   atas 71 px (6,0 mm) | bawah 153 px (13,0 mm)   -> 67 - 6 - 13 = 48 mm
- *   kotak 555 x 567 px = 46,99 x 48,01 mm
- *   jumlah: 0 + 555 + 83 = 638 px (54 mm), 71 + 567 + 153 = 791 px (67 mm)
+ *   kiri 0 px (0,00 mm) | kanan 83 px (7,03 mm)   -> 54 - 0 - 7,03 = 46,97 mm
+ *   atas 35 px (2,96 mm) | bawah 189 px (16,00 mm) -> 67 - 2,96 - 16,00 = 48,04 mm
+ *   kotak 555 x 567 px = 46,99 x 48,01 mm, di x=0 y=35
+ *   jumlah: 0 + 555 + 83 = 638 px (54 mm), 35 + 567 + 189 = 791 px (67 mm)
  *
- * Riwayat penyesuaian di kertas: 46x46 -> 47x47 -> 47x48 (ukuran), lalu Y
- * diturunkan sampai 6 mm supaya tepi ATAS foto tidak melewati garis putih bingkai
- * (Y 3 -> 4 -> 3 -> 6 mm). Kotaknya TIDAK persegi (47:48) — itu permintaan
- * eksplisit. Mode cover menjaga foto tidak di-stretch:
- * kelebihannya dipotong.
+ * Riwayat penyesuaian di kertas: 46x46 -> 47x47 -> 47x48 (ukuran), lalu blok
+ * kotak dipindah naik supaya tepi ATAS foto berhenti tepat di garis putih
+ * bingkai (atas 71 -> 35 px; bawah mengikuti agar tinggi kotak tetap 567).
+ * Kotaknya TIDAK persegi (47:48) — itu permintaan eksplisit. Mode cover menjaga
+ * foto tidak di-stretch: kelebihannya dipotong.
  *
- * Diukur dari kertas, bukan dari tabel model.
+ * Diukur dari kertas, bukan dari tabel model. Kanvas 638 x 791 TIDAK dipangkas:
+ * yang membatasi tinta adalah kotak ini (tepi kanan 555 masih di bawah kepala
+ * cetak 576, jadi tidak ada yang hilang diam-diam).
  *
  * Kalau masih bergeser, yang dikoreksi adalah offset X/Y di Pengaturan Printer —
- * BUKAN angka di sini, supaya ukuran kotaknya tetap 46 x 46 mm.
+ * BUKAN angka di sini, supaya ukuran kotaknya tetap 555 x 567 px.
  *
  * `fitMode: 'cover'` bukan pilihan gaya: bingkai yang sudah tercetak menuntut
  * kotaknya TERISI PENUH. Mode 'fit' menyisakan jalur putih di dalam bingkai saat
@@ -160,7 +161,7 @@ export const LABEL_FRAME_BOX_PX: Record<string, {
   bottomPx: number;
   fitMode: 'cover' | 'fit' | 'stretch';
 }> = {
-  'nimbotpaper-polaroid': { topPx: 71, rightPx: 83, leftPx: 0, bottomPx: 153, fitMode: 'cover' },
+  'nimbotpaper-polaroid': { topPx: 35, rightPx: 83, leftPx: 0, bottomPx: 189, fitMode: 'cover' },
 };
 
 /**

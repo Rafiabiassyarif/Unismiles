@@ -29,7 +29,7 @@
  * proses utama sebagai CommonJS.
  */
 const path = require('node:path');
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, screen } = require('electron');
 
 /** UI produksi. Bisa ditimpa untuk uji lokal lewat PHOTOBOOTH_URL. */
 const URL_UI = process.env.PHOTOBOOTH_URL || 'https://photobooth.uniinside.net';
@@ -134,10 +134,14 @@ function daftarkanIpc() {
 }
 
 function buatJendela() {
+  // Jendela biasa, bukan kiosk: operator harus bisa menutupnya.
+  // ponytail: kiosk:true dihapus — mode kiosk dihidupkan lagi kalau mesin
+  // sudah dikunci (mis. lewat Ctrl+Cmd+F atau setelan macOS).
+  const { width: layarW, height: layarH } = screen.getPrimaryDisplay().workAreaSize;
   jendela = new BrowserWindow({
-    width: 1080,
-    height: 1920,
-    kiosk: true,
+    width: Math.min(1080, layarW),
+    height: Math.min(1920, layarH),
+    center: true,
     backgroundColor: '#000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
