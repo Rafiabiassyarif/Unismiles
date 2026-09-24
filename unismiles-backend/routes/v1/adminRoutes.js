@@ -45,6 +45,15 @@ const { PaymentVerificationController } = require('../../controllers/paymentVeri
 
 router.get('/sessions', sessionController.getAdminSessions);
 router.get('/payment-verifications/attempts', PaymentVerificationController.getAttempts);
+/**
+ * Diagnostik vision service (OCR bukti bayar).
+ *
+ * Tanpa ini, "apakah scan pembayaran jalan?" hanya bisa dijawab dengan menunggu
+ * ada pembeli yang gagal dipindai — dan jawabannya datang terlambat. Endpoint
+ * ini mengukur jalurnya langsung, memakai daftar alamat yang sama dengan yang
+ * dipakai pemrosesan sungguhan.
+ */
+router.get('/payment-verifications/vision-health', PaymentVerificationController.visionHealth);
 router.get('/payment-verifications/attempts/:attempt_id/evidence', PaymentVerificationController.getEvidenceFile);
 router.post('/payment-verifications/attempts/:attempt_id/override', PaymentVerificationController.overridePayment);
 

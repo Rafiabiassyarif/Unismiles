@@ -527,6 +527,45 @@ const PaymentVerificationController = {
     } finally {
       conn.release();
     }
+  },
+
+  /**
+   * Diagnostik: apakah vision service (OCR bukti bayar) bisa dihubungi?
+   *
+   * Dijawab dengan PENGUKURAN, bukan dugaan: probe memakai daftar alamat yang
+   * sama persis dengan yang dipakai pemrosesan sungguhan, termasuk urutan
+   * portnya. Kalau endpoint ini bilang ok, jalur OCR memang hidup.
+   *
+   * Yang dilaporkan juga SEMUA alamat yang dicoba saat gagal — tanpa itu,
+   * pesannya cuma "fetch failed" dan tidak memberi tahu apa pun.
+   */
+  async visionHealth(req, res) {
+    try {
+      const hasil = await VisionClient.probe();
+      return res.status(hasil.ok ? 200 : 503).json({
+        success: hasil.ok,
+        data: {
+          ok: hasil.ok,
+          url: hasil.url,
+          status_http: hasil.status,
+          jalur_dipakai: hasil.jalur || null,
+          // Alamat kandidat lain yang dicoba sebelum berhasil, atau semuanya
+          // kalau gagal.
+          dicoba: hasil.dicoba,
+          // Dari mana daftar alamatnya berasal — supaya jelas apakah .env
+          // dipakai atau deteksi port otomatis.
+          sumber_konfigurasi: process.env.PAYMENT_VISION_SERVICE_URL
+            || process.env.VISION_SERVICE_URL
+            || process.env.PAYMENT_VISION_URL
+            || 'deteksi otomatis port',
+        },
+        message: hasil.ok
+          ? `Vision service terjangkau di ${hasil.url}`
+          : 'Vision service TIDAK terjangkau. Pemindaian bukti bayar akan gagal sampai ini diperbaiki.',
+      });
+    } catch (error) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
   }
 };
 

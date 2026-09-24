@@ -124,6 +124,44 @@ const VisionClient = {
   },
 
   /**
+   * Cek cepat apakah vision service bisa dihubungi — TANPA mengirim gambar.
+   *
+   * Kenapa perlu: `processFrames` hanya bisa membuktikan jalurnya hidup kalau
+   * ada bukti bayar yang benar-benar dipindai. Kalau tidak ada, satu-satunya
+   * cara tahu jalurnya sehat adalah menunggu ada pembeli yang gagal — dan itu
+   * terlambat. Probe ini memakai daftar alamat yang SAMA dengan pencetakan, jadi
+   * kalau ia lolos, jalur yang dipakai OCR juga hidup.
+   *
+   * Sengaja pendek waktunya: ini pemeriksaan, bukan pemrosesan.
+   */
+  async probe(timeoutMs = 4000) {
+    const candidates = preferredUrl
+      ? [preferredUrl, ...resolveVisionCandidates().filter((u) => u !== preferredUrl)]
+      : resolveVisionCandidates();
+
+    const dicoba = [];
+    for (const baseUrl of candidates) {
+      for (const jalur of ['/health', '/']) {
+        try {
+          const res = await fetch(`${baseUrl}${jalur}`, {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${visionServiceToken}` },
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          // Jawaban apa pun (termasuk 401/404) berarti ADA yang menjawab di
+          // alamat itu — service hidup. Yang dicari di sini alamatnya, bukan
+          // status endpoint-nya.
+          preferredUrl = baseUrl;
+          return { ok: true, url: baseUrl, jalur, status: res.status, dicoba };
+        } catch (error) {
+          dicoba.push(`${baseUrl}${jalur} (${error.message})`);
+        }
+      }
+    }
+    return { ok: false, url: null, status: null, dicoba };
+  },
+
+  /**
    * Kirim frame bukti bayar ke vision service untuk dibaca.
    *
    * Mencoba tiap alamat kandidat sampai ada yang menjawab. Hanya kalau SEMUA
