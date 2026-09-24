@@ -30,12 +30,36 @@ const MODEL_BAWAAN = 'B1';
  * @param {number} [opsi.copies]
  * @param {number} [opsi.density]
  * @param {string} [opsi.model]
+ * @param {number} [opsi.labelType] Jenis kertas (LabelType). Dibiarkan kosong =
+ *   dibaca otomatis dari printer; itu yang benar, karena bawaan pustaka
+ *   (WithGaps) tidak cocok untuk kertas tanpa celah dan membuat satu label
+ *   kosong ikut keluar di setiap cetakan.
  * @param {Function} [opsi.onProgress]
  */
-async function cetakHalaman({ klien, halaman, copies = 1, density, model, onProgress }) {
+async function cetakHalaman({ klien, halaman, copies = 1, density, model, paperEnd, labelType, onProgress }) {
   if (!klien || !klien.isConnected()) throw new Error('Printer belum tersambung.');
 
   const jumlah = Math.max(1, Number(copies) || 1);
+
+  // JENIS KERTAS HARUS MENGIKUTI PRINTER, BUKAN BAWAAN PUSTAKA.
+  //
+  // Bawaan pustaka adalah WithGaps (kertas bergap). Printer ini melaporkan
+  // jenisnya "Black" (tanda hitam) dengan celah 0 mm. Mengirim WithGaps membuat
+  // printer MENCARI celah antar label yang tidak ada, lalu memajukan kertas terus
+  // setelah halaman selesai — akibatnya satu label kosong ikut keluar di setiap
+  // cetakan. Jenis yang benar dibaca dari printernya sendiri; kalau pembacaan
+  // gagal, biarkan pustaka memakai bawaannya.
+  let jenisKertas = labelType;
+  if (jenisKertas === undefined && typeof klien.protocol?.getPaperInfo === 'function') {
+    try {
+      const info = await klien.protocol.getPaperInfo();
+      const nilai = Number(info?.paperType);
+      if (info?.valid === true && Number.isInteger(nilai) && nilai > 0) jenisKertas = nilai;
+    } catch {
+      // Diamkan: printer yang tidak melaporkan info kertas tetap bisa mencetak
+      // dengan bawaan pustaka. Kegagalan cetak harus datang dari mencetak.
+    }
+  }
 
   // Heartbeat dimatikan selama mencetak: paketnya bisa mengganggu aliran data
   // gambar. Contoh resmi NiimBlueLib melakukan hal yang sama.
@@ -49,6 +73,9 @@ async function cetakHalaman({ klien, halaman, copies = 1, density, model, onProg
   const task = klien.protocol.newPrintTask(model || MODEL_BAWAAN, {
     totalPages: jumlah,
     ...(density ? { density } : {}),
+    // Jenis kertas dari printer (lihat blok di atas). Tanpa ini, cetak memakai
+    // bawaan pustaka dan label kosong ikut keluar.
+    ...(jenisKertas === undefined ? {} : { labelType: jenisKertas }),
     statusPollIntervalMs: 100,
     statusTimeoutMs: 15000,
     pageTimeoutMs: 60000,
@@ -61,8 +88,21 @@ async function cetakHalaman({ klien, halaman, copies = 1, density, model, onProg
     onProgress?.(halamanKe, jumlah);
   }
   await task.waitForFinished();
-  // printEnd memajukan kertas sampai label keluar dari kepala cetak. B1 Pro
-  // tidak punya pemotong, jadi ini langkah terakhir yang tersedia.
+
+  // printEnd MEMINDAHKAN kertas lagi — dan pada kertas label bergap itu berlebih.
+  //
+  // Pustakanya sendiri menyebut perilaku B1: "when last page (totalPages)
+  // printed paper moved further". Karena cetakan kita selalu 1 halaman, halaman
+  // itu SELALU halaman terakhir, jadi kertas sudah dimajukan oleh pageEnd.
+  // Memanggil printEnd setelahnya membuat SATU perintah cetak mengeluarkan DUA
+  // frame label — persis keluhan di lapangan.
+  //
+  // Perilakunya sekarang mengikuti opsi yang sama dengan jalur Web Bluetooth:
+  //   'advance-and-separate' -> printEnd dipanggil (perilaku lama)
+  //   'stop-at-printhead'    -> tidak dipanggil, kertas berhenti di kepala cetak
+  if (paperEnd === 'stop-at-printhead') {
+    return { ok: true, pages: jumlah, paperEnd: 'stop-at-printhead' };
+  }
   await task.printEnd();
 
   return { ok: true, pages: jumlah };

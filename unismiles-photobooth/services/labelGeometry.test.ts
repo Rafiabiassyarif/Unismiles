@@ -1,17 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { labelSize, mmToPx, labelMmFromPaperSize, drawRect, printBox, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+import { labelSize, mmToPx, labelMmFromPaperSize, labelFrameBox, drawRect, printBox, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
 
 // --- Kalibrasi: menggeser KOTAK, tidak mengubah ukuran ---
 //
-// Rentangnya terbatas secara fisik: area 46 mm memakai 543 px dari 576 px yang
-// bisa dicetak, jadi hanya ada 33 px (2,79 mm) ruang geser mendatar. Vertical
-// longgar. Itu batas printer, bukan batasan perangkat lunak.
+// Rentangnya terbatas secara fisik: lebar 47 mm memakai 555 px dari 567 px yang
+// bisa dicetak B1 Pro (metadata perangkat), jadi masih ada 12 px (1 mm) ruang ke
+// kanan. Di X 0, kotak memakai lebar cetak dari tepi kiri.
 
-const POL = { W: 638, H: 791, top: 71, right: 78, left: 17, bottom: 177 };
+// Margin label Polaroid diambil dari PRESET YANG DIPAKAI PRODUKSI, bukan disalin
+// ulang ke sini: salinan di dalam test hanya akan menguji salinannya sendiri,
+// dan perubahan angka di labelGeometry.ts tidak akan pernah tertangkap.
+const presetPolaroid = labelFrameBox('nimbotpaper-polaroid');
+
+const POL = {
+  W: 638,
+  H: 791,
+  top: presetPolaroid?.topPx ?? 0,
+  right: presetPolaroid?.rightPx ?? 0,
+  left: presetPolaroid?.leftPx ?? 0,
+  bottom: presetPolaroid?.bottomPx ?? 0,
+};
+
+// Margin KHUSUS TEST KALIBRASI: menyisakan ruang di kedua sisi supaya offset
+// positif dan negatif dua-duanya bisa diuji. Kalau test kalibrasi memakai preset
+// produksi, ia akan gagal setiap kali preset mentok di tepi (mis. X = 0) —
+// padahal yang rusak bukan kalibrasinya, hanya tidak ada ruang untuk bergeser.
+// Angka preset yang sebenarnya diuji di test 'preset label ...' di bawah.
+const RUANG = { ...POL, top: 200, right: 200, left: 200, bottom: 200 };
 
 test('kalibrasi menggeser kotak tanpa mengubah ukuran area', () => {
-  const { W, H, top, right, left, bottom } = POL;
+  const { W, H, top, right, left, bottom } = RUANG;
   const nol = drawRect('cover', W, H, 628, 782, 0, 0, top, right, left, bottom);
   const kanan = drawRect('cover', W, H, 628, 782, 0, 10, top, right, left, bottom);
   const kiri = drawRect('cover', W, H, 628, 782, 0, -10, top, right, left, bottom);
@@ -28,7 +47,7 @@ test('kalibrasi menggeser kotak tanpa mengubah ukuran area', () => {
 });
 
 test('kalibrasi dua sumbu berdiri sendiri-sendiri', () => {
-  const { W, H, top, right, left, bottom } = POL;
+  const { W, H, top, right, left, bottom } = RUANG;
   const a = drawRect('cover', W, H, 628, 782, 20, 10, top, right, left, bottom);
   const b = drawRect('cover', W, H, 628, 782, -30, -10, top, right, left, bottom);
   assert.strictEqual(a.clipX - b.clipX, 20, 'selisih mendatar = 10 - (-10)');
@@ -36,7 +55,7 @@ test('kalibrasi dua sumbu berdiri sendiri-sendiri', () => {
 });
 
 test('kalibrasi juga berlaku pada mode stretch', () => {
-  const { W, H, top, right, left, bottom } = POL;
+  const { W, H, top, right, left, bottom } = RUANG;
   const nol = drawRect('stretch', W, H, 628, 782, 0, 0, top, right, left, bottom);
   const geser = drawRect('stretch', W, H, 628, 782, 7, -13, top, right, left, bottom);
   assert.strictEqual(geser.clipX - nol.clipX, -13, 'stretch: kotak bergeser mendatar');
@@ -198,20 +217,49 @@ test('ukuran slot dibulatkan ke piksel utuh', () => {
 // --- Kotak cetak dari margin empat sisi (template label Polaroid) ---
 //
 // Label NIIMBOT Polaroid 54 x 67 mm sudah punya bingkai tercetak; hanya kotak di
-// tengahnya boleh diisi. Marginnya: atas 6 mm, kanan 3 mm, kiri 3 mm, bawah 15 mm.
-// Angka bawah 15, bukan 14, supaya kotaknya persis 46 mm — 6 + 46 + 14 = 66,
-// sedangkan kertasnya 67 mm, jadi ada 1 mm yang harus jatuh ke suatu sisi.
-const POLAROID = { W: 638, H: 791, top: 71, right: 78, left: 17, bottom: 177 };
+// tengahnya boleh diisi. Angkanya sama dengan POL di atas — keduanya membaca
+// preset produksi, jadi tidak ada salinan angka yang bisa menyimpang.
+//
+// Kenapa kotak 47 x 48 mm di X 0 / Y 6 mm: ukuran lebar sudah pas; Y diturunkan
+// sampai 6 mm supaya tepi ATAS foto berhenti di garis putih bingkai (tidak
+// melewatinya). Tidak persegi (47:48) — permintaan eksplisit.
+const POLAROID = POL;
+
+test('preset label mengisi kotak 47 x 48 mm di X 0 / Y 6 mm', () => {
+  // B1_PRO_PRINTHEAD_PX WAJIB ikut: jalur produksi (prepareCanvas) selalu
+  // meneruskan batas kepala cetak, dan tanpa argumen itu printBox memakai lebar
+  // kanvas sebagai batas — test jadi menguji konfigurasi yang tidak pernah dipakai.
+  const b = printBox(POLAROID.W, POLAROID.H, POLAROID.top, POLAROID.right, POLAROID.left, POLAROID.bottom, B1_PRO_PRINTHEAD_PX);
+  assert.strictEqual(b.x, 0, 'kiri 0 px: foto menempel tepi kiri kanvas');
+  assert.strictEqual(b.y, 71, 'atas 71 px (6 mm)');
+  assert.strictEqual(b.w, 555, 'lebar kotak 47 mm');
+  assert.strictEqual(b.h, 567, 'tinggi kotak 48 mm (bawah ditambah 1 mm)');
+  assert.strictEqual(mmToPx(47), 555, '47 mm = 555 px pada 300 dpi');
+  assert.strictEqual(mmToPx(48), 567, '48 mm = 567 px pada 300 dpi');
+  assert.strictEqual(mmToPx(6), 71, '6 mm = 71 px pada 300 dpi');
+  // Batas kepala cetak: kolom 576 ke atas TIDAK keluar, dan itu tidak berpesan
+  // error apa pun — hanya terlihat sebagai tepi gambar yang hilang.
+  assert.ok(b.x + b.w <= B1_PRO_PRINTHEAD_PX,
+    `kotak harus muat di kepala cetak: ${b.x + b.w} <= ${B1_PRO_PRINTHEAD_PX}`);
+});
+
+test('preset label memakai mode cover supaya bingkai terisi penuh', () => {
+  assert.strictEqual(presetPolaroid?.fitMode, 'cover');
+  // Kertas generik tidak punya bingkai: tidak boleh dapat kotak preset.
+  assert.strictEqual(labelFrameBox('CUSTOM 40X30 MM'), null);
+  assert.strictEqual(labelFrameBox(null), null);
+});
 
 test('printBox menempatkan area cetak sesuai margin empat sisi', () => {
-  const b = printBox(POLAROID.W, POLAROID.H, POLAROID.top, POLAROID.right, POLAROID.left, POLAROID.bottom);
-  assert.strictEqual(b.x, 17, 'kiri 17 px');
-  assert.strictEqual(b.y, 71, 'atas 71 px');
-  // Area = 638 - 17 - 78 = 543 px, dan 791 - 71 - 177 = 543 px.
-  // 543 px pada 300 dpi = 45,97 mm -> target 46 x 46 mm terpenuhi (selisih 0,03 mm).
-  assert.strictEqual(b.w, 543, 'lebar area 46 mm');
-  assert.strictEqual(b.h, 543, 'tinggi area 46 mm');
-  assert.strictEqual(mmToPx(46), 543, '46 mm = 543 px pada 300 dpi');
+  // B1_PRO_PRINTHEAD_PX WAJIB ikut: jalur produksi (prepareCanvas) selalu
+  // meneruskan batas kepala cetak, dan tanpa argumen itu printBox memakai lebar
+  // kanvas sebagai batas — test jadi menguji konfigurasi yang tidak pernah dipakai.
+  const b = printBox(POLAROID.W, POLAROID.H, POLAROID.top, POLAROID.right, POLAROID.left, POLAROID.bottom, B1_PRO_PRINTHEAD_PX);
+  assert.strictEqual(b.x, 0, 'kiri 0 px (menempel tepi kanvas)');
+  assert.strictEqual(b.y, 71, 'atas 71 px (6 mm)');
+  // Area = 638 - 0 - 83 = 555 px (47 mm), dan 791 - 71 - 153 = 567 px (48 mm).
+  assert.strictEqual(b.w, 555, 'lebar area 47 mm');
+  assert.strictEqual(b.h, 567, 'tinggi area 48 mm');
 });
 
 test('kotak cetak tidak pernah negatif walau margin melebihi kanvas', () => {
@@ -277,9 +325,9 @@ test('foto tidak pernah keluar dari kotak walau offset besar', () => {
     assert.ok(r.dy <= r.clipY + 1, `x=${ox} y=${oy}: tepi atas foto tidak keluar kotak`);
     assert.ok(r.dx + r.dw >= r.clipX + r.clipW - 1, `x=${ox} y=${oy}: sisi kanan kotak terisi`);
     assert.ok(r.dy + r.dh >= r.clipY + r.clipH - 1, `x=${ox} y=${oy}: sisi bawah kotak terisi`);
-    // Ukuran kotak selalu sama: 46 x 46 mm.
-    assert.strictEqual(r.clipW, 543, `x=${ox} y=${oy}: lebar area cetak tetap 46 mm`);
-    assert.strictEqual(r.clipH, 543, `x=${ox} y=${oy}: tinggi area cetak tetap 46 mm`);
+    // Ukuran kotak selalu sama: 47 x 48 mm.
+    assert.strictEqual(r.clipW, 555, `x=${ox} y=${oy}: lebar area cetak tetap 47 mm`);
+    assert.strictEqual(r.clipH, 567, `x=${ox} y=${oy}: tinggi area cetak tetap 48 mm`);
   }
 });
 

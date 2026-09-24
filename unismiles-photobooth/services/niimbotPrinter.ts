@@ -55,6 +55,13 @@ import {
 export type PaperEndMode = 'advance-and-separate' | 'stop-at-printhead';
 
 /**
+ * Jenis kertas seperti dilaporkan printer (label, bergap, tanpa celah, tanda
+ * hitam). DITURUNKAN dari tipe pustaka, bukan didefinisikan ulang: enum yang
+ * disalin bisa menyimpang dari yang sebenarnya dikirim ke printer.
+ */
+type JenisKertas = Awaited<ReturnType<NiimbotAbstractClient['protocol']['getPaperInfo']>>['paperType'];
+
+/**
  * Keadaan izin Bluetooth untuk ALAMAT INI.
  *
  * Izin Web Bluetooth disimpan per origin, bukan per situs atau per pengguna.
@@ -131,7 +138,7 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
 
 /** Geometri label: dihitung di `labelGeometry.ts` supaya bisa diuji tanpa hardware. */
 import { drawRect } from './labelGeometry.ts';
-export { labelSize, labelMmFromPaperSize, drawRect, printBox, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
+export { labelSize, labelMmFromPaperSize, labelFrameBox, drawRect, printBox, firstSlot, DEFAULT_LABEL_MM, B1_PRO_PRINTHEAD_PX, LABEL_DPI } from './labelGeometry.ts';
 export type { LabelSize } from './labelGeometry.ts';
 
 export type PrintStatus =
@@ -890,7 +897,15 @@ export class NiimbotPrinter {
     if (native) {
       const canvas = await this.prepareCanvas(image, size, adj);
       const encoded = ImageEncoder.encodeCanvas(canvas, PageColorType.SingleColor, 'top');
-      await native.cetak(encoded, { density: adj.density, copies, model: this.printTaskName });
+      await native.cetak(encoded, {
+        density: adj.density,
+        copies,
+        model: this.printTaskName,
+        // Diteruskan supaya jalur desktop punya perilaku kertas yang SAMA dengan
+        // jalur browser. Tanpa ini, jalur desktop selalu memanggil printEnd dan
+        // satu cetakan mengeluarkan dua frame label.
+        paperEnd: adj.paperEnd,
+      });
       onProgress?.(copies, copies);
       return;
     }
@@ -914,9 +929,26 @@ export class NiimbotPrinter {
     // gambar. Contoh resmi NiimBlueLib melakukan hal yang sama.
     this.client.stopHeartbeat();
 
+    // JENIS KERTAS MENGIKUTI PRINTER, BUKAN BAWAAN PUSTAKA.
+    //
+    // Bawaan pustaka adalah WithGaps (kertas bergap). Printer di lapangan
+    // melaporkan jenisnya "Black" (tanda hitam) dengan celah 0 mm; mengirim
+    // WithGaps membuat printer MENCARI celah antar label yang tidak ada, lalu
+    // memajukan kertas terus setelah halaman — satu label kosong ikut keluar di
+    // setiap cetak. Sumber kebenarannya printernya sendiri; kalau pembacaan
+    // gagal, biarkan pustaka memakai bawaannya.
+    let jenisKertas: JenisKertas;
+    try {
+      const info = await this.client.protocol.getPaperInfo();
+      if (info?.valid && info.paperType) jenisKertas = info.paperType;
+    } catch {
+      // Diamkan: printer yang tidak melaporkan info kertas tetap bisa mencetak.
+    }
+
     const task = this.client.protocol.newPrintTask(this.printTaskName, {
       totalPages: copies,
       density: adj.density,
+      ...(jenisKertas === undefined ? {} : { labelType: jenisKertas }),
       statusPollIntervalMs: 100,
       statusTimeoutMs: 15_000,
       // BATAS WAKTU KIRIM HALAMAN — diukur, bukan ditebak.

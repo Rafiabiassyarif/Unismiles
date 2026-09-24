@@ -83,8 +83,15 @@ test('sambung-ulang tidak menyambung dua kali saat sudah tersambung', () => {
 test('halaman ter-encode dikirim ke transport native, bukan lewat Web Bluetooth', () => {
   // Yang diangkut adalah hasil ImageEncoder — jadi kalibrasi tetap satu sumber
   // di photobooth, dan hasil cetak identik dengan jalur browser.
-  assert.match(SUMBER, /await native\.cetak\(encoded, \{ density: adj\.density, copies, model: this\.printTaskName \}\);/,
+  //
+  // Yang diperiksa KUNCI opsinya, bukan satu baris persis: penambahan opsi baru
+  // (mis. paperEnd) pernah membuat test ini gagal padahal perilakunya benar —
+  // test yang mengunci format baris menguji formatnya sendiri, bukan kontrak.
+  assert.match(SUMBER, /await native\.cetak\(encoded, \{/,
     'jalur cetak desktop harus mengirim halaman yang sudah di-encode');
+  for (const opsi of ['density: adj.density', 'copies', 'model: this.printTaskName']) {
+    assert.ok(SUMBER.includes(opsi), `opsi ${opsi} harus ikut dikirim ke jalur native`);
+  }
   const posisiNative = SUMBER.indexOf('await native.cetak(encoded');
   const posisiWeb = SUMBER.indexOf('this.client.stopHeartbeat();', posisiNative);
   assert.ok(posisiNative > 0 && posisiWeb > posisiNative,

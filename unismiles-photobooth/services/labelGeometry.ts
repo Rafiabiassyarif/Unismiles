@@ -122,6 +122,55 @@ export function labelMmFromPaperSize(paperSize: string | null | undefined): { wi
 }
 
 
+/**
+ * KOTAK CETAK untuk kertas yang BINGKAINYA sudah tercetak.
+ *
+ * Kertas label seperti Polaroid 54 x 67 mm bukan kertas kosong: bingkai film
+ * strip-nya sudah tercetak, dan hanya ada satu bidang putih di tengahnya yang
+ * boleh diisi tinta. Kalau foto diisi ke seluruh kertas, gambar menimpa bingkai
+ * dan nomor frame — hasilnya terlihat "tidak sesuai" walau printernya benar.
+ *
+ * Angka di bawah = ukuran kotak putih label yang dipakai (47 x 48 mm pada
+ * X 0 / Y 6 mm), dalam piksel pada 300 dpi:
+ *
+ *   kiri 0 px (0,0 mm) | kanan 83 px (7,0 mm)      -> 54 - 0 - 7 = 47 mm
+ *   atas 71 px (6,0 mm) | bawah 153 px (13,0 mm)   -> 67 - 6 - 13 = 48 mm
+ *   kotak 555 x 567 px = 46,99 x 48,01 mm
+ *   jumlah: 0 + 555 + 83 = 638 px (54 mm), 71 + 567 + 153 = 791 px (67 mm)
+ *
+ * Riwayat penyesuaian di kertas: 46x46 -> 47x47 -> 47x48 (ukuran), lalu Y
+ * diturunkan sampai 6 mm supaya tepi ATAS foto tidak melewati garis putih bingkai
+ * (Y 3 -> 4 -> 3 -> 6 mm). Kotaknya TIDAK persegi (47:48) — itu permintaan
+ * eksplisit. Mode cover menjaga foto tidak di-stretch:
+ * kelebihannya dipotong.
+ *
+ * Diukur dari kertas, bukan dari tabel model.
+ *
+ * Kalau masih bergeser, yang dikoreksi adalah offset X/Y di Pengaturan Printer —
+ * BUKAN angka di sini, supaya ukuran kotaknya tetap 46 x 46 mm.
+ *
+ * `fitMode: 'cover'` bukan pilihan gaya: bingkai yang sudah tercetak menuntut
+ * kotaknya TERISI PENUH. Mode 'fit' menyisakan jalur putih di dalam bingkai saat
+ * rasio foto berbeda, dan itu terlihat sebagai cetakan yang belum pas.
+ */
+export const LABEL_FRAME_BOX_PX: Record<string, {
+  topPx: number;
+  rightPx: number;
+  leftPx: number;
+  bottomPx: number;
+  fitMode: 'cover' | 'fit' | 'stretch';
+}> = {
+  'nimbotpaper-polaroid': { topPx: 71, rightPx: 83, leftPx: 0, bottomPx: 153, fitMode: 'cover' },
+};
+
+/**
+ * Kotak cetak untuk nama preset kertas, atau null kalau kertasnya kosong/generik
+ * (kertas kosong tidak punya bingkai, jadi seluruh area cetak boleh dipakai).
+ */
+export function labelFrameBox(paperSize: string | null | undefined) {
+  return LABEL_FRAME_BOX_PX[String(paperSize || '').trim().toLowerCase()] || null;
+}
+
 export interface DrawRect {
   dx: number;
   dy: number;

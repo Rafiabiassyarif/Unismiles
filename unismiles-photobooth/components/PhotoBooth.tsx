@@ -8,7 +8,7 @@ import { FrameLayout, FrameStyle, PhotoFilter, GridLayoutId, VirtualBackground, 
 import { getStoredFilters, getLayoutConfig, getStoredBackgrounds, getAppConfig } from '../services/storageService';
 import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
-import { NiimbotPrinter, PRINTER_BELUM_DIPASANGKAN, labelSize as computeLabelSize, labelMmFromPaperSize, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
+import { NiimbotPrinter, PRINTER_BELUM_DIPASANGKAN, labelSize as computeLabelSize, labelMmFromPaperSize, labelFrameBox, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
 import { paintCover as paintCoverInto, paintPrintImage } from '../services/printImage';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
@@ -934,16 +934,59 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
       const mm = labelMmFromPaperSize(kioskPaperSize);
       const size = computeLabelSize(mm.widthMm, mm.heightMm);
+
+      // KERTAS BERBINGKAI (mis. Polaroid 54 x 67 mm): kotak cetaknya diambil dari
+      // preset label, bukan dibiarkan nol.
+      //
+      // Kenapa di sini, bukan di halaman Admin: margin kotak cetak tidak punya
+      // kolom pengaturan di halaman Pengaturan Printer, jadi backend selalu
+      // mengirim 0 — dan margin 0 berarti "pakai SELURUH area cetak". Akibatnya
+      // foto menimpa bingkai yang sudah tercetak, dan di kertas terlihat sebagai
+      // cetakan yang tidak sesuai walau printernya bekerja benar.
+      //
+      // Kalau kiosk SUDAH punya margin sendiri (ada yang bukan 0), nilai itu yang
+      // menang: kalibrasi di lapangan tidak boleh ditimpa preset.
+      const frameBox = labelFrameBox(kioskPaperSize);
+      const marginKiosk = [printMarginTopPx, printMarginRightPx, printMarginLeftPx, printMarginBottomPx]
+        .some(v => Number(v) > 0);
+      const margin = marginKiosk
+        ? {
+            topPx: Number(printMarginTopPx) || 0,
+            rightPx: Number(printMarginRightPx) || 0,
+            leftPx: Number(printMarginLeftPx) || 0,
+            bottomPx: Number(printMarginBottomPx) || 0,
+          }
+        : {
+            topPx: frameBox?.topPx ?? 0,
+            rightPx: frameBox?.rightPx ?? 0,
+            leftPx: frameBox?.leftPx ?? 0,
+            bottomPx: frameBox?.bottomPx ?? 0,
+          };
+
       const adjustments: PrintAdjustments = {
         ...DEFAULT_ADJUSTMENTS,
         ...photoAdjust,
+        // Bingkai yang sudah tercetak menuntut kotaknya TERISI PENUH: mode 'fit'
+        // menyisakan jalur putih di dalam bingkai begitu rasio foto berbeda.
+        // 'stretch' tetap dihormati karena itu permintaan eksplisit.
+        fitMode: !marginKiosk && frameBox && photoAdjust.fitMode === 'fit'
+          ? frameBox.fitMode
+          : photoAdjust.fitMode,
+        // KERTAS LABEL BERGAP: jangan majukan kertas DUA kali.
+        //
+        // Dengan satu halaman, pageEnd sudah memajukan kertas karena itu halaman
+        // terakhir (perilaku B1 di pustakanya). Memanggil printEnd sesudahnya
+        // membuat satu perintah cetak mengeluarkan dua frame label. Kertas kosong
+        // (tanpa bingkai) tidak punya celah antar-label seperti ini, jadi hanya
+        // label preset yang memakai mode berhenti-di-kepala-cetak.
+        paperEnd: frameBox ? 'stop-at-printhead' : DEFAULT_ADJUSTMENTS.paperEnd,
         density: Number(thermalDensity) || DEFAULT_ADJUSTMENTS.density,
         offsetYPx: Number(thermalOffsetYPx) || 0,
         offsetXPx: Number(thermalOffsetXPx) || 0,
-        marginTopPx: Number(printMarginTopPx) || 0,
-        marginRightPx: Number(printMarginRightPx) || 0,
-        marginLeftPx: Number(printMarginLeftPx) || 0,
-        marginBottomPx: Number(printMarginBottomPx) || 0,
+        marginTopPx: margin.topPx,
+        marginRightPx: margin.rightPx,
+        marginLeftPx: margin.leftPx,
+        marginBottomPx: margin.bottomPx,
       };
 
       await printer.print(image, size, 1, adjustments);
