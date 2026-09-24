@@ -3,7 +3,8 @@ import { Camera as CameraIcon, Image as ImageIcon, Info, RotateCcw, X } from 'lu
 import { cn } from '../lib/utils';
 import {
   previewPlan, renderPrintBitmap, inkSummary, findPaper, PAPER_CATALOG,
-  PRINTHEAD_PX, applyAdjust, cameraErrorMessage, frameToImage, type Margin,
+  PRINTHEAD_PX, DPI, applyAdjust, cameraErrorMessage, frameToImage,
+  effectiveSourceDpi, type Margin,
 } from '../lib/printPapers';
 
 /**
@@ -78,6 +79,13 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
   const ringkas = useMemo(() => inkSummary(plan), [plan]);
   const kertas = useMemo(() => findPaper(paperSize), [paperSize]);
   const adaPenyesuaian = brightness !== 100 || contrast !== 100 || saturation !== 100;
+
+  // Resolusi sumber terhadap 300 dpi: beda antara "kanvas 300 dpi" (selalu) dan
+  // "fotonya cukup piksel untuk 300 dpi" (belum tentu).
+  const dpiSumber = useMemo(
+    () => (foto ? effectiveSourceDpi(plan.box, foto.naturalWidth, foto.naturalHeight, fitMode) : null),
+    [foto, plan.box, fitMode],
+  );
 
   const pilihFoto = useCallback((file: File | null) => {
     if (!file) { setFoto(null); setNamaFoto(''); return; }
@@ -299,6 +307,19 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
               <p className="label">Sumber gambar</p>
               <p className="font-black mt-0.5">{namaFoto || 'pola uji'}</p>
             </div>
+            <div>
+              <p className="label">Resolusi cetak</p>
+              <p className="font-black mt-0.5 text-emerald-400">{DPI} dpi</p>
+            </div>
+            {dpiSumber && (
+              <div>
+                <p className="label">Detail foto di kotak</p>
+                <p className={cn('font-black mt-0.5', dpiSumber.upscaled ? 'text-amber-300' : 'text-emerald-400')}>
+                  {dpiSumber.x.toFixed(0)} × {dpiSumber.y.toFixed(0)} dpi
+                  {dpiSumber.upscaled ? ' — DIPERBESAR, kurang tajam' : ''}
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-3 text-[10px] font-bold">

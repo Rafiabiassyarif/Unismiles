@@ -453,6 +453,35 @@ export function applyAdjust(
   return [out[0], out[1], out[2]];
 }
 
+/**
+ * Resolusi EFEKTIF sumber gambar di dalam kotak cetak.
+ *
+ * Dua hal berbeda dan sering dicampur:
+ *   1. Kanvas selalu 300 dpi — 1 piksel cetak = 1/300 inci. Itu harga mati,
+ *      karena seluruh kalibrasi milimeter bergantung padanya.
+ *   2. Foto SUMBER belum tentu punya cukup piksel untuk 300 dpi. Kalau kurang,
+ *      hasilnya tetap 300 dpi TAPI hasil interpolasi (kabur) — dan itu tidak
+ *      terlihat dari angka kotak mana pun.
+ *
+ * Fungsi ini yang membedakan keduanya, memakai rumus `drawRect` yang sama
+ * dengan jalur cetak, jadi angkanya bukan tafsiran.
+ */
+export function effectiveSourceDpi(
+  box: Box, imgW: number, imgH: number, mode: 'fit' | 'cover' | 'stretch',
+): { x: number; y: number; min: number; upscaled: boolean; drawnW: number; drawnH: number } {
+  if (imgW <= 0 || imgH <= 0 || box.w <= 0 || box.h <= 0) {
+    return { x: 0, y: 0, min: 0, upscaled: true, drawnW: 0, drawnH: 0 };
+  }
+  const r = drawRect(mode, box, imgW, imgH);
+  // Berapa piksel SUMBER yang mewakili satu piksel cetak. > 1 berarti sumber
+  // lebih rapat dari 300 dpi (aman); < 1 berarti diperbesar (kabur).
+  const perX = imgW / Math.max(1, r.dw);
+  const perY = imgH / Math.max(1, r.dh);
+  const x = DPI * perX;
+  const y = DPI * perY;
+  return { x, y, min: Math.min(x, y), upscaled: Math.min(x, y) < DPI, drawnW: r.dw, drawnH: r.dh };
+}
+
 /** Ringkas: apa yang perlu ditampilkan di panel tentang hasil cetak. */
 export function inkSummary(plan: PreviewPlan) {
   const kanan = plan.box.x + plan.box.w;

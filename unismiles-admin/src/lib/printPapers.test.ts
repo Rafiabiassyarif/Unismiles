@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  PAPER_CATALOG, MEASURED_FRAME, PRINTHEAD_PX, DPI,
+  PAPER_CATALOG, MEASURED_FRAME, PRINTHEAD_PX, DPI, effectiveSourceDpi,
   mmToPx, pxToMm, printBox, drawRect, previewPlan, effectiveMargin,
   renderPrintBitmap, findPaper, paperMm, isFramed, inkSummary,
 } from './printPapers.ts';
@@ -172,6 +172,52 @@ test('satu halaman = satu label: kanvas setinggi satu kertas', () => {
   for (const p of PAPER_CATALOG) {
     const plan = previewPlan(p.value, MEASURED_FRAME);
     assert.strictEqual(plan.canvasH, mmToPx(p.heightMm), `${p.label}: kanvas = satu label`);
+  }
+});
+
+// --- 300 dpi: kanvas selalu, sumber belum tentu ---
+//
+// Dua hal yang sering dicampur. Kanvas 300 dpi itu harga mati (kalibrasi mm
+// bergantung padanya). Foto SUNGGUHAN belum tentu punya cukup piksel, dan kalau
+// kurang hasilnya tetap "300 dpi" tapi hasil interpolasi — kabur, tanpa pesan
+// error. Fungsi ini yang membedakannya.
+
+test('sumber yang cukup piksel dilaporkan >= 300 dpi, tidak diperbesar', () => {
+  const box = previewPlan('nimbotpaper-polaroid', MEASURED_FRAME).box;
+  // Slot 1x1 di produksi: 628 x 782 px untuk kotak 555 x 567.
+  const d = effectiveSourceDpi(box, 628, 782, 'cover');
+  assert.strictEqual(d.upscaled, false, '628x782 cukup untuk kotak 555x567');
+  assert.ok(d.min >= DPI, `dpi efektif ${d.min.toFixed(0)} harus >= ${DPI}`);
+  // Angkanya harus masuk akal: sekitar 338 dpi untuk pasangan ini.
+  assert.ok(d.min > 320 && d.min < 360, `diharapkan ~338 dpi, dapat ${d.min.toFixed(0)}`);
+});
+
+test('sumber yang kurang piksel DITANDAI, bukan dibiarkan tampak normal', () => {
+  const box = previewPlan('nimbotpaper-polaroid', MEASURED_FRAME).box;
+  // Foto kecil: pasti diperbesar untuk memenuhi kotak.
+  const d = effectiveSourceDpi(box, 200, 250, 'cover');
+  assert.strictEqual(d.upscaled, true, '200x250 TIDAK cukup untuk kotak 555x567 — harus ditandai');
+  assert.ok(d.min < DPI);
+  // Foto 300 dpi PAS: 555 px untuk kotak selebar 555 px.
+  const pas = effectiveSourceDpi(box, 555, 567, 'cover');
+  assert.ok(Math.abs(pas.min - DPI) < 3, `pas 300 dpi: dapat ${pas.min.toFixed(0)}`);
+});
+
+test('ukuran sumber 0 tidak pernah menghasilkan angka palsu', () => {
+  const box = previewPlan('nimbotpaper-polaroid', MEASURED_FRAME).box;
+  for (const [w, h] of [[0, 100], [100, 0], [0, 0]] as [number, number][]) {
+    const d = effectiveSourceDpi(box, w, h, 'cover');
+    assert.ok(Number.isFinite(d.min) && d.min >= 0, 'angka harus terhingga');
+    assert.strictEqual(d.upscaled, true, 'tanpa gambar, tidak boleh mengaku siap 300 dpi');
+  }
+});
+
+test('dpi kanvas tidak bergantung pada ukuran foto', () => {
+  // Kanvas selalu 300 dpi: 54x67 mm harus 638x791 px apa pun fotonya.
+  for (const p of PAPER_CATALOG) {
+    const plan = previewPlan(p.value, MEASURED_FRAME);
+    assert.strictEqual(plan.canvasW, Math.round((p.widthMm / 25.4) * DPI), `${p.label}: lebar 300 dpi`);
+    assert.strictEqual(plan.canvasH, Math.round((p.heightMm / 25.4) * DPI), `${p.label}: tinggi 300 dpi`);
   }
 });
 
