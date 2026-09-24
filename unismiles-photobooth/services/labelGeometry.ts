@@ -133,13 +133,13 @@ export function labelMmFromPaperSize(paperSize: string | null | undefined): { wi
  * Angka di bawah = kotak putih label yang dipakai, dalam piksel pada 300 dpi:
  *
  *   kiri 0 px (0,00 mm) | kanan 83 px (7,03 mm)   -> 54 - 0 - 7,03 = 46,97 mm
- *   atas 35 px (2,96 mm) | bawah 189 px (16,00 mm) -> 67 - 2,96 - 16,00 = 48,04 mm
- *   kotak 555 x 567 px = 46,99 x 48,01 mm, di x=0 y=35
- *   jumlah: 0 + 555 + 83 = 638 px (54 mm), 35 + 567 + 189 = 791 px (67 mm)
+ *   atas 70 px (5,93 mm) | bawah 154 px (13,04 mm) -> 67 - 5,93 - 13,04 = 48,03 mm
+ *   kotak 555 x 567 px = 46,99 x 48,01 mm, di x=0 y=70
+ *   jumlah: 0 + 555 + 83 = 638 px (54 mm), 70 + 567 + 154 = 791 px (67 mm)
  *
  * Riwayat penyesuaian di kertas: 46x46 -> 47x47 -> 47x48 (ukuran), lalu blok
- * kotak dipindah naik supaya tepi ATAS foto berhenti tepat di garis putih
- * bingkai (atas 71 -> 35 px; bawah mengikuti agar tinggi kotak tetap 567).
+ * kotak digeser TURUN supaya tepi ATAS foto tidak keluar dari bingkai
+ * (atas 35 -> 70 px; bawah mengikuti agar tinggi kotak tetap 567).
  * Kotaknya TIDAK persegi (47:48) — itu permintaan eksplisit. Mode cover menjaga
  * foto tidak di-stretch: kelebihannya dipotong.
  *
@@ -161,7 +161,7 @@ export const LABEL_FRAME_BOX_PX: Record<string, {
   bottomPx: number;
   fitMode: 'cover' | 'fit' | 'stretch';
 }> = {
-  'nimbotpaper-polaroid': { topPx: 35, rightPx: 83, leftPx: 0, bottomPx: 189, fitMode: 'cover' },
+  'nimbotpaper-polaroid': { topPx: 70, rightPx: 83, leftPx: 0, bottomPx: 154, fitMode: 'cover' },
 };
 
 /**
