@@ -191,6 +191,12 @@ const controller = {
           // kertas. Persis pola kegagalan thermal_offset_x_px dulu.
           print_sharpen: config.print_sharpen,
           grayscale_algorithm: config.grayscale_algorithm,
+          // Tombol layar akhir. Wajib ada di sini: photobooth membacanya dari
+          // endpoint ini, jadi kalau lupa, operator mematikan tombol di Admin
+          // dan tombolnya tetap muncul di kiosk.
+          show_email_button: config.show_email_button,
+          show_retake_button: config.show_retake_button,
+          show_print_button: config.show_print_button,
           config_version: config.config_version,
         },
       });

@@ -107,6 +107,16 @@ type PrinterConfig = {
   print_sharpen: number;
   /** Algoritma konversi abu-abu; lihat GRAYSCALE_OPTIONS. */
   grayscale_algorithm: string;
+  /**
+   * Tombol layar akhir yang ditampilkan di kiosk.
+   *
+   * Bawaannya AKTIF = perilaku yang sudah berjalan. Mematikannya TIDAK
+   * menghapus kodenya — hanya tidak dirender — jadi menyalakannya kembali cukup
+   * dari sini, tanpa build ulang dan tanpa kehilangan fitur.
+   */
+  show_email_button: boolean;
+  show_retake_button: boolean;
+  show_print_button: boolean;
 };
 
 /** Catatan singkat tiap algoritma, diambil dari alasan yang terukur. */
@@ -149,6 +159,11 @@ const DEFAULT_CONFIG: PrinterConfig = {
   // kiosk yang sudah dikalibrasi.
   print_sharpen: 0,
   grayscale_algorithm: 'rec601',
+  // Semua tombol tampil: itu perilaku yang sudah berjalan, jadi membuka panel
+  // ini tidak mengubah apa pun sampai operator mematikannya sendiri.
+  show_email_button: true,
+  show_retake_button: true,
+  show_print_button: true,
 };
 
 function errorMessage(error: any) {
@@ -268,6 +283,9 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
         print_margin_bottom_px: config.print_margin_bottom_px,
         print_sharpen: config.print_sharpen,
         grayscale_algorithm: config.grayscale_algorithm,
+        show_email_button: config.show_email_button,
+        show_retake_button: config.show_retake_button,
+        show_print_button: config.show_print_button,
         orientation: config.orientation,
         copies_limit: config.copies_limit,
         timeout_ms: config.timeout_ms,
@@ -780,7 +798,61 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
               </span>
             </label>
           </div>
+          {/* ------------------------------------------------------------------
+            Tombol layar akhir.
+
+            Ketiganya pilihan OPERASIONAL, bukan teknis: ada kiosk yang tidak
+            boleh mengirim email, ada yang tidak ingin pembeli bisa mengulang
+            foto, ada yang ingin cetaknya hanya otomatis.
+
+            Mematikan di sini TIDAK menghapus kodenya — tombolnya hanya tidak
+            dirender. Menyalakannya kembali cukup dari halaman ini, tanpa build
+            ulang. Karena itu bawaannya semua AKTIF: itu perilaku yang sudah
+            berjalan, dan membuka panel ini tidak boleh mengubah apa pun.
+           ------------------------------------------------------------------ */}
+        <div className="border-t border-white/5 pt-5 space-y-4">
+          <div>
+            <p className="label">Tombol di layar akhir</p>
+            <p className="text-[10px] text-muted font-bold mt-1">
+              Matikan tombol yang tidak dipakai di kiosk ini. Kode tombolnya tetap ada,
+              jadi bisa dinyalakan lagi kapan saja dari sini tanpa build ulang.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {([
+              ['show_print_button', 'Tombol Cetak', 'Termasuk tombol cetak Bluetooth dan cetak ulang setelah gagal. Kalau dimatikan, cetak hanya bisa otomatis.'],
+              ['show_email_button', 'Tombol Send Email', 'Kirim foto ke email pembeli. Matikan kalau kiosk ini tidak dipakai untuk kirim email.'],
+              ['show_retake_button', 'Tombol New Photo', 'Ambil ulang foto. Matikan kalau pembeli tidak boleh mengulang sesi.'],
+            ] as const).map(([field, judul, keterangan]) => (
+              <button
+                key={field} type="button" disabled={!canEdit}
+                onClick={() => setField(field, !config[field])}
+                className={cn(
+                  'text-left p-4 rounded-2xl border transition-all disabled:opacity-50 disabled:cursor-not-allowed',
+                  config[field] ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-black/30 border-white/10',
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-black uppercase">{judul}</span>
+                  <span className={cn(
+                    'w-12 h-7 rounded-full relative inline-flex items-center transition-all shrink-0',
+                    config[field] ? 'bg-emerald-500' : 'bg-white/10',
+                  )}>
+                    <span className={cn(
+                      'inline-block w-5 h-5 rounded-full transition-transform',
+                      config[field] ? 'translate-x-6 bg-white shadow' : 'translate-x-1 bg-white/60',
+                    )} />
+                  </span>
+                </div>
+                <p className={cn('text-[10px] font-black mt-2', config[field] ? 'text-emerald-300' : 'text-amber-300')}>
+                  {config[field] ? 'Tampil di kiosk' : 'Disembunyikan'}
+                </p>
+                <p className="text-[10px] text-muted font-bold mt-1">{keterangan}</p>
+              </button>
+            ))}
+          </div>
         </div>
+      </div>
 
       {/* Preview WYSIWYG: digambar dengan jalur cetak yang sebenarnya. */}
       <PrintPreview

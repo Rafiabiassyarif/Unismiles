@@ -868,6 +868,26 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   const [selectedBackground, setSelectedBackground] = useState<VirtualBackground | null>(null);
   const [frames, setFrames] = useState<FrameLayout[]>([]);
   const [filters, setFilters] = useState<PhotoFilter[]>([]);
+  /**
+   * Tombol layar akhir yang boleh tampil. Dikendalikan dari Admin lewat
+   * konfigurasi server; bawaannya SEMUA AKTIF = perilaku yang sudah berjalan.
+   *
+   * Kode ketiga tombolnya tetap ada apa adanya — hanya dirender bersyarat. Jadi
+   * mematikannya tidak menghapus fitur apa pun, dan menyalakannya kembali cukup
+   * dari Admin tanpa build ulang.
+   */
+  const [tombol, setTombol] = useState({ email: true, retake: true, print: true });
+  // Pembaca boolean yang tidak tertipu string '0'/'false': Boolean('0') = true,
+  // dan itu akan menampilkan tombol yang sudah dimatikan operator.
+  const bacaBooleanAtau = (nilai: unknown, bawaan: boolean): boolean => {
+    if (nilai === undefined || nilai === null || nilai === '') return bawaan;
+    if (typeof nilai === 'boolean') return nilai;
+    if (typeof nilai === 'number') return nilai !== 0;
+    const t = String(nilai).trim().toLowerCase();
+    if (['true', '1', 'yes', 'on', 'ya'].includes(t)) return true;
+    if (['false', '0', 'no', 'off', 'tidak'].includes(t)) return false;
+    return bawaan;
+  };
   const [kioskPaperSize, setKioskPaperSize] = useState('4R');
 
   /**
@@ -1071,6 +1091,18 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
           // Penajaman & algoritma abu-abu dari agent. Dibaca terpisah dari blok
           // di atas: kalau digabung, kiosk yang hanya mengirim salah satu nilai
           // akan membuat nilai lainnya tidak pernah diterapkan.
+          // Tombol layar juga bisa datang dari agent. Hanya diterapkan kalau
+          // agent MEMANG melaporkannya (undefined = belum tahu), supaya tidak
+          // menimpa nilai yang sudah benar dari server dengan "tidak ada".
+          if (agentState.showEmailButton !== undefined
+            || agentState.showRetakeButton !== undefined
+            || agentState.showPrintButton !== undefined) {
+            setTombol(prev => ({
+              email: bacaBooleanAtau(agentState.showEmailButton, prev.email),
+              retake: bacaBooleanAtau(agentState.showRetakeButton, prev.retake),
+              print: bacaBooleanAtau(agentState.showPrintButton, prev.print),
+            }));
+          }
           const tajam = num(agentState.printSharpen);
           if (tajam !== null || agentState.grayscaleAlgorithm !== undefined) {
             setPhotoAdjust(prev => ({
@@ -1130,6 +1162,14 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         const x = Number(v);
         return Number.isFinite(x) ? x : fallback;
       };
+      // Tombol layar: HANYA diubah kalau server mengirim nilainya. Kalau tidak
+      // dikirim (baris lama / API versi lama), bawaannya tetap aktif — bukan
+      // tiba-tiba hilang.
+      setTombol(prev => ({
+        email: bacaBooleanAtau(cfg.show_email_button, prev.email),
+        retake: bacaBooleanAtau(cfg.show_retake_button, prev.retake),
+        print: bacaBooleanAtau(cfg.show_print_button, prev.print),
+      }));
       if (cfg.paper_size) setKioskPaperSize(cfg.paper_size);
       if (cfg.thermal_density !== undefined) setThermalDensity(n(cfg.thermal_density, 3));
       if (cfg.thermal_offset_y_px !== undefined) setThermalOffsetYPx(n(cfg.thermal_offset_y_px, 0));
@@ -3975,9 +4015,11 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                              {uploadStatus === 'uploading' || !areAssetsReady ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
                              Download
                          </button>
+                         {tombol.retake && (
                          <button onClick={handleRetake} className={`w-full px-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-1.5 border border-white/20 active:scale-95 ${isVertical ? 'py-2 text-xs' : 'py-3'}`}>
                              <RefreshCw size={14} /> New Photo
                          </button>
+                         )}
                          <button onClick={handleHome} className={`w-full px-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-bold transition-all flex items-center justify-center border border-white/20 active:scale-95 ${isVertical ? 'py-2 text-xs' : 'py-3'}`}>
                              Home
                          </button>
@@ -3993,7 +4035,13 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
 
                     {/* Action Buttons */}
                     <div className={`flex flex-wrap items-center justify-center gap-3 z-20 relative shrink-0 ${isVertical ? 'mt-2 pb-1' : 'absolute bottom-6 right-6'}`}>
-                        {selectedPackage === 'print' && (
+                        {/* Tombol cetak: kode utuh, hanya dirender kalau
+                            show_print_button aktif di Admin. Satuan tombol cetak
+                            lain di bawah (fallback manual & Bluetooth) ikut
+                            disembunyikan bersamanya — kalau tidak, tombol cetak
+                            masih bisa ditekan lewat jalur lain dan setelannya
+                            jadi tidak berarti. */}
+                        {selectedPackage === 'print' && tombol.print && (
                             <>
                               <button 
                                   id="btn-print"
@@ -4040,6 +4088,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                               )}
                             </>
                         )}
+                         {tombol.email && (
                          <button 
                             id="btn-email"
                             onClick={() => {
@@ -4054,6 +4103,7 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
                         >
                             Send Email
                         </button>
+                         )}
                     </div>
 
                     {btPrintState !== 'idle' && (

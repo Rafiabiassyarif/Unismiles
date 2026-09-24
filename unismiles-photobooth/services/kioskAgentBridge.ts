@@ -24,6 +24,10 @@ export interface KioskAgentState {
   printSharpen?: number;
   /** Nama algoritma abu-abu; bobotnya dihitung di services/oneBitImage.ts. */
   grayscaleAlgorithm?: string;
+  /** Tombol layar akhir dari Admin; undefined = belum dilaporkan. */
+  showEmailButton?: boolean;
+  showRetakeButton?: boolean;
+  showPrintButton?: boolean;
 }
 
 /*

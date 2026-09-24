@@ -39,6 +39,11 @@ test('normalizes disabled printing and clears adapter/printer', () => {
     // ikut berubah diam-diam.
     print_sharpen: 0,
     grayscale_algorithm: 'rec601',
+    // Tombol layar akhir: bawaannya semua TAMPIL, karena itu perilaku yang
+    // sudah berjalan. Diuji di sini supaya perubahan bawaan ketahuan.
+    show_email_button: true,
+    show_retake_button: true,
+    show_print_button: true,
   });
 });
 

@@ -52,6 +52,23 @@ const PHOTO_ADJUST_LIMITS = {
 const PHOTO_FIT_MODES = ['fit', 'cover', 'stretch'];
 
 /**
+ * Tombol layar akhir yang bisa dinyalakan/dimatikan dari Admin.
+ *
+ * Nilainya adalah NAMA KOLOM di DB, dan dipakai sebagai daftar tunggal oleh
+ * validasi, model, dan controller — supaya menambah tombol baru tidak perlu
+ * menyunting tiga tempat yang bisa berbeda.
+ *
+ * Semuanya BOOLEAN dan bawaannya TRUE (aktif). Bawaan harus aktif, karena itu
+ * perilaku yang sudah berjalan: kiosk yang sudah dipakai tidak boleh berubah
+ * hanya karena fitur ini ditambahkan.
+ *
+ * Kodenya TIDAK dihapus saat dimatikan — hanya tidak ditampilkan. Jadi
+ * menyalakannya kembali tidak perlu build ulang kode, dan tidak ada fitur yang
+ * hilang dari repo.
+ */
+const TOMBOL_FIELDS = ['show_email_button', 'show_retake_button', 'show_print_button'];
+
+/**
  * Algoritma konversi abu-abu yang dikenal jalur cetak kiosk.
  *
  * Daftarnya HARUS sama dengan GRAYSCALE_OPTIONS di
@@ -71,7 +88,26 @@ const ALLOWED_FIELDS = new Set([
   'printing_enabled', 'adapter', 'printer_name', 'paper_size', 'orientation',
   'copies_limit', 'timeout_ms', 'retry_count', 'allowed_layouts',
   ...Object.keys(PHOTO_ADJUST_LIMITS), 'photo_fit_mode', 'grayscale_algorithm',
+  ...TOMBOL_FIELDS,
 ]);
+
+/**
+ * Baca nilai boolean dari bentuk apa pun yang mungkin datang.
+ *
+ * Kenapa tidak Boolean() saja: Boolean('0') dan Boolean('false') keduanya
+ * TRUE. Nilai dari DB (TINYINT) dan dari form Admin (bisa string) keduanya
+ * melewati fungsi ini, dan tombol yang dimatikan TIDAK boleh muncul kembali
+ * hanya karena nilainya berbentuk string.
+ */
+function bacaBoolean(nilai, bawaan) {
+  if (nilai === undefined || nilai === null || nilai === '') return bawaan;
+  if (typeof nilai === 'boolean') return nilai;
+  if (typeof nilai === 'number') return nilai !== 0;
+  const teks = String(nilai).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on', 'ya'].includes(teks)) return true;
+  if (['false', '0', 'no', 'off', 'tidak'].includes(teks)) return false;
+  return bawaan;
+}
 
 class PrintingConfigValidationError extends Error {
   constructor(message, code = 'INVALID_PRINTING_CONFIG') {
@@ -139,6 +175,9 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     // Algoritma abu-abu: nilai lama atau bawaan, supaya konfigurasi yang belum
     // punya kolom ini tetap mencetak dengan bobot Rec.601 seperti sebelumnya.
     grayscale_algorithm: existing.grayscale_algorithm || DEFAULT_GRAYSCALE_ALGORITHM,
+    // Tombol layar: bawaannya AKTIF (lihat TOMBOL_FIELDS). Memakai ?? supaya
+    // nilai 0/false yang sudah tersimpan tidak tertukar dengan "belum diisi".
+    ...Object.fromEntries(TOMBOL_FIELDS.map(f => [f, existing[f] ?? true])),
     ...input,
   };
 
@@ -194,6 +233,13 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     throw new PrintingConfigValidationError(`grayscale_algorithm must be one of: ${GRAYSCALE_ALGORITHMS.join(', ')}.`);
   }
   normalized.grayscale_algorithm = alg;
+
+  // Tombol layar: dipaksa jadi boolean sejati. Panel mengirim 0/1 atau
+  // true/false tergantung bentuk request, dan kalau nilainya string '0' ia akan
+  // dianggap AKTIF oleh Boolean() — jadi tombol yang dimatikan tetap muncul.
+  for (const field of TOMBOL_FIELDS) {
+    normalized[field] = bacaBoolean(merged[field], true);
+  }
 
   // Preset label membawa marginnya sendiri. Kalau nilainya preset, margin
   // DITIMPA dari preset — supaya memilih template di Admin tidak perlu diikuti
@@ -283,10 +329,15 @@ function toSocketPrintingConfig(row) {
     print_sharpen: Number(row.print_sharpen ?? PHOTO_ADJUST_LIMITS.print_sharpen.fallback),
     photo_fit_mode: row.photo_fit_mode || 'fit',
     grayscale_algorithm: row.grayscale_algorithm || DEFAULT_GRAYSCALE_ALGORITHM,
+    // Tombol layar. TINYINT dari DB datang sebagai 0/1, jadi dibaca sebagai
+    // boolean lewat helper yang sama — supaya '0' tidak dianggap aktif.
+    ...Object.fromEntries(TOMBOL_FIELDS.map(f => [f, bacaBoolean(row[f], true)])),
   };
 }
 
 module.exports = {
+  TOMBOL_FIELDS,
+  bacaBoolean,
   ADAPTERS,
   PAPER_SIZES,
   ORIENTATIONS,

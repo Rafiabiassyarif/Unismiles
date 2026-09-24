@@ -475,6 +475,16 @@ export const fetchPrintingConfig = async (): Promise<{
   grayscale_algorithm?: string;
   /** Penajaman 0..100; 0 = tidak menajamkan (perilaku lama). */
   print_sharpen?: number;
+  /**
+   * Tombol layar akhir, dikendalikan Admin.
+   *
+   * Bawaannya (tidak ada nilainya) AKTIF, karena itu perilaku yang sudah
+   * berjalan. Kodenya tidak pernah dihapus — hanya tidak ditampilkan, jadi
+   * menyalakannya kembali tidak perlu build ulang.
+   */
+  show_email_button?: boolean;
+  show_retake_button?: boolean;
+  show_print_button?: boolean;
 } | null> => {
   try {
     const response = await request<ApiResponse<any>>({

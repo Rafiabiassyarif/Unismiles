@@ -721,6 +721,12 @@ class KioskWSClient {
         // disimpan Admin tidak pernah sampai ke yang mencetak.
         printSharpen: Number(printing.print_sharpen ?? 0),
         grayscaleAlgorithm: String(printing.grayscale_algorithm || 'rec601').toLowerCase(),
+        // Tombol layar akhir. Diteruskan apa adanya; agent tidak perlu mengerti
+        // artinya, tapi HARUS meneruskannya supaya setelan Admin sampai ke yang
+        // merender tombolnya.
+        showEmailButton: printing.show_email_button,
+        showRetakeButton: printing.show_retake_button,
+        showPrintButton: printing.show_print_button,
       };
       Object.assign(this.reportedState, calib);
     }
@@ -804,6 +810,9 @@ class KioskWSClient {
       photoFitMode: String(config.photo_fit_mode || this.printerConfig.photoFitMode || 'fit').toLowerCase(),
       printSharpen: Number(config.print_sharpen ?? this.printerConfig.printSharpen ?? 0),
       grayscaleAlgorithm: String(config.grayscale_algorithm || this.printerConfig.grayscaleAlgorithm || 'rec601').toLowerCase(),
+      showEmailButton: config.show_email_button ?? this.printerConfig.showEmailButton,
+      showRetakeButton: config.show_retake_button ?? this.printerConfig.showRetakeButton,
+      showPrintButton: config.show_print_button ?? this.printerConfig.showPrintButton,
     };
 
     if (!SUPPORTED_ADAPTER_NAMES.includes(nextConfig.adapter)) throw new Error('Unsupported printer adapter received from backend');
