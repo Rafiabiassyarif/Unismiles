@@ -284,9 +284,16 @@ export function renderPrintBitmap(
     /** Warna sumber untuk piksel di dalam kotak; di luar kotak selalu putih. */
     sample: (sx: number, sy: number) => [number, number, number];
     threshold?: number;
+    /** Algoritma abu-abu; bawaan Rec.601 (sama dengan produksi). */
+    grayscale?: GrayscaleAlgorithm;
+    /** Penajaman 0..100 seperti di panel, diubah ke skala produksi 0..2. */
+    sharpen?: number;
   },
 ): void {
-  const { plan, fitMode, imgW, imgH, sample, threshold = ONE_BIT_THRESHOLD } = opts;
+  const {
+    plan, fitMode, imgW, imgH, sample, threshold = ONE_BIT_THRESHOLD,
+    grayscale = 'rec601', sharpen = 0,
+  } = opts;
   const { data, width } = imageData;
   const r = drawRect(fitMode, plan.box, imgW, imgH);
 
@@ -309,7 +316,7 @@ export function renderPrintBitmap(
 
   // Dithering dibatasi ke kotak: menyebar kesalahan ke luar kotak akan mengubah
   // piksel yang tidak boleh berisi tinta.
-  ditherToBlackAndWhite(data, width, imageData.height, threshold, plan.box);
+  ditherToBlackAndWhite(data, width, imageData.height, threshold, plan.box, grayscale, sharpen);
 }
 
 /** Terang versi mata manusia (Rec. 601) — sama dengan photobooth. */
@@ -327,6 +334,9 @@ export function ditherToBlackAndWhite(
   data: Uint8ClampedArray | number[], width: number, height: number,
   threshold: number = ONE_BIT_THRESHOLD,
   box?: { x: number; y: number; w: number; h: number },
+  grayscale: GrayscaleAlgorithm = 'rec601',
+  /** Penajaman 0..100 seperti di panel; diubah ke skala produksi 0..2. */
+  sharpenPct = 0,
 ): void {
   const total = width * height;
   if (total <= 0) return;
@@ -343,7 +353,22 @@ export function ditherToBlackAndWhite(
   for (let p = 0; p < total; p += 1) {
     const i = p * 4;
     const alpha = data[i + 3];
-    gray[p] = alpha === 0 ? 255 : luminance(data[i], data[i + 1], data[i + 2]);
+    gray[p] = alpha === 0 ? 255 : grayscaleValue(grayscale, data[i], data[i + 1], data[i + 2]);
+  }
+
+  // Penajaman dikenakan pada abu-abu SEBELUM dither, dan hanya di dalam bidang
+  // cetak. Pembagian 50 sama dengan jalur produksi, supaya angka yang sama di
+  // panel menghasilkan hasil yang sama di kertas.
+  const tajam = Math.max(0, Math.min(200, Number(sharpenPct) || 0)) / 50;
+  if (tajam > 0) {
+    const potong = new Float32Array((x1 - x0) * (y1 - y0));
+    for (let y = y0; y < y1; y += 1) {
+      for (let x = x0; x < x1; x += 1) potong[(y - y0) * (x1 - x0) + (x - x0)] = gray[y * width + x];
+    }
+    sharpenGray(potong, x1 - x0, y1 - y0, tajam);
+    for (let y = y0; y < y1; y += 1) {
+      for (let x = x0; x < x1; x += 1) gray[y * width + x] = potong[(y - y0) * (x1 - x0) + (x - x0)];
+    }
   }
 
   for (let y = y0; y < y1; y += 1) {
@@ -480,6 +505,93 @@ export function effectiveSourceDpi(
   const x = DPI * perX;
   const y = DPI * perY;
   return { x, y, min: Math.min(x, y), upscaled: Math.min(x, y) < DPI, drawnW: r.dw, drawnH: r.dh };
+}
+
+/**
+ * Algoritma abu-abu + penajaman — CERMINAN dari
+ * `unismiles-photobooth/services/oneBitImage.ts`.
+ *
+ * Disalin, bukan diimpor: repo Admin dan repo photobooth tidak saling
+ * mengimpor, dan itu disengaja. Salinannya diuji SILANG terhadap berkas
+ * sumbernya, jadi kalau bobot atau perilaku di salah satu berubah, test gagal.
+ *
+ * Daftar ini + urutannya harus sama dengan GRAYSCALE_OPTIONS di produksi dan
+ * GRAYSCALE_ALGORITHMS di backend.
+ */
+export type GrayscaleAlgorithm =
+  | 'rec601' | 'rec709' | 'average' | 'luma-sqrt'
+  | 'green' | 'red' | 'blue' | 'max' | 'min';
+
+export const GRAYSCALE_OPTIONS: readonly { value: GrayscaleAlgorithm; label: string }[] = [
+  { value: 'rec601', label: 'Rec.601 (sekarang)' },
+  { value: 'rec709', label: 'Rec.709/sRGB' },
+  { value: 'average', label: 'Rata-rata kanal' },
+  { value: 'luma-sqrt', label: 'Luma inci kuadrat' },
+  { value: 'green', label: 'Hijau saja' },
+  { value: 'red', label: 'Merah saja' },
+  { value: 'blue', label: 'Biru saja' },
+  { value: 'max', label: 'Kanal paling terang' },
+  { value: 'min', label: 'Kanal paling gelap' },
+] as const;
+
+/** Nilai abu-abu menurut algoritma — rumus yang sama dengan produksi. */
+export function grayscaleValue(alg: GrayscaleAlgorithm, r: number, g: number, b: number): number {
+  switch (alg) {
+    case 'rec601': return 0.299 * r + 0.587 * g + 0.114 * b;
+    case 'rec709': return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    case 'average': return (r + g + b) / 3;
+    case 'luma-sqrt': {
+      const rn = r / 255, gn = g / 255, bn = b / 255;
+      return 255 * Math.sqrt(0.299 * rn * rn + 0.587 * gn * gn + 0.114 * bn * bn);
+    }
+    case 'green': return g;
+    case 'red': return r;
+    case 'blue': return b;
+    case 'max': return Math.max(r, g, b);
+    case 'min': return Math.min(r, g, b);
+    default: return 0.299 * r + 0.587 * g + 0.114 * b;
+  }
+}
+
+/** Rata-rata kotak yang bisa dipisah; cerminan boxBlurGray di produksi. */
+export function boxBlurGray(gray: Float32Array, width: number, height: number, radius: number): Float32Array {
+  if (radius < 1 || width < 1 || height < 1) return Float32Array.from(gray);
+  const mendatar = new Float32Array(width * height);
+  const hasil = new Float32Array(width * height);
+  const lebar = radius * 2 + 1;
+  const jepit = (v: number, maks: number) => Math.max(0, Math.min(maks, v));
+  for (let y = 0; y < height; y += 1) {
+    const baris = y * width;
+    let jumlah = 0;
+    for (let k = -radius; k <= radius; k += 1) jumlah += gray[baris + jepit(k, width - 1)];
+    for (let x = 0; x < width; x += 1) {
+      mendatar[baris + x] = jumlah / lebar;
+      jumlah += gray[baris + jepit(x + radius + 1, width - 1)] - gray[baris + jepit(x - radius, width - 1)];
+    }
+  }
+  for (let x = 0; x < width; x += 1) {
+    let jumlah = 0;
+    for (let k = -radius; k <= radius; k += 1) jumlah += mendatar[jepit(k, height - 1) * width + x];
+    for (let y = 0; y < height; y += 1) {
+      hasil[y * width + x] = jumlah / lebar;
+      jumlah += mendatar[jepit(y + radius + 1, height - 1) * width + x] - mendatar[jepit(y - radius, height - 1) * width + x];
+    }
+  }
+  return hasil;
+}
+
+/** Penajaman (unsharp mask); cerminan sharpenGray di produksi. */
+export function sharpenGray(
+  gray: Float32Array, width: number, height: number,
+  amount: number, radius = 2, threshold = 2,
+): void {
+  if (amount <= 0 || width < 3 || height < 3) return;
+  const halus = boxBlurGray(gray, width, height, radius);
+  for (let p = 0; p < gray.length; p += 1) {
+    const beda = gray[p] - halus[p];
+    if (Math.abs(beda) < threshold) continue;
+    gray[p] = Math.max(0, Math.min(255, gray[p] + beda * amount));
+  }
 }
 
 /** Ringkas: apa yang perlu ditampilkan di panel tentang hasil cetak. */

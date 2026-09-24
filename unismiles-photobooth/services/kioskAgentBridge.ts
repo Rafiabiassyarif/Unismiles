@@ -20,6 +20,10 @@ export interface KioskAgentState {
   thermalDensity?: number;
   thermalOffsetYPx?: number;
   photoFitMode?: 'fit' | 'stretch';
+  /** Penajaman 0..100 dari Admin; 0 = tidak menajamkan. */
+  printSharpen?: number;
+  /** Nama algoritma abu-abu; bobotnya dihitung di services/oneBitImage.ts. */
+  grayscaleAlgorithm?: string;
 }
 
 /*

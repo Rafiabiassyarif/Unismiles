@@ -411,6 +411,49 @@ export const getPhotosBySession = async (sessionId: string): Promise<PhotoData[]
  * sampai ke photobooth kecuali agent berjalan — sehingga pengaturan Admin
  * tampak tersimpan tanpa efek.
  */
+/**
+ * Salinan konfigurasi cetak terakhir yang BERHASIL dibaca dari server.
+ *
+ * Ini bukan "konfigurasi lokal" — sumbernya tetap server, dan setiap
+ * pengambilan sukses menimpanya. Gunanya satu: kiosk yang menyala sebelum
+ * jaringannya siap (atau sesaat setelah server di-restart) tidak boleh mencetak
+ * dengan BAWAAN SENDIRI. Dulu ia memakai '4R' dengan margin nol, jadi label
+ * keluar tanpa kotak cetak — dan itu terjadi tanpa pesan apa pun.
+ *
+ * Nilainya sengaja TIDAK pernah dibaca dari file yang bisa diedit tangan:
+ * disimpan di localStorage sebagai hasil salinan, dan selalu ditandai
+ * server:true supaya jelas dari mana asalnya.
+ */
+const SIMPANAN_KUNCI = 'pb_printing_config_server';
+
+/** Baca salinan terakhir; null kalau belum pernah berhasil mengambil. */
+export const bacaKonfigurasiServerTerakhir = (): Record<string, unknown> | null => {
+  try {
+    const teks = localStorage.getItem(SIMPANAN_KUNCI);
+    if (!teks) return null;
+    const isi = JSON.parse(teks);
+    return isi && typeof isi === 'object' ? isi as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+};
+
+/** Simpan salinan setelah pengambilan berhasil. */
+export const simpanKonfigurasiServer = (config: Record<string, unknown>): void => {
+  try {
+    localStorage.setItem(SIMPANAN_KUNCI, JSON.stringify({
+      ...config,
+      // Ditandai supaya jelas: ini salinan DARI SERVER, bukan setelan lokal
+      // yang bisa dipakai untuk menimpa server.
+      _sumber: 'server',
+      _disimpan_pada: new Date().toISOString(),
+    }));
+  } catch {
+    // Penyimpanan penuh / mode privat: mencetak tetap jalan dengan nilai yang
+    // baru dibaca, jadi ini bukan kegagalan yang perlu menghentikan kiosk.
+  }
+};
+
 export const fetchPrintingConfig = async (): Promise<{
   paper_size?: string;
   photo_brightness?: number;
@@ -424,6 +467,14 @@ export const fetchPrintingConfig = async (): Promise<{
   print_margin_right_px?: number;
   print_margin_left_px?: number;
   print_margin_bottom_px?: number;
+  /**
+   * Algoritma konversi abu-abu sebelum dither (lihat GRAYSCALE_OPTIONS di
+   * photobooth). Tidak divalidasi ulang di sini karena nilai asing ditangani
+   * pemakainya dengan jatuh ke nilai sebelumnya.
+   */
+  grayscale_algorithm?: string;
+  /** Penajaman 0..100; 0 = tidak menajamkan (perilaku lama). */
+  print_sharpen?: number;
 } | null> => {
   try {
     const response = await request<ApiResponse<any>>({
@@ -434,10 +485,32 @@ export const fetchPrintingConfig = async (): Promise<{
     });
     return response.data?.data || null;
   } catch {
-    // Kiosk yang belum pernah didaftarkan, atau jaringan mati: kembalikan null
-    // supaya pemanggil memakai nilai netral, bukan gagal mencetak.
-    return null;
+    // Jaringan mati / kiosk belum terdaftar.
+    //
+    // Dulu di sini mengembalikan null dan pemanggil kembali ke BAWAAN SENDIRI
+    // ('4R', margin 0) — label keluar tanpa kotak cetak, tanpa pesan apa pun.
+    // Sekarang yang dipakai adalah salinan TERAKHIR DARI SERVER: nilainya tetap
+    // berasal dari backend, hanya umurnya lebih tua. Lebih baik mencetak dengan
+    // konfigurasi server yang sedikit lama daripada dengan bawaan yang tidak
+    // pernah disetujui siapa pun.
+    const salinan = bacaKonfigurasiServerTerakhir();
+    return salinan ? (salinan as never) : null;
   }
+};
+
+/** Tandai bahwa konfigurasi cetak ini datang dari server, bukan dari salinan. */
+export type SumberKonfigurasi = 'server' | 'salinan-server' | 'bawaan';
+
+/**
+ * Apakah nilai ini berasal dari server (langsung atau salinan terakhirnya).
+ *
+ * Ada supaya pemanggil bisa membedakan "konfigurasi server yang agak lama"
+ * (masih benar posisinya) dari "bawaan aplikasi" (label keluar tanpa kotak
+ * cetak). Perbedaan itu tidak terlihat dari isi objeknya saja.
+ */
+export const sumberKonfigurasi = (config: Record<string, unknown> | null): SumberKonfigurasi => {
+  if (!config) return 'bawaan';
+  return config._sumber === 'server' ? 'salinan-server' : 'server';
 };
 
 export const fetchTemplates = async (): Promise<any[]> => {

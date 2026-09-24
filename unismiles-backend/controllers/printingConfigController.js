@@ -186,6 +186,11 @@ const controller = {
           print_margin_left_px: config.print_margin_left_px,
           print_margin_bottom_px: config.print_margin_bottom_px,
           photo_fit_mode: config.photo_fit_mode,
+          // Ketajaman: tanpa baris ini, nilai tersimpan di DB tetapi photobooth
+          // membaca dari endpoint ini — Admin terlihat tersimpan tanpa efek di
+          // kertas. Persis pola kegagalan thermal_offset_x_px dulu.
+          print_sharpen: config.print_sharpen,
+          grayscale_algorithm: config.grayscale_algorithm,
           config_version: config.config_version,
         },
       });

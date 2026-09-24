@@ -44,14 +44,33 @@ const PHOTO_ADJUST_LIMITS = {
   print_margin_right_px: { min: 0, max: 300, fallback: 0 },
   print_margin_left_px: { min: 0, max: 300, fallback: 0 },
   print_margin_bottom_px: { min: 0, max: 300, fallback: 0 },
+  // Penajaman (unsharp mask) 0..100, dikenakan pada abu-abu SEBELUM dither.
+  // 0 = perilaku lama (tidak menajamkan), jadi kiosk yang belum diubah tidak
+  // berubah hasil cetaknya.
+  print_sharpen: { min: 0, max: 100, fallback: 0 },
 };
 const PHOTO_FIT_MODES = ['fit', 'cover', 'stretch'];
+
+/**
+ * Algoritma konversi abu-abu yang dikenal jalur cetak kiosk.
+ *
+ * Daftarnya HARUS sama dengan GRAYSCALE_OPTIONS di
+ * `unismiles-photobooth/services/oneBitImage.ts`. Nilai di sini adalah nama
+ * yang dikirim ke kiosk, bukan bobotnya — bobotnya hanya ada di satu tempat,
+ * yaitu fungsi grayscaleValue() di kiosk, supaya tidak ada dua daftar bobot
+ * yang bisa berbeda.
+ */
+const GRAYSCALE_ALGORITHMS = [
+  'rec601', 'rec709', 'average', 'luma-sqrt',
+  'green', 'red', 'blue', 'max', 'min',
+];
+const DEFAULT_GRAYSCALE_ALGORITHM = 'rec601';
 
 const FORBIDDEN_FIELDS = new Set(['command', 'shell_command', 'executable_path', 'script', 'driver_command']);
 const ALLOWED_FIELDS = new Set([
   'printing_enabled', 'adapter', 'printer_name', 'paper_size', 'orientation',
   'copies_limit', 'timeout_ms', 'retry_count', 'allowed_layouts',
-  ...Object.keys(PHOTO_ADJUST_LIMITS), 'photo_fit_mode',
+  ...Object.keys(PHOTO_ADJUST_LIMITS), 'photo_fit_mode', 'grayscale_algorithm',
 ]);
 
 class PrintingConfigValidationError extends Error {
@@ -115,7 +134,11 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     print_margin_right_px: Number(existing.print_margin_right_px ?? PHOTO_ADJUST_LIMITS.print_margin_right_px.fallback),
     print_margin_left_px: Number(existing.print_margin_left_px ?? PHOTO_ADJUST_LIMITS.print_margin_left_px.fallback),
     print_margin_bottom_px: Number(existing.print_margin_bottom_px ?? PHOTO_ADJUST_LIMITS.print_margin_bottom_px.fallback),
+    print_sharpen: Number(existing.print_sharpen ?? PHOTO_ADJUST_LIMITS.print_sharpen.fallback),
     photo_fit_mode: existing.photo_fit_mode || 'fit',
+    // Algoritma abu-abu: nilai lama atau bawaan, supaya konfigurasi yang belum
+    // punya kolom ini tetap mencetak dengan bobot Rec.601 seperti sebelumnya.
+    grayscale_algorithm: existing.grayscale_algorithm || DEFAULT_GRAYSCALE_ALGORITHM,
     ...input,
   };
 
@@ -162,6 +185,15 @@ function validatePrintingConfig(input = {}, existing = {}, reported = null) {
     throw new PrintingConfigValidationError(`photo_fit_mode must be one of: ${PHOTO_FIT_MODES.join(', ')}.`);
   }
   normalized.photo_fit_mode = fitMode;
+
+  // Algoritma abu-abu. DITOLAK kalau tidak dikenal, bukan diam-diam diganti:
+  // kalau diganti diam-diam, operator memilih satu algoritma di panel dan
+  // kertasnya keluar memakai algoritma lain tanpa ada yang memberi tahu.
+  const alg = String(merged.grayscale_algorithm || DEFAULT_GRAYSCALE_ALGORITHM).toLowerCase();
+  if (!GRAYSCALE_ALGORITHMS.includes(alg)) {
+    throw new PrintingConfigValidationError(`grayscale_algorithm must be one of: ${GRAYSCALE_ALGORITHMS.join(', ')}.`);
+  }
+  normalized.grayscale_algorithm = alg;
 
   // Preset label membawa marginnya sendiri. Kalau nilainya preset, margin
   // DITIMPA dari preset — supaya memilih template di Admin tidak perlu diikuti
@@ -248,7 +280,9 @@ function toSocketPrintingConfig(row) {
     print_margin_right_px: Number(row.print_margin_right_px ?? PHOTO_ADJUST_LIMITS.print_margin_right_px.fallback),
     print_margin_left_px: Number(row.print_margin_left_px ?? PHOTO_ADJUST_LIMITS.print_margin_left_px.fallback),
     print_margin_bottom_px: Number(row.print_margin_bottom_px ?? PHOTO_ADJUST_LIMITS.print_margin_bottom_px.fallback),
+    print_sharpen: Number(row.print_sharpen ?? PHOTO_ADJUST_LIMITS.print_sharpen.fallback),
     photo_fit_mode: row.photo_fit_mode || 'fit',
+    grayscale_algorithm: row.grayscale_algorithm || DEFAULT_GRAYSCALE_ALGORITHM,
   };
 }
 

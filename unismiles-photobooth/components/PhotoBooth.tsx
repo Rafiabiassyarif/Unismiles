@@ -10,6 +10,7 @@ import { useAirGesture } from './useAirGesture';
 import { kioskAgentBridge } from '../services/kioskAgentBridge';
 import { NiimbotPrinter, PRINTER_BELUM_DIPASANGKAN, labelSize as computeLabelSize, labelMmFromPaperSize, labelFrameBox, firstSlot, DEFAULT_ADJUSTMENTS, type PrintAdjustments } from '../services/niimbotPrinter';
 import { paintCover as paintCoverInto, paintPrintImage } from '../services/printImage';
+import { DEFAULT_GRAYSCALE_ALGORITHM, isGrayscaleAlgorithm } from '../services/oneBitImage';
 import { SIGNAGE_URL, IDLE_REDIRECT_MS, shouldArmIdleTimer } from '../services/idleReturn';
 import {
   SCAN_FRAME_GAP_MS, SCAN_READ_DELAY_MS, MAX_SUBMIT_ROUNDS,
@@ -22,7 +23,8 @@ import {
   startSession, completeSession, uploadPhoto, sendPhotoByEmail, fetchPaymentProfile,
   verifyPayment, fetchTemplates, queuePrintJob, getPrintJobStatus, KioskApiError,
   getApiConfig, isAutoPrintEnabled, isManualPrintFallbackEnabled,
-  submitPaymentEvidence, getPaymentVerificationStatus, fetchPrintingConfig
+  submitPaymentEvidence, getPaymentVerificationStatus, fetchPrintingConfig,
+  simpanKonfigurasiServer, sumberKonfigurasi
 } from '../services/apiService';
 
 // Global Scale (Now 1.0 since we removed transform scale from index.html)
@@ -828,7 +830,12 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     brightness: 100,
     contrast: 100,
     saturation: 100,
-    fitMode: 'fit' as 'fit' | 'stretch',
+    fitMode: 'fit' as 'fit' | 'stretch' | 'cover',
+    // Algoritma abu-abu dan penajaman dari Admin. Bawaannya = perilaku lama
+    // (Rec.601 tanpa penajaman), jadi kiosk yang belum menerima nilai baru
+    // mencetak persis seperti sebelumnya.
+    grayscale: DEFAULT_GRAYSCALE_ALGORITHM as string,
+    sharpen: 0,
   });
   // Kalibrasi termal dari Admin, dipakai jalur cetak Bluetooth langsung.
   const [thermalDensity, setThermalDensity] = useState(3);
@@ -987,6 +994,13 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         marginRightPx: margin.rightPx,
         marginLeftPx: margin.leftPx,
         marginBottomPx: margin.bottomPx,
+        // Ditulis eksplisit, bukan hanya ikut dari spread: kalau nilainya rusak
+        // (konfigurasi lama, atau nilai asing dari API), yang dipakai harus
+        // perilaku lama — bukan nilai yang membuat grayscaleValue jatuh diam-diam.
+        grayscale: isGrayscaleAlgorithm(photoAdjust.grayscale)
+          ? photoAdjust.grayscale
+          : DEFAULT_GRAYSCALE_ALGORITHM,
+        sharpen: Math.max(0, Math.min(100, Number(photoAdjust.sharpen) || 0)),
       };
 
       await printer.print(image, size, 1, adjustments);
@@ -1054,6 +1068,22 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
               fitMode: agentState.photoFitMode === 'stretch' ? 'stretch' : prev.fitMode,
             }));
           }
+          // Penajaman & algoritma abu-abu dari agent. Dibaca terpisah dari blok
+          // di atas: kalau digabung, kiosk yang hanya mengirim salah satu nilai
+          // akan membuat nilai lainnya tidak pernah diterapkan.
+          const tajam = num(agentState.printSharpen);
+          if (tajam !== null || agentState.grayscaleAlgorithm !== undefined) {
+            setPhotoAdjust(prev => ({
+              ...prev,
+              sharpen: tajam ?? prev.sharpen,
+              // Divalidasi terhadap daftar: nilai asing membuat grayscaleValue
+              // jatuh ke bawaan tanpa terlihat, dan hasil cetak berbeda tanpa
+              // penjelasan.
+              grayscale: isGrayscaleAlgorithm(agentState.grayscaleAlgorithm)
+                ? agentState.grayscaleAlgorithm
+                : prev.grayscale,
+            }));
+          }
           if (agentState.paperSize) {
               setKioskPaperSize(agentState.paperSize);
           }
@@ -1080,7 +1110,22 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     let cancelled = false;
     const apply = async () => {
       const cfg = await fetchPrintingConfig();
-      if (cancelled || !cfg) return;
+      if (cancelled || !cfg) {
+        // Tidak ada konfigurasi server SAMA SEKALI: belum pernah berhasil
+        // diambil, dan tidak ada salinan untuk dipakai. Keadaan ini harus
+        // terlihat, karena label akan keluar tanpa kotak cetak (margin 0) dan
+        // penyebabnya bukan di layar kiosk.
+        console.warn(
+          'Konfigurasi cetak dari server belum pernah terbaca. Cetak memakai '
+          + 'bawaan aplikasi — ukuran/margin dari Admin TIDAK berlaku. '
+          + 'Periksa kunci API kiosk dan alamat backend.',
+        );
+        return;
+      }
+      // Simpan salinan dari server: dipakai hanya kalau pengambilan berikutnya
+      // gagal (jaringan belum siap), supaya kiosk tidak pernah kembali ke
+      // bawaan yang tidak pernah disetujui siapa pun.
+      simpanKonfigurasiServer(cfg as unknown as Record<string, unknown>);
       const n = (v: unknown, fallback: number) => {
         const x = Number(v);
         return Number.isFinite(x) ? x : fallback;
@@ -1097,6 +1142,13 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
         brightness: n(cfg.photo_brightness, prev.brightness),
         contrast: n(cfg.photo_contrast, prev.contrast),
         saturation: n(cfg.photo_saturation, prev.saturation),
+        // Algoritma abu-abu dan penajaman. Divalidasi terhadap daftar, bukan
+        // diterima apa adanya: nilai asing akan membuat grayscaleValue jatuh
+        // ke bawaan tanpa terlihat, dan hasil cetak berbeda tanpa penjelasan.
+        grayscale: isGrayscaleAlgorithm(cfg.grayscale_algorithm)
+          ? cfg.grayscale_algorithm
+          : prev.grayscale,
+        sharpen: n(cfg.print_sharpen, prev.sharpen),
         fitMode: cfg.photo_fit_mode === 'cover' || cfg.photo_fit_mode === 'stretch'
           ? cfg.photo_fit_mode
           : 'fit',

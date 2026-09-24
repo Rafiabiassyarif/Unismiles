@@ -4,7 +4,7 @@ import { cn } from '../lib/utils';
 import {
   previewPlan, renderPrintBitmap, inkSummary, findPaper, PAPER_CATALOG,
   PRINTHEAD_PX, DPI, applyAdjust, cameraErrorMessage, frameToImage,
-  effectiveSourceDpi, type Margin,
+  effectiveSourceDpi, GRAYSCALE_OPTIONS, type Margin,
 } from '../lib/printPapers';
 
 /**
@@ -23,8 +23,10 @@ import {
  * kertas.
  */
 
-/** Skala tampilan: label 67 mm terlalu kecil untuk dinilai di layar. */
-const ZOOM = 3;
+/** Skala tampilan preview. Lebih kecil dari sebelumnya (3) karena label 67 mm
+ *  dengan pengali 3 terlalu tinggi untuk layar biasa dan mendorong tombol ke
+ *  luar jangkauan. Dengan 2, seluruh label muat tanpa perlu digulir. */
+const ZOOM = 2;
 
 export interface PrintPreviewProps {
   paperSize: string;
@@ -35,6 +37,10 @@ export interface PrintPreviewProps {
   brightness: number;
   contrast: number;
   saturation: number;
+  /** Algoritma abu-abu dari Admin; lihat GRAYSCALE_OPTIONS. */
+  grayscale: string;
+  /** Penajaman 0..100 dari Admin. */
+  sharpen: number;
 }
 
 /**
@@ -63,6 +69,7 @@ function samplePattern(sx: number, sy: number, w: number, h: number): [number, n
 
 export const PrintPreview: React.FC<PrintPreviewProps> = ({
   paperSize, margin, offsetXPx, offsetYPx, fitMode, brightness, contrast, saturation,
+  grayscale, sharpen,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -79,6 +86,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
   const ringkas = useMemo(() => inkSummary(plan), [plan]);
   const kertas = useMemo(() => findPaper(paperSize), [paperSize]);
   const adaPenyesuaian = brightness !== 100 || contrast !== 100 || saturation !== 100;
+  const grayscaleLabel = GRAYSCALE_OPTIONS.find(o => o.value === grayscale)?.label || grayscale;
 
   // Resolusi sumber terhadap 300 dpi: beda antara "kanvas 300 dpi" (selalu) dan
   // "fotonya cukup piksel untuk 300 dpi" (belum tentu).
@@ -187,7 +195,8 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
       ? (sx: number, sy: number) => applyAdjust(mentah(sx, sy), brightness, contrast, saturation)
       : mentah;
 
-    renderPrintBitmap({ data, width: plan.canvasW, height: plan.canvasH }, { plan, fitMode, imgW, imgH, sample });
+    renderPrintBitmap({ data, width: plan.canvasW, height: plan.canvasH },
+      { plan, fitMode, imgW, imgH, sample, grayscale: grayscale as never, sharpen });
 
     // 2. Tampilkan diperbesar, tanpa smoothing supaya tiap titik tinta terlihat.
     const sumberKanvas = document.createElement('canvas');
@@ -222,7 +231,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     }
     g.strokeStyle = 'rgba(255,255,255,0.55)';
     g.strokeRect(0.5, 0.5, canvas.width - 1, canvas.height - 1);
-  }, [plan, fitMode, brightness, contrast, saturation, adaPenyesuaian, foto]);
+  }, [plan, fitMode, brightness, contrast, saturation, adaPenyesuaian, foto, grayscale, sharpen]);
 
   return (
     <div className="p-5 rounded-2xl bg-black/20 border border-white/5 space-y-4">
@@ -283,13 +292,13 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
         <p className="text-[10px] font-black text-red-300">{kameraGalat}</p>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[auto_1fr] gap-5 items-start">
-        <div className="rounded-xl bg-black/40 border border-white/10 p-2 max-w-full overflow-auto">
-          <canvas ref={canvasRef} className="block max-w-full" style={{ imageRendering: 'pixelated' }} />
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,300px)_minmax(0,1fr)] gap-4 items-start">
+        <div className="rounded-xl bg-black/40 border border-white/10 p-2 w-full max-w-[300px] mx-auto xl:mx-0">
+          <canvas ref={canvasRef} className="block w-full h-auto" style={{ imageRendering: 'pixelated' }} />
         </div>
 
-        <div className="space-y-3 text-xs">
-          <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-3 text-xs min-w-0">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-2">
             <div><p className="label">Kotak cetak</p><p className="font-black mt-0.5">{ringkas.boxLabel}</p></div>
             <div><p className="label">Ukuran</p><p className="font-black mt-0.5">{ringkas.mmLabel}</p></div>
             <div><p className="label">Kanvas (kertas)</p><p className="font-black mt-0.5">{ringkas.canvasLabel}</p></div>
@@ -300,14 +309,6 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
               </p>
             </div>
             <div>
-              <p className="label">Brightness / Contrast</p>
-              <p className="font-black mt-0.5">{brightness}% / {contrast}%</p>
-            </div>
-            <div>
-              <p className="label">Sumber gambar</p>
-              <p className="font-black mt-0.5">{namaFoto || 'pola uji'}</p>
-            </div>
-            <div>
               <p className="label">Resolusi cetak</p>
               <p className="font-black mt-0.5 text-emerald-400">{DPI} dpi</p>
             </div>
@@ -316,10 +317,28 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
                 <p className="label">Detail foto di kotak</p>
                 <p className={cn('font-black mt-0.5', dpiSumber.upscaled ? 'text-amber-300' : 'text-emerald-400')}>
                   {dpiSumber.x.toFixed(0)} × {dpiSumber.y.toFixed(0)} dpi
-                  {dpiSumber.upscaled ? ' — DIPERBESAR, kurang tajam' : ''}
+                  {dpiSumber.upscaled ? ' — DIPERBESAR' : ''}
                 </p>
               </div>
             )}
+            <div>
+              <p className="label">Brightness / Contrast</p>
+              <p className="font-black mt-0.5">{brightness}% / {contrast}%</p>
+            </div>
+            <div>
+              <p className="label">Algoritma abu-abu</p>
+              <p className="font-black mt-0.5">{grayscaleLabel}</p>
+            </div>
+            <div>
+              <p className="label">Penajaman</p>
+              <p className={cn('font-black mt-0.5', sharpen > 0 ? 'text-emerald-400' : 'text-amber-300')}>
+                {sharpen > 0 ? `${sharpen}%` : '0% — belum dinaikkan'}
+              </p>
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <p className="label">Sumber gambar</p>
+              <p className="font-black mt-0.5 truncate">{namaFoto || 'pola uji'}</p>
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-3 text-[10px] font-bold">

@@ -34,7 +34,39 @@ test('normalizes disabled printing and clears adapter/printer', () => {
     print_margin_left_px: 0,
     print_margin_bottom_px: 0,
     photo_fit_mode: 'fit',
+    // Ketajaman: bawaan = perilaku lama (tanpa penajaman, Rec.601). Diuji di
+    // sini supaya kalau bawaannya berubah, kiosk yang sudah dikalibrasi tidak
+    // ikut berubah diam-diam.
+    print_sharpen: 0,
+    grayscale_algorithm: 'rec601',
   });
+});
+
+test('algoritma abu-abu asing DITOLAK, bukan diganti diam-diam', () => {
+  // Kalau diganti diam-diam, operator memilih satu algoritma di panel dan
+  // kertasnya keluar dengan algoritma lain tanpa ada yang memberi tahu.
+  assert.throws(() => validatePrintingConfig({ adapter: 'cups', grayscale_algorithm: 'hijau' }),
+    /grayscale_algorithm must be one of/);
+  // String kosong = belum diisi (mis. kolom baru di DB), jadi dianggap bawaan —
+  // BUKAN nilai asing. Membedakan keduanya penting: menolak string kosong akan
+  // membuat kiosk lama gagal menyimpan konfigurasi yang sebenarnya belum diubah.
+  assert.strictEqual(
+    validatePrintingConfig({ adapter: 'cups', grayscale_algorithm: '' }).grayscale_algorithm,
+    'rec601');
+  // Yang dikenal: dinormalkan ke huruf kecil, jadi penulisan bebas huruf besar
+  // tidak ditolak.
+  assert.strictEqual(
+    validatePrintingConfig({ adapter: 'cups', grayscale_algorithm: 'REC709' }).grayscale_algorithm,
+    'rec709');
+  // Bawaan = perilaku lama.
+  assert.strictEqual(validatePrintingConfig({ adapter: 'cups' }).grayscale_algorithm, 'rec601');
+});
+
+test('penajaman dijepit ke 0..100 — nilai di luar itu mengubah gambar, bukan menajam', () => {
+  assert.strictEqual(validatePrintingConfig({ adapter: 'cups', print_sharpen: 0 }).print_sharpen, 0);
+  assert.strictEqual(validatePrintingConfig({ adapter: 'cups', print_sharpen: 100 }).print_sharpen, 100);
+  assert.throws(() => validatePrintingConfig({ adapter: 'cups', print_sharpen: 101 }), PrintingConfigValidationError);
+  assert.throws(() => validatePrintingConfig({ adapter: 'cups', print_sharpen: -1 }), PrintingConfigValidationError);
 });
 
 test('rejects unsupported adapter and arbitrary command fields', () => {

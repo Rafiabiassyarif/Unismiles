@@ -5,7 +5,10 @@ import api from '../lib/api';
 import { cn } from '../lib/utils';
 import { useAuth } from './AuthProvider';
 import { PrintPreview } from './PrintPreview';
-import { PAPER_CATALOG, findPaper, previewPlan, effectiveMargin, PRINTHEAD_PX, type Margin } from '../lib/printPapers';
+import {
+  PAPER_CATALOG, findPaper, previewPlan, effectiveMargin, PRINTHEAD_PX,
+  GRAYSCALE_OPTIONS, type Margin,
+} from '../lib/printPapers';
 
 /**
  * Adapter yang bisa dipilih dari Admin.
@@ -100,6 +103,23 @@ type PrinterConfig = {
   print_margin_right_px: number;
   print_margin_left_px: number;
   print_margin_bottom_px: number;
+  /** Penajaman 0..100; 0 = tidak menajamkan (perilaku lama). */
+  print_sharpen: number;
+  /** Algoritma konversi abu-abu; lihat GRAYSCALE_OPTIONS. */
+  grayscale_algorithm: string;
+};
+
+/** Catatan singkat tiap algoritma, diambil dari alasan yang terukur. */
+const ALGORITMA_NOTE: Record<string, string> = {
+  rec601: 'Bobot 0,299 R + 0,587 G + 0,114 B. Standar TV lama; yang sudah terbukti di kertas. Titik awal yang aman.',
+  rec709: 'Bobot 0,213 R + 0,715 G + 0,072 B. Hijau dinaikkan, merah diturunkan, jadi kontras antar warna lebih besar — biasanya paling tajam untuk foto berwarna.',
+  average: 'Ketiga kanal dibagi tiga. Warna biru dan merah jadi seterang hijau; berguna kalau foto banyak warna dan Rec.601 membuatnya meredup.',
+  'luma-sqrt': 'Akar dari jumlah kanal yang dikuadratkan. Abu-abu jauh lebih terang; pakai bersama kontras di atas 100% supaya tidak pucat.',
+  green: 'Hanya kanal G. Kontras kulit dan tekstur paling tinggi untuk wajah; merah/biru jadi abu-abu yang bisa menipu.',
+  red: 'Hanya kanal R. Memunculkan detail kulit terang dan kain; langit biru jadi gelap.',
+  blue: 'Hanya kanal B, paling gelap di antara ketiganya. Untuk menonjolkan elemen biru jadi hitam.',
+  max: 'Ambil kanal paling terang. Bayangan tetap terbaca; bagian sangat terang bisa jenuh.',
+  min: 'Ambil kanal paling gelap. Garis dan tepi paling tegas; seluruh gambar jadi lebih gelap.',
 };
 
 const DEFAULT_CONFIG: PrinterConfig = {
@@ -125,6 +145,10 @@ const DEFAULT_CONFIG: PrinterConfig = {
   print_margin_right_px: 0,
   print_margin_left_px: 0,
   print_margin_bottom_px: 0,
+  // Bawaan = perilaku lama, supaya membuka panel ini tidak mengubah hasil cetak
+  // kiosk yang sudah dikalibrasi.
+  print_sharpen: 0,
+  grayscale_algorithm: 'rec601',
 };
 
 function errorMessage(error: any) {
@@ -242,6 +266,8 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
         print_margin_right_px: config.print_margin_right_px,
         print_margin_left_px: config.print_margin_left_px,
         print_margin_bottom_px: config.print_margin_bottom_px,
+        print_sharpen: config.print_sharpen,
+        grayscale_algorithm: config.grayscale_algorithm,
         orientation: config.orientation,
         copies_limit: config.copies_limit,
         timeout_ms: config.timeout_ms,
@@ -705,6 +731,57 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
           )}
       </div>
 
+        {/* ------------------------------------------------------------------
+            Ketajaman: algoritma abu-abu + penajaman.
+
+            Yang membuat hasil cetak terlihat blur BUKAN dpi-nya (kanvas selalu
+            300 dpi), melainkan hilangnya perbedaan terang sebelum dither 1-bit.
+            Dua kontrol ini mengendalikan bagian itu, dan keduanya punya bawaan
+            = perilaku lama supaya tidak ada perubahan tak sengaja.
+           ------------------------------------------------------------------ */}
+        <div className="border-t border-white/5 pt-5 space-y-4">
+          <div>
+            <p className="label">Ketajaman hasil cetak</p>
+            <p className="text-[10px] text-muted font-bold mt-1">
+              Printer termal hanya punya hitam dan putih. Yang menentukan tajam bukan dpi,
+              melainkan berapa banyak perbedaan terang yang tersisa sebelum titik-titik dither
+              dibentuk. Lihat hasilnya di preview sebelum menyimpan.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <label className="space-y-2">
+              <span className="label">Algoritma abu-abu</span>
+              <select
+                className={fieldClass} value={config.grayscale_algorithm} disabled={!canEdit}
+                onChange={e => setField('grayscale_algorithm', e.target.value)}
+              >
+                {GRAYSCALE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <span className="text-[10px] text-muted font-bold block">
+                {ALGORITMA_NOTE[config.grayscale_algorithm] || 'Pilih cara warna diubah menjadi abu-abu sebelum jadi titik hitam-putih.'}
+              </span>
+            </label>
+
+            <label className="space-y-2">
+              <span className="label">Penajaman (unsharp mask) — {config.print_sharpen}%</span>
+              <input
+                type="range" min={0} max={100} step={5}
+                className="w-full accent-emerald-400"
+                value={config.print_sharpen} disabled={!canEdit}
+                onChange={e => setField('print_sharpen', Number(e.target.value))}
+              />
+              <span className="text-[10px] text-muted font-bold block">
+                {config.print_sharpen === 0
+                  ? 'Nol = tidak menajamkan (perilaku lama). Dither 1-bit selalu melunakkan tepi, jadi menaikkan ini yang paling menentukan hasil tidak blur.'
+                  : config.print_sharpen >= 80
+                    ? 'Kuat. Diukur: menaikkan detail tersisa ~39%. Kalau muncul bintik di area rata, turunkan.'
+                    : 'Sedang. Diukur: menaikkan detail tersisa ~8% pada 40%; naikkan kalau masih terlihat lunak.'}
+              </span>
+            </label>
+          </div>
+        </div>
+
       {/* Preview WYSIWYG: digambar dengan jalur cetak yang sebenarnya. */}
       <PrintPreview
         paperSize={config.paper_size}
@@ -715,6 +792,8 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
         brightness={config.photo_brightness}
         contrast={config.photo_contrast}
         saturation={config.photo_saturation}
+        grayscale={config.grayscale_algorithm}
+        sharpen={config.print_sharpen}
       />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">

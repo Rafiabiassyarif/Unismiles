@@ -715,6 +715,12 @@ class KioskWSClient {
         printMarginLeftPx: Number(printing.print_margin_left_px ?? 0),
         printMarginBottomPx: Number(printing.print_margin_bottom_px ?? 0),
         photoFitMode: String(printing.photo_fit_mode || 'fit').toLowerCase(),
+        // Penajaman & algoritma abu-abu. Diteruskan apa adanya: bobotnya hanya
+        // dihitung di photobooth (services/oneBitImage.ts), agent tidak perlu
+        // mengerti isinya — tapi HARUS meneruskannya, kalau tidak nilai yang
+        // disimpan Admin tidak pernah sampai ke yang mencetak.
+        printSharpen: Number(printing.print_sharpen ?? 0),
+        grayscaleAlgorithm: String(printing.grayscale_algorithm || 'rec601').toLowerCase(),
       };
       Object.assign(this.reportedState, calib);
     }
@@ -796,6 +802,8 @@ class KioskWSClient {
       printMarginLeftPx: Number(config.print_margin_left_px ?? this.printerConfig.printMarginLeftPx ?? 0),
       printMarginBottomPx: Number(config.print_margin_bottom_px ?? this.printerConfig.printMarginBottomPx ?? 0),
       photoFitMode: String(config.photo_fit_mode || this.printerConfig.photoFitMode || 'fit').toLowerCase(),
+      printSharpen: Number(config.print_sharpen ?? this.printerConfig.printSharpen ?? 0),
+      grayscaleAlgorithm: String(config.grayscale_algorithm || this.printerConfig.grayscaleAlgorithm || 'rec601').toLowerCase(),
     };
 
     if (!SUPPORTED_ADAPTER_NAMES.includes(nextConfig.adapter)) throw new Error('Unsupported printer adapter received from backend');

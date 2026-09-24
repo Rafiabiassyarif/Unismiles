@@ -23,7 +23,10 @@
  */
 
 import { B1_PRO_PRINTHEAD_PX, printBox, type LabelSize } from './labelGeometry.ts';
-import { ditherToBlackAndWhite, ONE_BIT_THRESHOLD } from './oneBitImage.ts';
+import {
+  ditherToBlackAndWhite, ONE_BIT_THRESHOLD,
+  type GrayscaleAlgorithm, DEFAULT_GRAYSCALE_ALGORITHM,
+} from './oneBitImage.ts';
 import {
   ImageEncoder,
   PageColorType,
@@ -115,6 +118,18 @@ export interface PrintAdjustments {
    */
   fitMode: 'fit' | 'cover' | 'stretch';
   /**
+   * Algoritma abu-abu sebelum dither. Lihat GRAYSCALE_OPTIONS.
+   * Bawaan 'rec601' = perilaku lama, supaya konfigurasi yang sudah ada tidak
+   * berubah hasil cetaknya.
+   */
+  grayscale?: GrayscaleAlgorithm;
+  /**
+   * Penajaman (unsharp mask) 0-100, dikenakan pada abu-abu SEBELUM dither.
+   * 0 = tidak menajamkan. Inilah yang paling menentukan hasil tidak blur:
+   * dither 1-bit selalu melunakkan tepi, jadi tepinya dinaikkan lebih dulu.
+   */
+  sharpen?: number;
+  /**
    * Perilaku akhir cetak. Bawaan 'advance-and-separate' = perilaku lama yang
    * sudah terbukti (label keluar, berhenti di celah berikutnya).
    */
@@ -126,6 +141,10 @@ export const DEFAULT_ADJUSTMENTS: PrintAdjustments = {
   contrast: 100,
   saturation: 100,
   density: 3,
+  // Bawaan lama: tidak menajamkan, Rec.601. Menyalakan penajaman sebagai
+  // bawaan akan mengubah hasil cetak semua kiosk yang sudah dikalibrasi.
+  grayscale: DEFAULT_GRAYSCALE_ALGORITHM,
+  sharpen: 0,
   offsetYPx: 0,
   offsetXPx: 0,
   marginTopPx: 0,
@@ -858,7 +877,19 @@ export class NiimbotPrinter {
     const inkBox = printBox(canvas.width, canvas.height,
       adj.marginTopPx, adj.marginRightPx, adj.marginLeftPx, adj.marginBottomPx, B1_PRO_PRINTHEAD_PX,
       adj.offsetXPx, adj.offsetYPx);
-    ditherToBlackAndWhite(imageData.data, canvas.width, canvas.height, ONE_BIT_THRESHOLD, inkBox);
+    // Algoritma abu-abu dan penajaman dari Admin. Keduanya dikenakan SEBELUM
+    // dither — setelah dither pikselnya hanya 0/255, jadi penajaman tidak lagi
+    // mungkin dan pilihan algoritma tidak berpengaruh.
+    //
+    // Skala: UI memakai 0..100, penajaman memakai 0..2 (2 = kuat). Dibagi 50,
+    // bukan 100, supaya 100 di UI benar-benar menghasilkan penajaman kuat —
+    // diukur: amount 2 menaikkan detail tersisa ~16% (garis halus) sampai ~39%
+    // (kontras lebih tinggi), sedangkan amount 1 hanya ~8%.
+    ditherToBlackAndWhite(
+      imageData.data, canvas.width, canvas.height, ONE_BIT_THRESHOLD, inkBox,
+      adj.grayscale || DEFAULT_GRAYSCALE_ALGORITHM,
+      Math.max(0, Math.min(100, Number(adj.sharpen) || 0)) / 50,
+    );
     ctx.putImageData(imageData, 0, 0);
 
     return canvas;

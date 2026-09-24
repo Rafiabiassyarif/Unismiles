@@ -184,7 +184,7 @@ test('dithering dilakukan SETELAH filter Admin', () => {
   // `import` — mencari tanpa kurung membuat import di kepala berkas terpilih dan
   // urutannya jadi selalu "sebelum".
   const iFilter = SERVICE.indexOf('ctx.filter =');
-  const iDither = SERVICE.indexOf('ditherToBlackAndWhite(imageData.data');
+  const iDither = SERVICE.indexOf('ditherToBlackAndWhite(\n');
   assert.ok(iFilter > 0, 'filter Admin harus ada');
   assert.ok(iDither > 0, 'pemanggilan dithering harus ada');
   assert.ok(iFilter < iDither,
@@ -194,10 +194,23 @@ test('dithering dilakukan SETELAH filter Admin', () => {
 test('dithering dipakai lewat satu fungsi teruji, bukan ditulis ulang', () => {
   // Perhitungannya di services/oneBitImage.ts supaya bisa DIEKSEKUSI di test:
   // kesalahan di sini hanya terlihat di kertas.
-  assert.match(SERVICE, /import \{ ditherToBlackAndWhite[, ]+ONE_BIT_THRESHOLD \} from '\.\/oneBitImage\.ts'/,
+  assert.match(SERVICE, /import \{[\s\S]{0,200}?ditherToBlackAndWhite[\s\S]{0,200}?\} from '\.\/oneBitImage\.ts'/,
     'harus mengimpor dari modul teruji, bukan menyalin perhitungannya');
   assert.strictEqual((SERVICE.match(/ditherToBlackAndWhite\(/g) || []).length, 1,
     'satu tempat saja yang mengubah gambar');
+});
+
+test('pilihan algoritma abu-abu dan penajaman diteruskan ke perhitungan, bukan diabaikan', () => {
+  // Ini pernah jadi kesalahan nyata di panel Admin: nilai diteruskan ke UI tapi
+  // diabaikan di jalur cetak, jadi yang terlihat tidak sama dengan yang keluar.
+  assert.match(SERVICE, /adj\.grayscale \|\| DEFAULT_GRAYSCALE_ALGORITHM/,
+    'algoritma dari Admin harus dipakai, dengan bawaan yang aman');
+  assert.match(SERVICE, /Number\(adj\.sharpen\)/,
+    'penajaman dari Admin harus dibaca');
+  // Dibatasi 0..100 lalu diubah ke pecahan 0..1 — nilai di luar itu akan
+  // membuat gambar rusak (bukan menajam).
+  assert.match(SERVICE, /Math\.max\(0, Math\.min\(100, Number\(adj\.sharpen\) \|\| 0\)\)/,
+    'penajaman harus dijepit ke 0..100 sebelum dipakai');
 });
 
 test('ukuran label rusak ditolak dengan pesan yang menyebut sebabnya', () => {
