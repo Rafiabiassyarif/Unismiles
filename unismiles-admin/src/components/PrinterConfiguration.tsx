@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import api from '../lib/api';
 import { cn } from '../lib/utils';
 import { useAuth } from './AuthProvider';
+import { PrintPreview } from './PrintPreview';
+import { PAPER_CATALOG, findPaper, previewPlan, effectiveMargin, PRINTHEAD_PX, type Margin } from '../lib/printPapers';
 
 /**
  * Adapter yang bisa dipilih dari Admin.
@@ -32,18 +34,14 @@ const THERMAL_PRESETS = [
 ] as const;
 
 /**
- * Template label dengan area cetak sendiri.
+ * Template label dengan area cetak sendiri — daftarnya dari `lib/printPapers.ts`.
  *
  * Nilainya HARUS persis nama preset di backend ('nimbotpaper-polaroid'), karena
  * backend mengenalinya dari nama itu dan mengisi margin empat sisinya sendiri.
- * Yang ditampilkan ke pengguna diberi keterangan ukuran area cetaknya.
+ * Ukuran dan keterangannya satu tempat saja, supaya dropdown, preview, dan
+ * backend tidak bisa berbeda.
  */
-const LABEL_PRESETS = [
-  {
-    value: 'nimbotpaper-polaroid',
-    label: 'NIIMBOT Polaroid 54 × 67 mm — area cetak 46 × 46 mm (atas 6 mm, bawah 15 mm)',
-  },
-] as const;
+const LABEL_PRESETS = PAPER_CATALOG;
 
 const LABEL_PRESET_VALUES = LABEL_PRESETS.map(p => p.value);
 
@@ -95,6 +93,13 @@ type PrinterConfig = {
   thermal_offset_y_px: number;
   thermal_offset_x_px: number;
   photo_fit_mode: string;
+  // Margin kotak cetak. Untuk kertas preset berbingkai, backend mengisinya
+  // sendiri dari preset terukur; kolom ini tetap ditampilkan supaya operator
+  // melihat angka yang benar-benar dipakai.
+  print_margin_top_px: number;
+  print_margin_right_px: number;
+  print_margin_left_px: number;
+  print_margin_bottom_px: number;
 };
 
 const DEFAULT_CONFIG: PrinterConfig = {
@@ -116,6 +121,10 @@ const DEFAULT_CONFIG: PrinterConfig = {
   thermal_offset_y_px: 0,
   thermal_offset_x_px: 0,
   photo_fit_mode: 'fit',
+  print_margin_top_px: 0,
+  print_margin_right_px: 0,
+  print_margin_left_px: 0,
+  print_margin_bottom_px: 0,
 };
 
 function errorMessage(error: any) {
@@ -166,6 +175,20 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
 
   const customProblem = isCustomSize ? customSizeProblem(config.paper_size) : null;
 
+  // Margin yang BENAR-BENAR dipakai mencetak, dan previewnya. Dihitung dari
+  // jalur yang sama dengan yang dipakai kiosk (lib/printPapers.ts), supaya panel
+  // tidak bisa menampilkan sesuatu yang berbeda dari hasil cetak.
+  const configuredMargin: Margin = useMemo(() => ({
+    topPx: config.print_margin_top_px ?? 0, rightPx: config.print_margin_right_px ?? 0,
+    leftPx: config.print_margin_left_px ?? 0, bottomPx: config.print_margin_bottom_px ?? 0,
+  }), [config.print_margin_top_px, config.print_margin_right_px, config.print_margin_left_px, config.print_margin_bottom_px]);
+  const plan = useMemo(
+    () => previewPlan(config.paper_size, configuredMargin, config.thermal_offset_x_px || 0, config.thermal_offset_y_px || 0),
+    [config.paper_size, configuredMargin, config.thermal_offset_x_px, config.thermal_offset_y_px],
+  );
+  const kertasTerpilih = useMemo(() => findPaper(config.paper_size), [config.paper_size]);
+  const marginEfektif = useMemo(() => effectiveMargin(config.paper_size, configuredMargin), [config.paper_size, configuredMargin]);
+
   /**
    * Ukuran gambar dalam piksel untuk 300 dpi. Ditampilkan supaya jelas bahwa
    * ukuran kertas menentukan resolusi yang perlu dikirim ke printer — bukan
@@ -213,7 +236,12 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
         photo_saturation: config.photo_saturation,
         thermal_density: config.thermal_density,
         thermal_offset_y_px: config.thermal_offset_y_px,
+        thermal_offset_x_px: config.thermal_offset_x_px,
         photo_fit_mode: config.photo_fit_mode,
+        print_margin_top_px: config.print_margin_top_px,
+        print_margin_right_px: config.print_margin_right_px,
+        print_margin_left_px: config.print_margin_left_px,
+        print_margin_bottom_px: config.print_margin_bottom_px,
         orientation: config.orientation,
         copies_limit: config.copies_limit,
         timeout_ms: config.timeout_ms,
@@ -363,7 +391,7 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
             <optgroup label="Foto (printer tinta)">
               {PHOTO_PRESETS.map(size => <option key={size} value={size}>{size}</option>)}
             </optgroup>
-            <optgroup label="Template label (area cetak sudah ditentukan)">
+            <optgroup label="Kertas label NIIMBOT (bingkai & polos)">
               {LABEL_PRESETS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
             </optgroup>
             <optgroup label={`Termal / label (lebar maks ${THERMAL_LIMITS.maxPrintWidthMm} mm)`}>
@@ -621,6 +649,73 @@ export const PrinterConfiguration: React.FC<{ kiosk: any }> = ({ kiosk }) => {
           </label>
         </div>
       </div>
+
+        {/* ------------------------------------------------------------------
+            Margin kotak cetak.
+
+            Kertas berbingkai (mis. NIIMBOT Polaroid) hanya boleh diisi pada
+            kotak putihnya. Margin inilah kotak itu. Untuk kertas preset yang
+            sudah diukur di kertas, angka di bawah TIDAK dipakai mencetak —
+            ditampilkan supaya operator bisa membandingkan, bukan untuk diubah
+            tanpa disadari.
+           ------------------------------------------------------------------ */}
+        <div className="border-t border-white/5 pt-5 space-y-4">
+          <div>
+            <p className="label">Margin kotak cetak (px) — kiri / atas / kanan / bawah</p>
+            <p className="text-[10px] text-muted font-bold mt-1">
+              12 px = 1 mm. Di luar kotak ini label dibiarkan kosong, jadi bingkai yang
+              sudah tercetak tidak tertimpa tinta.
+            </p>
+          </div>
+          {marginEfektif.source === 'measured' ? (
+            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
+              <p className="text-[11px] font-black text-emerald-300">
+                Terkunci dari hasil ukur di kertas: kiri {marginEfektif.margin.leftPx} · atas {marginEfektif.margin.topPx} · kanan {marginEfektif.margin.rightPx} · bawah {marginEfektif.margin.bottomPx}
+              </p>
+              <p className="text-[10px] text-muted font-bold mt-1">
+                Kotak {plan.box.w} × {plan.box.h} px di x={plan.box.x} y={plan.box.y} — {kertasTerpilih?.label}.
+                Mengubah angka margin lain tidak menggeser hasil cetak untuk kertas ini; itu disengaja supaya
+                ukuran yang sudah pas tidak berubah tanpa sengaja.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {([
+                  ['print_margin_left_px', 'Kiri'],
+                  ['print_margin_top_px', 'Atas'],
+                  ['print_margin_right_px', 'Kanan'],
+                  ['print_margin_bottom_px', 'Bawah'],
+                ] as const).map(([field, label]) => (
+                  <label key={field} className="space-y-2">
+                    <span className="label">{label}</span>
+                    <input
+                      className={fieldClass} type="number" min={0} max={300}
+                      value={config[field]} disabled={!canEdit}
+                      onChange={e => setField(field, Number(e.target.value))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p className={cn('text-[10px] font-bold', plan.warning ? 'text-amber-300' : 'text-muted')}>
+                {plan.warning
+                  || `Hasil: kotak ${plan.box.w} × ${plan.box.h} px di x=${plan.box.x} y=${plan.box.y}, sisa ${PRINTHEAD_PX - plan.box.x - plan.box.w} px ke kepala cetak.`}
+              </p>
+            </>
+          )}
+      </div>
+
+      {/* Preview WYSIWYG: digambar dengan jalur cetak yang sebenarnya. */}
+      <PrintPreview
+        paperSize={config.paper_size}
+        margin={configuredMargin}
+        offsetXPx={config.thermal_offset_x_px || 0}
+        offsetYPx={config.thermal_offset_y_px || 0}
+        fitMode={(config.photo_fit_mode === 'cover' || config.photo_fit_mode === 'stretch') ? config.photo_fit_mode : 'fit'}
+        brightness={config.photo_brightness}
+        contrast={config.photo_contrast}
+        saturation={config.photo_saturation}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <div className="p-5 rounded-2xl bg-black/20 border border-white/5 space-y-3"><p className="text-[10px] font-black text-muted uppercase tracking-widest">Desired Configuration</p><p className="text-sm font-black">Version {config.config_version}</p><p className="text-xs text-muted">{status.pending ? 'Pending — menunggu Agent menerapkan konfigurasi.' : 'Stored'}</p></div>
