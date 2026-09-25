@@ -2,10 +2,30 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure uploads directory exists at project root
+// Folder ditulis dari lokasi berkas, bukan CWD. Lihat catatan di bawah.
 const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
+}
+// Izin folder, dicoba setiap kali modul dimuat.
+//
+// Kenapa: proses backend TIDAK selalu berjalan sebagai pemilik folder. Kejadian
+// nyata — POST /api/v1/admin/assets menjawab 500 dengan
+//   EACCES: permission denied, open '.../uploads/assets/<file>.png'
+// karena foldernya milik uid 1000 dengan izin 775, sedangkan backend jalan
+// sebagai uid lain. Akibatnya SEMUA unggahan gagal.
+//
+// BATAS: chmod hanya berhasil kalau proses ini pemilik folder (atau root). Di
+// produksi bukan, jadi baris ini TIDAK memperbaiki folder yang sudah salah —
+// perbaikan sebenarnya harus dilakukan di disk sebagai pemilik folder.
+//
+// Bit sticky 1777, bukan 777: semua uid boleh menulis, tetapi hanya pemilik
+// berkas yang boleh menghapus milik orang lain. Gagal chmod tidak fatal — jangan
+// sampai backend tidak bisa start hanya karena izin.
+try {
+  fs.chmodSync(uploadDir, 0o1777);
+} catch (err) {
+  console.warn(`[uploads] tidak bisa mengubah izin ${uploadDir}: ${err.message}`);
 }
 
 // Configure multer storage
