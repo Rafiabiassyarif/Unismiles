@@ -22,11 +22,18 @@ const VISION_HOST = process.env.PAYMENT_VISION_HOST || '192.168.100.185';
 /**
  * Port kandidat, diurutkan.
  *
- * 5025 dan 5013 adalah dua nilai yang pernah dipakai produksi. 5018/5001/5002
- * disertakan karena pernah muncul di konfigurasi lama. Nilai di .env selalu
- * didahulukan, jadi kalau portnya diketahui pasti, tidak ada percobaan tambahan.
+ * 5051 adalah port payment-vision-service (FastAPI, punya POST /process) pada
+ * pengukuran 2026-09-25. Port lain di daftar ini adalah port yang PERNAH dipakai
+ * atau pernah muncul di konfigurasi lama. 5025 tetap disertakan karena pernah
+ * menjadi port produksi, tetapi TIDAK lagi didahulukan: pada pengukuran
+ * 2026-09-25 port itu dipakai situs Node lain yang menjawab 404 "Route not
+ * found", dan karena percobaan berhenti pada jawaban HTTP apa pun, satu port
+ * yang salah di depan mematikan seluruh verifikasi.
+ *
+ * Nilai di .env selalu didahulukan, jadi kalau portnya diketahui pasti, tidak ada
+ * percobaan tambahan.
  */
-const DEFAULT_VISION_PORTS = [5025, 5013, 5018, 5001, 5002];
+const DEFAULT_VISION_PORTS = [5051, 5025, 5013, 5018, 5001, 5002];
 
 /** Ambil variabel pertama yang benar-benar terisi. */
 function firstNonEmpty(...values) {
@@ -205,9 +212,25 @@ const VisionClient = {
         });
 
         if (!response.ok) {
-          // Service MENJAWAB (walau dengan error): alamatnya benar, jangan pindah
-          // port — masalahnya di pemrosesan, bukan di alamat.
           const errorText = await response.text();
+          // 404 berarti alamat ini TIDAK punya /process — kemungkinan besar ini
+          // situs lain di host yang sama, bukan vision service. Pada 2026-09-25
+          // port 5025 dipakai situs Node lain yang menjawab 404 "Route not
+          // found"; karena jawaban HTTP apa pun dulu menghentikan pencarian,
+          // satu port salah di depan mematikan SELURUH verifikasi pembayaran.
+          // Jadi 404 dilempar sebagai kegagalan-alamat supaya port berikutnya
+          // dicoba; status lain (400/401/500) tetap dianggap jawaban vision
+          // service dan dilaporkan apa adanya.
+          if (response.status === 404) {
+            failures.push(`${baseUrl} (status 404: ${errorText.slice(0, 120)})`);
+            if (isLast) {
+              throw new Error(
+                `Vision service tidak dapat dihubungi. Alamat yang dicoba: ${failures.join(', ')}`
+              );
+            }
+            console.warn(`[VisionClient] ${baseUrl} tidak punya /process, mencoba alamat berikutnya.`);
+            continue;
+          }
           throw new Error(`Vision service returned status ${response.status}: ${errorText}`);
         }
 
