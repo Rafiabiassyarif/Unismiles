@@ -198,7 +198,7 @@ export class NiimbotPrinter {
 
   /** Transport Bluetooth native, kalau aplikasi ini berjalan sebagai desktop app. */
   private static nativeBridge(): {
-    sambung: (o?: { nama?: string; alamat?: string }) => Promise<{ deviceName: string; address: string }>;
+    sambung: (o?: { nama?: string; alamat?: string }) => Promise<{ deviceName: string; address: string; printTask?: string }>;
     status: () => Promise<{ tersambung: boolean; deviceName: string | null; address: string | null }>;
     terputus: () => Promise<unknown>;
     cetak: (halaman: unknown, opsi?: unknown) => Promise<unknown>;
@@ -243,6 +243,21 @@ export class NiimbotPrinter {
       this.rememberAddress(hasil?.address);
       this.rememberDeviceName(hasil?.deviceName);
       this.nativeTersambung = true;
+      // PRINT TASK DARI MODEL YANG DIBACA PRINTER.
+      //
+      // Dulu di sini `model` dan `printTask` diisi this.printTaskName, yang
+      // bawaannya 'B1'. Untuk B1 Pro itu model yang salah — pustaka memetakan
+      // B1_PRO ke task D110M_V4, dengan perintah printStart dan ukuran halaman
+      // yang berbeda — sehingga printer tidak menjawab pageEnd dan cetak gagal
+      // dengan "Timeout waiting response (waited for e4)". Transport native
+      // sekarang menegosiasi protokol dan mengirim jenis task-nya; dipakai di
+      // sini supaya nilai yang dicetak benar sejak cetak pertama.
+      if (hasil?.printTask) this.printTaskName = hasil.printTask as PrintTaskName;
+      // DILAPORKAN KE ADMIN. Jalur desktop menyambung TANPA lewat finishConnect
+      // (itu jalur Web Bluetooth), jadi tanpa baris ini panel Admin tidak pernah
+      // menerima READY dari aplikasi kiosk — dan status galat lama tetap
+      // terpampang walau printernya sudah tersambung dan siap mencetak.
+      void this.reportStatus('READY', { printerName: hasil?.deviceName || undefined });
       return {
         deviceName: hasil?.deviceName || 'Printer label',
         model: this.printTaskName,
@@ -759,13 +774,22 @@ export class NiimbotPrinter {
     const baseUrl = readApiBaseUrl();
     if (!apiKey || !baseUrl) return;
 
+    // NAMA PRINTER TIDAK BOLEH HILANG SAAT GALAT.
+    //
+    // Laporan galat datang dari jalur cetak, yang tidak selalu membawa nama
+    // printer. Kalau dikirim null, backend menimpanya dan panel Admin berubah
+    // dari "B1pro-i616" menjadi "—" — jadi yang hilang justru keterangan yang
+    // paling dibutuhkan saat mencetak gagal. Nama yang sudah dikenal dipakai
+    // sebagai cadangan.
+    const nama = details.printerName || this.printDeviceName || this.rememberedDeviceName() || null;
+
     try {
       await fetch(`${baseUrl.replace(/\/$/, '')}/kiosk/printer-status`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
         body: JSON.stringify({
           status,
-          printer_name: details.printerName ?? null,
+          printer_name: nama,
           paper_status: details.paperStatus ?? null,
           last_error: details.lastError ?? null,
         }),

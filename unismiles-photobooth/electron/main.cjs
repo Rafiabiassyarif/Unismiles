@@ -80,7 +80,11 @@ let namaPrinterDikenal = null;
  */
 async function sambung({ nama, alamat } = {}) {
   if (klien && klien.isConnected()) {
-    return { deviceName: klien.nama || namaPrinterDikenal, address: klien.alamat };
+    return {
+      deviceName: klien.nama || namaPrinterDikenal,
+      address: klien.alamat,
+      printTask: jenisPrintTask(klien),
+    };
   }
   await putuskan();
   const target = nama || namaPrinterDikenal || null;
@@ -91,7 +95,31 @@ async function sambung({ nama, alamat } = {}) {
   });
   const hasil = await klien.connect();
   if (hasil?.deviceName) namaPrinterDikenal = hasil.deviceName;
-  return { deviceName: hasil?.deviceName || target, address: hasil?.address || null };
+  return {
+    deviceName: hasil?.deviceName || target,
+    address: hasil?.address || null,
+    // Diteruskan ke renderer: itu yang memilih print task saat mencetak. Tanpa
+    // ini renderer memakai bawaannya ('B1'), dan printer B1 Pro menerima
+    // rangkaian perintah untuk model lain — pageEnd tidak dijawab, cetak gagal
+    // dengan "Timeout waiting response (waited for e4)".
+    printTask: hasil?.printTask || jenisPrintTask(klien),
+  };
+}
+
+/**
+ * Print task yang sesuai model printer, kalau modelnya terbaca.
+ *
+ * Diambil dari klien (yang baru bernegosiasi dengan printer), bukan ditebak:
+ * pustaka memetakan B1_PRO ke task D110M_V4 — perintah printStart dan ukuran
+ * halaman yang berbeda dari B1. Mengembalikan undefined kalau belum terbaca,
+ * supaya pemanggil memakai bawaannya alih-alih nilai yang salah.
+ */
+function jenisPrintTask(k) {
+  try {
+    return (typeof k?.getPrintTaskType === 'function' ? k.getPrintTaskType() : null) || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Cetak halaman yang SUDAH di-encode renderer. Tanpa menyentuh gambar. */

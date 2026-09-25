@@ -232,7 +232,20 @@ class BlePrinterAdapter extends PrinterAdapter {
     const encoded = ImageEncoder.encode(source, PageColorType.SingleColor, 'top');
 
     const copies = Math.max(1, Number(options.copies) || 1);
-    const task = client.protocol.newPrintTask(client.printerInfo?.modelId || this.printerModel, {
+
+    // PRINT TASK DARI MODEL, BUKAN ID ANGKA.
+    //
+    // Sebelumnya di sini dikirim `client.printerInfo?.modelId` — nomor model
+    // (mis. 4097), padahal newPrintTask mencari NAMA task. Untuk B1 Pro
+    // pemetaannya juga bukan 'B1': pustaka memetakan B1_PRO ke D110M_V4, dengan
+    // perintah printStart dan ukuran halaman yang berbeda. Nilai yang salah
+    // membuat printer tidak menjawab pageEnd dan cetak berakhir
+    // "Timeout waiting response (waited for e4)".
+    // Urutan: jenis task dari model yang dibaca printer, lalu konfigurasi,
+    // lalu bawaan.
+    const tugas = (typeof client.getPrintTaskType === 'function' ? client.getPrintTaskType() : null)
+      || this.printerModel || MODEL_BAWAAN;
+    const task = client.protocol.newPrintTask(tugas, {
       totalPages: copies,
       ...(this.density ? { density: this.density } : {}),
       statusTimeoutMs: this.timeoutMs,

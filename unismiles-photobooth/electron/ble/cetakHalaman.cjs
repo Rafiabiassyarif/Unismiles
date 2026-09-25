@@ -41,6 +41,18 @@ async function cetakHalaman({ klien, halaman, copies = 1, density, model, paperE
 
   const jumlah = Math.max(1, Number(copies) || 1);
 
+  // PRINT TASK DARI MODEL YANG DIBACA PRINTER, bukan dari bawaan.
+  //
+  // Ini penyebab cetak gagal berulang kali: dengan bawaan 'B1', printer B1 Pro
+  // menerima rangkaian perintah untuk model lain, sehingga pageEnd tidak pernah
+  // dijawab dan cetak berakhir "Timeout waiting response (waited for e4)".
+  // Pustaka memetakan B1_PRO ke task D110M_V4 (perintah printStart dan
+  // ukuran halaman yang berbeda), jadi nilainya diambil dari printer.
+  //
+  // Urutannya: nilai dari pemanggil, lalu dari klien yang sudah bernegosiasi,
+  // baru bawaan — supaya kiosk yang printernya belum terbaca tetap mencoba.
+  const tugas = model || (typeof klien.getPrintTaskType === 'function' ? klien.getPrintTaskType() : null) || MODEL_BAWAAN;
+
   // JENIS KERTAS HARUS MENGIKUTI PRINTER, BUKAN BAWAAN PUSTAKA.
   //
   // Bawaan pustaka adalah WithGaps (kertas bergap). Printer ini melaporkan
@@ -70,7 +82,7 @@ async function cetakHalaman({ klien, halaman, copies = 1, density, model, paperE
   // Batas bawaan 10 detik hampir pasti habis di tengah, dan gejalanya di kertas
   // adalah label keluar TIDAK PENUH. Kelonggaran besar jauh lebih murah
   // daripada label setengah jadi.
-  const task = klien.protocol.newPrintTask(model || MODEL_BAWAAN, {
+  const task = klien.protocol.newPrintTask(tugas, {
     totalPages: jumlah,
     ...(density ? { density } : {}),
     // Jenis kertas dari printer (lihat blok di atas). Tanpa ini, cetak memakai

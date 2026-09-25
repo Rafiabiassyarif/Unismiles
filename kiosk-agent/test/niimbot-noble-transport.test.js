@@ -269,10 +269,14 @@ test('sendRaw menulis Buffer TANPA respons (writeValueWithoutResponse)', async (
   klien.setHeartbeatAutoStart(false);
   await klien.connect();
 
+  // Diukur sebagai SELISIH, bukan total: connect() kini ikut bernegosiasi
+  // protokol (paket connect + tanya model), jadi jumlah tulis setelah sambung
+  // bukan nol lagi. Yang diuji tetap sama — satu sendRaw = satu tulis.
+  const sebelum = peripheral.duga.writes.length;
   await klien.sendRaw(Uint8Array.from([1, 2, 3]));
 
-  assert.strictEqual(peripheral.duga.writes.length, 1, 'sekali tulis');
-  const tulis = peripheral.duga.writes[0];
+  assert.strictEqual(peripheral.duga.writes.length - sebelum, 1, 'sekali tulis');
+  const tulis = peripheral.duga.writes[sebelum];
   assert.ok(Buffer.isBuffer(tulis.data), 'noble hanya menerima Buffer/TypedArray');
   assert.deepStrictEqual([...tulis.data], [1, 2, 3], 'isi paket tidak boleh diubah');
   assert.strictEqual(tulis.withoutResponse, true,

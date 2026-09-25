@@ -248,13 +248,34 @@ class NiimbotNobleClient extends NiimbotAbstractClient {
     await channel.subscribeAsync();
     this.channel = channel;
 
+    // NEGOSIASI PROTOKOL DI SINI, BUKAN DI PEMANGGIL.
+    //
+    // Tanpa ini printerInfo tetap kosong: model dan protocolVersion tidak pernah
+    // dibaca dari printer, jadi tabel model library tidak bisa dipakai dan
+    // pemanggil terpaksa menebak print task. Untuk B1 Pro tebakannya salah —
+    // library memetakan B1_PRO ke D110M_V4, bukan B1 — dan gejalanya di
+    // lapangan persis seperti ini: perintah cetak tidak dikenal printer,
+    // pageEnd tidak dijawab, lalu cetak berakhir dengan
+    // "Timeout waiting response (waited for e4)".
+    //
+    // TANPA `cleanup`: argumen itu memanggil disconnect() saat negosiasi gagal,
+    // sehingga sambungan Bluetooth yang sebenarnya sehat ikut mati. Kegagalan
+    // protokol tidak boleh menyamar sebagai kegagalan Bluetooth — kalau gagal,
+    // dicatat, dan pemanggil memakai bawaannya.
+    try {
+      await this.negotiateAndGetPrinterInfo();
+    } catch (error) {
+      console.warn('[Printer] Negosiasi protokol gagal; model printer tidak terbaca. '
+        + 'Cetak akan memakai print task bawaan. ' + String(error?.message || error));
+    }
+
     const hasil = {
       deviceName: this.nama || this.labelSementara,
       address: this.alamat,
+      // Print task DARI MODEL yang baru dibaca, supaya pemanggil tidak menebak.
+      printTask: this.getPrintTaskType(),
       result: undefined,
     };
-    // Pemanggil (adapter) yang memanggut negosiasi protokol, supaya kegagalan
-    // protokol tidak tersamar sebagai kegagalan Bluetooth.
     this.emit('connect', new ConnectEvent(hasil));
     return hasil;
   }
