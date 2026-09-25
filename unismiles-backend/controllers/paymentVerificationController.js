@@ -149,12 +149,31 @@ async function processVerificationInBackground(attemptId, sessionCode, kioskId, 
     }
 
     // Save evidence frame to private storage if it requires manual review or rejection
+    //
+    // Kegagalan menyimpan arsip TIDAK boleh membatalkan verifikasi.
+    //
+    // Diukur 2026-09-25: folder private_uploads milik uid lain (mode 0775), jadi
+    // proses backend ditolak saat menulis di sana (`EACCES`). Karena penulisan ini
+    // berada di jalur utama sebelum keputusan disimpan, satu kegagalan izin
+    // melempar ke blok catch dan SELURUH pemindaian berakhir INTERNAL_ERROR —
+    // padahal keputusannya sudah dihitung dan bukti bayarnya sudah dibaca OCR.
+    // Arsip bukti adalah pelengkap untuk tinjauan manual, bukan syarat keputusan.
     let evidencePrivatePath = null;
     if (decision !== 'verified' && frames.length > 0) {
       const frameFile = `evidence_${attemptId}.jpg`;
       const filePath = path.join(privateUploadsDir, frameFile);
-      await fs.writeFile(filePath, frames[0].buffer);
-      evidencePrivatePath = `/private_uploads/${frameFile}`;
+      try {
+        await fs.writeFile(filePath, frames[0].buffer);
+        evidencePrivatePath = `/private_uploads/${frameFile}`;
+      } catch (error) {
+        // Arsipkan sebisanya saja; turunkan izin folder dicatat supaya bisa
+        // diperbaiki di disk, dan pemindaian tetap menghasilkan keputusan.
+        console.error(
+          `[Background-Verify] Bukti tidak bisa diarsipkan (${filePath}): ` +
+          `${error?.code || error?.name}: ${error?.message}. ` +
+          `Keputusan tetap diproses tanpa arsip.`
+        );
+      }
     }
 
     // TTL for evidence clean up (15 mins for auto decisions, 24 hours for manual review)
