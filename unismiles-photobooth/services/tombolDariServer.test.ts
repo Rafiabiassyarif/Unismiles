@@ -52,8 +52,16 @@ function payloadServer(): Record<string, unknown> | null {
     ], { encoding: 'utf8' });
     const d = JSON.parse(out);
     const cfg = (d.data?.config || d.data || d) as Record<string, unknown>;
-    // Balasan non-objek (mis. halaman error Cloudflare) juga dianggap tidak ada.
-    return typeof cfg === 'object' && cfg !== null ? cfg : null;
+    // Balasan non-objek (mis. halaman error Cloudflare) dianggap tidak ada.
+    if (typeof cfg !== 'object' || cfg === null) return null;
+    // Dan balasan itu harus BENAR-BENAR konfigurasi cetak. Tanpa penjagaan ini,
+    // respons galat seperti {"success":false,"message":"Route not found"} lolos
+    // sebagai "payload" dan ujinya gagal untuk alasan yang salah — persis yang
+    // sempat terjadi.
+    if (cfg.success === false) return null;
+    const tandaKonfigurasi = ['paper_size', 'config_version', 'adapter']
+      .some((k) => k in cfg);
+    return tandaKonfigurasi ? cfg : null;
   } catch {
     return null;
   }
