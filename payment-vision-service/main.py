@@ -47,6 +47,25 @@ if not ocr_type:
     except Exception as e:
         print(f"[Vision] PaddleOCR not available: {e}")
 
+# RapidOCR: mesin OCR yang benar-benar bisa dipasang di server ini.
+#
+# Kenapa ditambahkan: pada 2026-09-25 produksi melaporkan
+# /health -> {"ocr_loaded": false, "ocr_engine": null}. Dua mesin di atas tidak
+# bisa dipakai di sana — pytesseract butuh binary `tesseract` yang tidak ada di
+# NAS dan tidak bisa di-apt tanpa root, sedangkan PaddleOCR butuh paket besar
+# yang tidak terpasang. Tanpa mesin OCR, seluruh tahap OCR dilewati, `amount`
+# selalu null, dan pencocokan nominal MUSTAHIL — jadi setiap pemindaian berakhir
+# gagal walau bukti bayarnya jelas. RapidOCR hanya butuh pip (onnxruntime) dan
+# sudah diukur berhasil membaca "Nominal Rp 5.068" dari struk ukuran produksi.
+if not ocr_type:
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        ocr_engine = RapidOCR()
+        ocr_type = 'rapidocr'
+        print("[Vision] RapidOCR loaded successfully")
+    except Exception as e:
+        print(f"[Vision] RapidOCR not available: {e}")
+
 # Laplacian Variance for Blur Check
 def check_blur(img_gray: np.ndarray) -> float:
     # Heuristic score for image sharpness: variance of Laplacian
@@ -311,6 +330,17 @@ async def process_payment_proof(
                                 ocr_lines.append(line[1][0])
                 except Exception as e:
                     print(f"[Vision] PaddleOCR frame {f_idx} error: {e}")
+            elif ocr_type == 'rapidocr' and ocr_engine is not None:
+                try:
+                    # RapidOCR menerima path ATAU ndarray; ndarray menghindari
+                    # tulis-baca berkas sementara untuk tiap frame.
+                    result, _ = ocr_engine(img)
+                    for item in (result or []):
+                        teks = item[1] if len(item) > 1 else None
+                        if teks and teks not in ocr_lines:
+                            ocr_lines.append(teks)
+                except Exception as e:
+                    print(f"[Vision] RapidOCR frame {f_idx} error: {e}")
             
             if len(ocr_lines) >= 4:
                 break
