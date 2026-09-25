@@ -330,6 +330,29 @@ const normalizeTemplatePrices = (templates: any[]): FrameLayout[] => templates.m
   return price === null ? normalizedLayout : { ...normalizedLayout, price };
 });
 
+/**
+ * Salinan terakhir daftar template yang BERHASIL dibaca dari backend.
+ *
+ * Dipakai saat backend sedang tidak terjangkau: daftar template hampir tidak
+ * pernah berubah, jadi salinan lama jauh lebih benar daripada daftar kosong.
+ * Yang disimpan adalah hasil yang SUDAH dinormalisasi, jadi bentuknya sama
+ * dengan yang dipakai layar.
+ *
+ * Sengaja mengembalikan array kosong (bukan melempar) kalau tidak ada atau
+ * rusak: pemanggilnya perlu membedakan "tidak ada salinan" dari "gagal baca",
+ * dan keduanya berakhir sama — pakai pesan galat.
+ */
+export const bacaTemplatesTersimpan = (): FrameLayout[] => {
+  try {
+    const mentah = localStorage.getItem(STORAGE_KEYS.FRAMES);
+    if (!mentah) return [];
+    const data = JSON.parse(mentah);
+    return Array.isArray(data) ? (data as FrameLayout[]) : [];
+  } catch {
+    return [];
+  }
+};
+
 // --- OPTIMIZATION: Global Image Cache ---
 // Stores URL -> Base64 mapping to prevent re-fetching same assets
 const imageCache = new Map<string, string>();
@@ -1354,20 +1377,80 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
     return completed;
   };
 
-  const refreshFrames = useCallback(async () => {
-    try {
-      const templates = await fetchTemplates();
-      const freshFrames = normalizeTemplatePrices(templates);
-      localStorage.setItem(STORAGE_KEYS.FRAMES, JSON.stringify(freshFrames));
-      setFrames(freshFrames);
-      setTemplateError(null);
-      return true;
-    } catch (error) {
-      const message = error instanceof KioskApiError ? error.message : 'Template gagal dimuat dari backend utama.';
-      setFrames([]);
-      setTemplateError(message);
-      return false;
+  /**
+   * Ambil daftar template dari backend.
+   *
+   * Kegagalan TIDAK mengosongkan daftar. Dulu `setFrames([])` di jalur gagal,
+   * dan itu berbahaya: template tidak berubah dari sebelumnya hanya karena satu
+   * permintaan tersendat. Akibatnya kiosk menampilkan "Template belum tersedia
+   * dari backend utama" padahal endpoint-nya sehat dan datanya ada — dan karena
+   * frame yang dihapus tidak pernah diambil kembali, layar tidak pulih sendiri
+   * sampai aplikasi dibuka ulang.
+   *
+   * Sekarang: kalau pengambilan gagal, salinan TERAKHIR YANG BERHASIL dipakai
+   * (tersimpan di localStorage). Daftar template hampir tidak pernah berubah,
+   * jadi salinan lama jauh lebih benar daripada daftar kosong.
+   */
+  const refreshFrames = useCallback(async (percobaan = 3) => {
+    let terakhirKosong = false;
+    for (let i = 0; i < percobaan; i += 1) {
+      try {
+        const templates = await fetchTemplates();
+        const freshFrames = normalizeTemplatePrices(templates);
+        if (freshFrames.length > 0) {
+          try {
+            localStorage.setItem(STORAGE_KEYS.FRAMES, JSON.stringify(freshFrames));
+          } catch (e) {
+            // Penyimpanan penuh / diblokir: daftar di memori tetap dipakai,
+            // hanya salinan untuk keadaan darurat yang tidak tersedia.
+            console.warn('[PhotoBooth] Salinan template tidak tersimpan:', e);
+          }
+          setFrames(freshFrames);
+          setTemplateError(null);
+          // Kalau pembeli sempat menekan Start sebelum daftar selesai dimuat,
+          // pesannya harus hilang sendiri begitu template siap — bukan menetap
+          // dan membuat pembeli mengira kiosknya rusak.
+          setFlowError((sebelumnya) => (
+            sebelumnya && sebelumnya.includes('Template sedang dimuat') ? null : sebelumnya
+          ));
+          return true;
+        }
+        // Backend MENJAWAB, tapi daftarnya kosong. Ini keadaan yang berbeda dari
+        // gagal jaringan, dan harus punya pesan sendiri — kalau tidak, layarnya
+        // diam tanpa penjelasan.
+        terakhirKosong = true;
+      } catch (error) {
+        terakhirKosong = false;
+        // Percobaan berikutnya ada di bawah; hanya kegagalan terakhir yang
+        // dilaporkan ke layar.
+        if (i < percobaan - 1) {
+          await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+          continue;
+        }
+        const message = error instanceof KioskApiError
+          ? error.message
+          : 'Template gagal dimuat dari backend utama.';
+        // Salinan terakhir dari server menang atas daftar kosong.
+        const salinan = bacaTemplatesTersimpan();
+        if (salinan.length > 0) {
+          setFrames(salinan);
+          setTemplateError(null);
+          console.warn('[PhotoBooth] Template dari backend gagal; memakai salinan terakhir:', message);
+          return true;
+        }
+        setTemplateError(message);
+        return false;
+      }
+      if (i < percobaan - 1) await new Promise((r) => setTimeout(r, 800 * (i + 1)));
     }
+    if (terakhirKosong) {
+      // Salinan lama masih jauh lebih benar daripada tidak bisa mulai sama
+      // sekali, jadi dipakai dulu; pesannya tetap muncul supaya terlihat.
+      const salinan = bacaTemplatesTersimpan();
+      if (salinan.length > 0) setFrames(salinan);
+      setTemplateError('Backend menjawab, tetapi daftar template kosong. Periksa template aktif di panel Admin.');
+    }
+    return false;
   }, []);
 
   useEffect(() => {
@@ -1886,7 +1969,16 @@ export const PhotoBooth: React.FC<PhotoBoothProps> = ({ onAdminClick, idlePaused
   // --- Actions ---
   const handleStart = () => {
       if (frames.length === 0) {
-        setFlowError(templateError || 'Template belum tersedia dari backend utama.');
+        // Bedakan dua sebab yang berbeda, karena tindakan perbaikannya berbeda:
+        //   - templateError terisi = backend memang menjawab dengan kegagalan
+        //   - belum ada galat     = daftar masih dimuat; pembeli menekan Start
+        //     terlalu cepat, dan yang dibutuhkan cuma menunggu sebentar.
+        // Dulu keduanya memakai pesan yang sama, sehingga masalah jaringan
+        // sesaat terlihat seperti backend tidak punya template sama sekali.
+        setFlowError(
+          templateError
+          || 'Template sedang dimuat dari server. Mohon tunggu sebentar, lalu tekan Start lagi.',
+        );
         return;
       }
       // Ensure state is clear when starting fresh
